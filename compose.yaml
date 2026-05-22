@@ -3,10 +3,13 @@ services:
     image: ghcr.io/cplieger/vibecli:latest
     container_name: vibecli
     restart: unless-stopped
-    user: "1000:1000"
+    user: "1000:1000"  # match your host user
 
     environment:
       TZ: "Europe/Paris"
 
     ports:
       - "8080:8080"
+
+    volumes:
+      - "/opt/appdata/vibecli:/config"
