@@ -26,10 +26,10 @@ import (
 	"vibecli/internal/api"
 )
 
-// timeoutPolicy groups the four subprocess timeout durations. Passed to
+// TimeoutPolicy groups the four subprocess timeout durations. Passed to
 // NewHandler at construction so tests can inject microsecond-scale values
 // without mutating package-level state (enables t.Parallel).
-type timeoutPolicy struct {
+type TimeoutPolicy struct {
 	LoginURL     time.Duration
 	LoginHardCap time.Duration
 	Logout       time.Duration
@@ -37,8 +37,8 @@ type timeoutPolicy struct {
 }
 
 // DefaultTimeoutPolicy returns the production timeout configuration.
-func DefaultTimeoutPolicy() timeoutPolicy {
-	return timeoutPolicy{
+func DefaultTimeoutPolicy() TimeoutPolicy {
+	return TimeoutPolicy{
 		LoginURL:     10 * time.Second,
 		LoginHardCap: 16 * time.Minute,
 		Logout:       10 * time.Second,
@@ -95,13 +95,13 @@ var awsRegionRe = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-\d+$`)
 type Handler struct {
 	loginSem chan struct{}
 	cliPath  string
-	timeouts timeoutPolicy
+	timeouts TimeoutPolicy
 }
 
 // NewHandler returns an auth handler that shells out to the kiro-cli
 // binary at cliPath for whoami / login / logout operations. The
-// timeoutPolicy controls all subprocess timeout durations.
-func NewHandler(cliPath string, tp timeoutPolicy) *Handler {
+// TimeoutPolicy controls all subprocess timeout durations.
+func NewHandler(cliPath string, tp TimeoutPolicy) *Handler {
 	return &Handler{cliPath: cliPath, loginSem: make(chan struct{}, 1), timeouts: tp}
 }
 

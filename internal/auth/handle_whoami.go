@@ -134,11 +134,18 @@ const (
 // accountTypeLabels maps kiro-cli account_type enum values (lowercased)
 // to their human-readable labels. Data-driven: adding a new account type
 // is a single map entry, not a new case statement.
+const (
+	acctBuilderID         = "builderid"
+	acctIdentityCenter    = "identitycenter"
+	acctIAMIdentityCenter = "iamidentitycenter"
+	acctSocial            = "social"
+)
+
 var accountTypeLabels = map[string]string{
-	"builderid":         authBuilderID,
-	"identitycenter":    authIdentityCenter,
-	"iamidentitycenter": authIdentityCenter,
-	"social":            authSocialLogin,
+	acctBuilderID:         authBuilderID,
+	acctIdentityCenter:    authIdentityCenter,
+	acctIAMIdentityCenter: authIdentityCenter,
+	acctSocial:            authSocialLogin,
 }
 
 func humanizeAccountType(t string) string {

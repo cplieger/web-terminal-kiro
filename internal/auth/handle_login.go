@@ -20,6 +20,12 @@ import (
 	"vibecli/internal/api"
 )
 
+const (
+	flagDeviceFlow   = "--use-device-flow"
+	cmdLogin         = "login"
+	errAlreadyLogged = "already_logged_in"
+)
+
 // LoginScanResult is the typed result sent from scanLoginOutput to the
 // handler over the urlCh channel. JSON tags match the old map keys
 // exactly so the HTTP response is byte-identical.
@@ -120,7 +126,7 @@ func validateRegion(v string) error {
 // buildLoginArgs returns the argv tail (after the binary path) for a
 // `kiro-cli login` invocation with optional provider/region overrides.
 func buildLoginArgs(provider, region string) []string {
-	args := []string{"login", "--use-device-flow"}
+	args := []string{cmdLogin, flagDeviceFlow}
 	if provider != "" {
 		args = append(args, "--identity-provider", provider)
 	}
@@ -373,7 +379,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- LoginScanResult) {
 		lineCount++
 		ring.Push(line)
 		if strings.Contains(strings.ToLower(line), "already logged in") {
-			urlCh <- LoginScanResult{Error: "already_logged_in"}
+			urlCh <- LoginScanResult{Error: errAlreadyLogged}
 			return
 		}
 		if after, found := strings.CutPrefix(line, "Code:"); found {

@@ -29,7 +29,7 @@ func (b *FlushFrameBuilder) Reset() {
 
 // Build computes the next outbound frame from the current screen state
 // and client snapshot. Returns nil if there is nothing to send.
-func (b *FlushFrameBuilder) Build(screen *vt.Screen, resized bool, clients map[*websocket.Conn]uint64) *flushFrame {
+func (b *FlushFrameBuilder) Build(screen *vt.Screen, resized bool, clients map[*websocket.Conn]uint64) *FlushFrame {
 	if !resized {
 		screen.DrainScrollback()
 		return nil
@@ -84,7 +84,7 @@ func (b *FlushFrameBuilder) Build(screen *vt.Screen, resized bool, clients map[*
 		b.modesAnnounced = true
 	}
 
-	return &flushFrame{
+	return &FlushFrame{
 		clients:      clients,
 		rows:         rows,
 		scrollLines:  scrollOut,

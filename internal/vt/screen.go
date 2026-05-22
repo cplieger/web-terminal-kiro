@@ -23,22 +23,21 @@ import (
 
 // Screen is a minimal VT100 screen buffer with SGR support.
 type Screen struct {
+	FlushHoldUntil time.Time
+	Cells          [][]Cell
+	Drained        [][]WireRun
+	Response       []byte
 	ParserState
 	altScreenState
 	CursorState
-
-	FlushHoldUntil   time.Time
-	Cells            [][]Cell
-	Drained          [][]WireRun
-	Response         []byte
-	scrollTop        int
+	scrollBottom     int
 	Width            int
 	Height           int
-	scrollBottom     int
+	scrollTop        int
 	lastPrintedRune  rune
 	lastPrintedStyle Style
-	AutoWrap         bool
 	OriginMode       bool
+	AutoWrap         bool
 	pendingWrap      bool
 	BracketedPaste   bool
 	AppCursorKeys    bool

@@ -19,6 +19,11 @@ import (
 	"vibecli/internal/auth"
 )
 
+const (
+	tsUnknown     = "unknown"
+	tsIdentityCast = "(v) => v as unknown"
+)
+
 // EnumDef defines a named string enum with its valid values.
 type EnumDef struct{ Values []string }
 
@@ -121,7 +126,7 @@ func tsType(t reflect.Type) string {
 		}
 	}
 	if t == reflect.TypeFor[json.RawMessage]() {
-		return "unknown"
+		return tsUnknown
 	}
 	if t == reflect.TypeFor[time.Time]() {
 		return "string"
@@ -140,11 +145,11 @@ func tsType(t reflect.Type) string {
 	case reflect.Map:
 		return "Record<string, " + tsType(t.Elem()) + ">"
 	case reflect.Interface:
-		return "unknown"
+		return tsUnknown
 	case reflect.Struct:
-		return "unknown"
+		return tsUnknown
 	}
-	return "unknown"
+	return tsUnknown
 }
 
 // tsEnumName returns the TS name for a Go enum type.
@@ -291,10 +296,10 @@ func elemDecoderExpr(t reflect.Type) string {
 		return "(v) => { if (typeof v !== \"string\") throw new TypeError(\"expected string\"); return v as string; }"
 	}
 	if t.Kind() == reflect.Interface {
-		return "(v) => v as unknown"
+		return tsIdentityCast
 	}
 	if isRawMessage(t) {
-		return "(v) => v as unknown"
+		return tsIdentityCast
 	}
 	if t.Kind() == reflect.Map {
 		return "(v) => asObject(v)"
@@ -302,7 +307,7 @@ func elemDecoderExpr(t reflect.Type) string {
 	if t.Name() != "" {
 		return decoderName(t.Name())
 	}
-	return "(v) => v as unknown"
+	return tsIdentityCast
 }
 
 // generateTypes writes types.gen.ts.

@@ -88,7 +88,7 @@ type sessionState struct {
 // stored as an atomic pointer so flushLoop's snapshot pass can read
 // it without the handler-wide mutex (snapshot copies the pointer
 // value into a local; sessionState mutations stay under h.mu).
-type clientState struct {
+type ClientState struct {
 	session atomic.Pointer[sessionState]
 }
 
@@ -252,7 +252,7 @@ func (h *Handler) readLoop(ctx context.Context) {
 // outside the lock. Holding the lock during the network write would
 // stall every other goroutine on a slow client; the snapshot pattern
 // keeps the lock window bounded to local memory work.
-type flushFrame struct {
+type FlushFrame struct {
 	clients      map[*websocket.Conn]uint64
 	rows         [][]vt.WireRun
 	scrollLines  [][]vt.WireRun
@@ -270,7 +270,7 @@ type flushFrame struct {
 // buildFrame computes the next outbound frame under h.mu. Returns nil
 // if there is nothing to send (no resize yet, flush held, or no
 // changed rows and no scroll lines).
-func (h *Handler) buildFrame() *flushFrame {
+func (h *Handler) buildFrame() *FlushFrame {
 	h.mu.Lock()
 	clients := h.registry.Snapshot()
 	frame := h.builder.Build(h.screen, h.resized, clients)
@@ -408,7 +408,7 @@ func (h *Handler) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) handleControl(ws *websocket.Conn, state *clientState, payload []byte) {
+func (h *Handler) handleControl(ws *websocket.Conn, state *ClientState, payload []byte) {
 	var c controlMsg
 	if err := json.Unmarshal(payload, &c); err != nil {
 		return
@@ -425,7 +425,7 @@ func (h *Handler) handleControl(ws *websocket.Conn, state *clientState, payload 
 // handleResume looks up or creates the session for sessionID, attaches
 // it to state, replies with a resumeAck carrying the server's current
 // bytesReceived count, and opportunistically GCs idle sessions.
-func (h *Handler) handleResume(ws *websocket.Conn, state *clientState, sessionID string) {
+func (h *Handler) handleResume(ws *websocket.Conn, state *ClientState, sessionID string) {
 	ack := h.registry.ResolveSession(state, sessionID)
 	// Force a full repaint on the next flush so the resuming client
 	// sees the current screen state rather than diffing against a
