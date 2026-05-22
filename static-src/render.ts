@@ -397,20 +397,30 @@ function flushScreenInner(rows: WireRun[][], cursor: [number, number], changed: 
     if (row !== undefined && el) {
       const cursorAt = (!cursorHidden && idx === cursorRow) ? cursorCol : -1;
       const newSpans = buildRowSpans(row, cursorAt);
-      // Skip DOM update if the text content is identical — preserves
-      // browser find-in-page highlights and avoids unnecessary reflows.
-      const newText = newSpans.map(s => s.textContent).join("");
-      if (el.textContent !== newText || el.childElementCount === 0) {
-        el.replaceChildren(...newSpans);
+      // Skip DOM update if the text content is identical AND the cursor
+      // is not involved — preserves browser find-in-page highlights and
+      // avoids unnecessary reflows. Cursor rows always update because
+      // the cursor span class/position may differ even when text is the
+      // same (arrow keys, space-over-space, Enter clearing input).
+      const hasCursor = cursorAt >= 0;
+      const hadCursor = el.querySelector(".term-cursor, .term-cursor-underline, .term-cursor-bar") !== null;
+      if (!hasCursor && !hadCursor) {
+        const newText = newSpans.map(s => s.textContent).join("");
+        if (el.textContent === newText && el.childElementCount > 0) {
+          continue;
+        }
       }
+      el.replaceChildren(...newSpans);
     }
   }
   if (onCursorMove) onCursorMove();
 
   // Collapse the browser's internal caret to the end of the
-  // contenteditable so typing doesn't scroll to the top.
+  // contenteditable so typing doesn't scroll to the top — but only
+  // when the user has no active text selection (preserves copy ability
+  // during spinner/progress updates).
   const sel = window.getSelection();
-  if (sel && document.activeElement === output) {
+  if (sel && document.activeElement === output && sel.isCollapsed) {
     sel.selectAllChildren(output);
     sel.collapseToEnd();
   }

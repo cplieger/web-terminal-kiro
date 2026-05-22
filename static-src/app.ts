@@ -414,7 +414,16 @@ function showCtxMenu(x: number, y: number): void {
     ctxMenu.appendChild(copyBtn);
   }
 
-  if (!isIOS) {
+  const selectAllBtn = document.createElement("button");
+  selectAllBtn.textContent = "Select All";
+  selectAllBtn.addEventListener("click", () => {
+    const s = window.getSelection();
+    if (s) { s.selectAllChildren(outputEl); }
+    hideCtxMenu();
+  });
+  ctxMenu.appendChild(selectAllBtn);
+
+  if (!isIOS || lastPointerType !== "touch") {
     const pasteBtn = document.createElement("button");
     pasteBtn.textContent = "Paste";
     pasteBtn.addEventListener("click", () => {

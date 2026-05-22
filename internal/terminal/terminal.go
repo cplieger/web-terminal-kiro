@@ -434,6 +434,10 @@ func (h *Handler) handleResume(ws *websocket.Conn, state *ClientState, sessionID
 	// updated while there were no clients connected at all).
 	h.mu.Lock()
 	h.builder.Reset()
+	// Discard any scrollback that accumulated while the client was
+	// disconnected — the client already has it from before the
+	// disconnect. Sending it again would cause duplicated content.
+	h.screen.DrainScrollback()
 	h.mu.Unlock()
 	// Send binary resumeAck so client can trim its outbox to `ack`
 	// and retransmit anything beyond it.
