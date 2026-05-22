@@ -1,0 +1,32 @@
+__vite_ssr_exportName__("setModes", () => { try { return setModes } catch {} });
+__vite_ssr_exportName__("isBracketedPaste", () => { try { return isBracketedPaste } catch {} });
+__vite_ssr_exportName__("isApplicationCursor", () => { try { return isApplicationCursor } catch {} });
+// Current DEC private mode state, as last announced by the server via
+// a wireMsgModes frame. Used by:
+//   - composition.ts onPaste: wraps in \e[200~..\e[201~ only when
+//     bracketedPaste is on; otherwise sends raw text. Same for the
+//     Ctrl+Shift+V handler in app.ts.
+//   - keyboard.ts arrow-key encoder: emits SS3 (ESC O letter) when
+//     applicationCursor is true, CSI (ESC [ letter) otherwise.
+//
+// Defaults match the conservative "always-on" assumption the client
+// used before PROTO-01 — so until the first modes frame arrives,
+// behavior is unchanged. The server prime the client with a baseline
+// modes frame on the first flush, so the steady state is the server's
+// truth, not these defaults.
+let bracketedPaste = true;
+let applicationCursor = false;
+function setModes(bracketed, appCursor) {
+	bracketedPaste = bracketed;
+	applicationCursor = appCursor;
+};
+function isBracketedPaste() {
+	return bracketedPaste;
+};
+function isApplicationCursor() {
+	return applicationCursor;
+}
+//# sourceMappingSource=vite-generated
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJtYXBwaW5ncyI6IkFBQUEsQ0FBQTs7Ozs7Ozs7Ozs7Ozs7OztBQWNBLElBQUksaUJBQWlCO0FBQ3JCLElBQUksb0JBQW9CO0FBRWpCLFNBQVMsU0FBUyxXQUFvQixXQUEwQjtDQUNyRSxpQkFBaUI7Q0FDakIsb0JBQW9CO0FBQ3RCO0FBRU8sU0FBUyxtQkFBNEI7Q0FDMUMsT0FBTztBQUNUO0FBRU8sU0FBUyxzQkFBK0I7Q0FDN0MsT0FBTztBQUNUIiwibmFtZXMiOltdLCJpZ25vcmVMaXN0IjpbXSwic291cmNlcyI6WyJtb2Rlcy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvLyBDdXJyZW50IERFQyBwcml2YXRlIG1vZGUgc3RhdGUsIGFzIGxhc3QgYW5ub3VuY2VkIGJ5IHRoZSBzZXJ2ZXIgdmlhXG4vLyBhIHdpcmVNc2dNb2RlcyBmcmFtZS4gVXNlZCBieTpcbi8vICAgLSBjb21wb3NpdGlvbi50cyBvblBhc3RlOiB3cmFwcyBpbiBcXGVbMjAwfi4uXFxlWzIwMX4gb25seSB3aGVuXG4vLyAgICAgYnJhY2tldGVkUGFzdGUgaXMgb247IG90aGVyd2lzZSBzZW5kcyByYXcgdGV4dC4gU2FtZSBmb3IgdGhlXG4vLyAgICAgQ3RybCtTaGlmdCtWIGhhbmRsZXIgaW4gYXBwLnRzLlxuLy8gICAtIGtleWJvYXJkLnRzIGFycm93LWtleSBlbmNvZGVyOiBlbWl0cyBTUzMgKEVTQyBPIGxldHRlcikgd2hlblxuLy8gICAgIGFwcGxpY2F0aW9uQ3Vyc29yIGlzIHRydWUsIENTSSAoRVNDIFsgbGV0dGVyKSBvdGhlcndpc2UuXG4vL1xuLy8gRGVmYXVsdHMgbWF0Y2ggdGhlIGNvbnNlcnZhdGl2ZSBcImFsd2F5cy1vblwiIGFzc3VtcHRpb24gdGhlIGNsaWVudFxuLy8gdXNlZCBiZWZvcmUgUFJPVE8tMDEg4oCUIHNvIHVudGlsIHRoZSBmaXJzdCBtb2RlcyBmcmFtZSBhcnJpdmVzLFxuLy8gYmVoYXZpb3IgaXMgdW5jaGFuZ2VkLiBUaGUgc2VydmVyIHByaW1lIHRoZSBjbGllbnQgd2l0aCBhIGJhc2VsaW5lXG4vLyBtb2RlcyBmcmFtZSBvbiB0aGUgZmlyc3QgZmx1c2gsIHNvIHRoZSBzdGVhZHkgc3RhdGUgaXMgdGhlIHNlcnZlcidzXG4vLyB0cnV0aCwgbm90IHRoZXNlIGRlZmF1bHRzLlxuXG5sZXQgYnJhY2tldGVkUGFzdGUgPSB0cnVlO1xubGV0IGFwcGxpY2F0aW9uQ3Vyc29yID0gZmFsc2U7XG5cbmV4cG9ydCBmdW5jdGlvbiBzZXRNb2RlcyhicmFja2V0ZWQ6IGJvb2xlYW4sIGFwcEN1cnNvcjogYm9vbGVhbik6IHZvaWQge1xuICBicmFja2V0ZWRQYXN0ZSA9IGJyYWNrZXRlZDtcbiAgYXBwbGljYXRpb25DdXJzb3IgPSBhcHBDdXJzb3I7XG59XG5cbmV4cG9ydCBmdW5jdGlvbiBpc0JyYWNrZXRlZFBhc3RlKCk6IGJvb2xlYW4ge1xuICByZXR1cm4gYnJhY2tldGVkUGFzdGU7XG59XG5cbmV4cG9ydCBmdW5jdGlvbiBpc0FwcGxpY2F0aW9uQ3Vyc29yKCk6IGJvb2xlYW4ge1xuICByZXR1cm4gYXBwbGljYXRpb25DdXJzb3I7XG59XG4iXSwiZmlsZSI6Ii9tb2Rlcy50cyJ9
+
+//# vitestCache=W3siZmlsZSI6IjEiLCJpZCI6IjEiLCJ1cmwiOiIyIiwiaW1wb3J0ZWRVcmxzIjoiMyIsIm1hcHBpbmdzIjpmYWxzZX0sIi93b3Jrc3BhY2UvaG9tZWxhYi9hcHBzL3ZpYmVjbGkvc3RhdGljLXNyYy9tb2Rlcy50cyIsIi9tb2Rlcy50cyIsW11d

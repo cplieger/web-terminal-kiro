@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "Tool manifest read by setup-tools.sh on container boot.",
+    "Add tools your AI agent should have access to; they install into",
+    "/config/tools/ and persist across container restarts.",
+    "",
+    "Sections: binary, custom, apt.",
+    "Each tool has a version and an 'update' block; set method to 'manual'",
+    "to pin, or use 'github'/'url' to track upstream.",
+    "",
+    "kiro-cli is downloaded separately by entrypoint.sh (licensing).",
+    "dtach, git, jq, less, curl, ca-certificates, openssh-client, unzip",
+    "are baked into the image (core runtime deps)."
+  ],
+  "binary": {
+    "gh": {
+      "version": "v2.74.1",
+      "update": {
+        "method": "github",
+        "repo": "cli/cli"
+      },
+      "install": "curl -fsSL https://github.com/cli/cli/releases/download/${VERSION}/gh_${VERSION_NOPFX}_linux_amd64.tar.gz | tar -xz --strip-components=1 -C ${TOOLS} gh_${VERSION_NOPFX}_linux_amd64/bin/gh"
+    }
+  },
+  "custom": {},
+  "apt": {}
+}

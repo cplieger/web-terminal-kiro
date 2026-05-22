@@ -1,0 +1,17 @@
+{
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsgo -project tsconfig.json",
+    "typecheck:tests": "tsgo -project tsconfig.test.json",
+    "test": "vitest --run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest --run --coverage"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.1",
+    "@vitest/coverage-v8": "4.1.7",
+    "fast-check": "4.8.0",
+    "happy-dom": "20.9.0",
+    "vitest": "4.1.7"
+  }
+}

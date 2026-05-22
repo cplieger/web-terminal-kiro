@@ -1,0 +1,42 @@
+__vite_ssr_exportName__("CONTROL_FRAME_PREFIX", () => { try { return CONTROL_FRAME_PREFIX } catch {} });
+__vite_ssr_exportName__("controlFrame", () => { try { return controlFrame } catch {} });
+// Pure wire-format helpers for the vibecli WebSocket protocol.
+//
+// Protocol: every WebSocket message vibecli sends to the server is a
+// binary frame whose first byte tags the message type:
+//
+//   0x00  control message (JSON-encoded {type, ...} payload)
+//   any   raw terminal input bytes
+//
+// The 0x00 prefix is the only framing convention; raw input flows
+// through the rest of the byte space (xterm.js writes UTF-8 + ANSI
+// escapes, none of which collide with the single-byte 0x00 tag at
+// frame start because terminal input never starts a write with NUL).
+// See terminal.go's frame parser for the receiving end.
+//
+// Pulled into a dedicated module so unit tests can exercise the
+// framing without spinning up a WebSocket. Pure: no DOM, no
+// WebSocket, no module-level state.
+/** Type tag prefix for control messages. */
+const CONTROL_FRAME_PREFIX = 0;
+/**
+* controlFrame builds the 0x00-prefixed binary frame containing the
+* JSON encoding of msg. The result is the exact bytes to pass to
+* `WebSocket.send(...)`.
+*
+* Generic over the message type so callers retain compile-time
+* checking of the JSON shape. Returns a Uint8Array backed by a
+* fresh ArrayBuffer (not a SharedArrayBuffer slice) so it satisfies
+* WebSocket.send's BufferSource parameter.
+*/
+function controlFrame(msg) {
+	const body = new TextEncoder().encode(JSON.stringify(msg));
+	const frame = new Uint8Array(new ArrayBuffer(body.length + 1));
+	frame[0] = CONTROL_FRAME_PREFIX;
+	frame.set(body, 1);
+	return frame;
+}
+//# sourceMappingSource=vite-generated
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJtYXBwaW5ncyI6IkFBQUEsQ0FBQTs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFtQk8sTUFBTSx1QkFBdUI7Ozs7Ozs7Ozs7O0FBWTdCLFNBQVMsYUFBZ0IsS0FBaUM7Q0FDL0QsTUFBTSxPQUFPLElBQUksWUFBWSxFQUFFLE9BQU8sS0FBSyxVQUFVLEdBQUcsQ0FBQztDQUN6RCxNQUFNLFFBQVEsSUFBSSxXQUFXLElBQUksWUFBWSxLQUFLLFNBQVMsQ0FBQyxDQUFDO0NBQzdELE1BQU0sS0FBSztDQUNYLE1BQU0sSUFBSSxNQUFNLENBQUM7Q0FDakIsT0FBTztBQUNUIiwibmFtZXMiOltdLCJpZ25vcmVMaXN0IjpbXSwic291cmNlcyI6WyJ3aXJlLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8vIFB1cmUgd2lyZS1mb3JtYXQgaGVscGVycyBmb3IgdGhlIHZpYmVjbGkgV2ViU29ja2V0IHByb3RvY29sLlxuLy9cbi8vIFByb3RvY29sOiBldmVyeSBXZWJTb2NrZXQgbWVzc2FnZSB2aWJlY2xpIHNlbmRzIHRvIHRoZSBzZXJ2ZXIgaXMgYVxuLy8gYmluYXJ5IGZyYW1lIHdob3NlIGZpcnN0IGJ5dGUgdGFncyB0aGUgbWVzc2FnZSB0eXBlOlxuLy9cbi8vICAgMHgwMCAgY29udHJvbCBtZXNzYWdlIChKU09OLWVuY29kZWQge3R5cGUsIC4uLn0gcGF5bG9hZClcbi8vICAgYW55ICAgcmF3IHRlcm1pbmFsIGlucHV0IGJ5dGVzXG4vL1xuLy8gVGhlIDB4MDAgcHJlZml4IGlzIHRoZSBvbmx5IGZyYW1pbmcgY29udmVudGlvbjsgcmF3IGlucHV0IGZsb3dzXG4vLyB0aHJvdWdoIHRoZSByZXN0IG9mIHRoZSBieXRlIHNwYWNlICh4dGVybS5qcyB3cml0ZXMgVVRGLTggKyBBTlNJXG4vLyBlc2NhcGVzLCBub25lIG9mIHdoaWNoIGNvbGxpZGUgd2l0aCB0aGUgc2luZ2xlLWJ5dGUgMHgwMCB0YWcgYXRcbi8vIGZyYW1lIHN0YXJ0IGJlY2F1c2UgdGVybWluYWwgaW5wdXQgbmV2ZXIgc3RhcnRzIGEgd3JpdGUgd2l0aCBOVUwpLlxuLy8gU2VlIHRlcm1pbmFsLmdvJ3MgZnJhbWUgcGFyc2VyIGZvciB0aGUgcmVjZWl2aW5nIGVuZC5cbi8vXG4vLyBQdWxsZWQgaW50byBhIGRlZGljYXRlZCBtb2R1bGUgc28gdW5pdCB0ZXN0cyBjYW4gZXhlcmNpc2UgdGhlXG4vLyBmcmFtaW5nIHdpdGhvdXQgc3Bpbm5pbmcgdXAgYSBXZWJTb2NrZXQuIFB1cmU6IG5vIERPTSwgbm9cbi8vIFdlYlNvY2tldCwgbm8gbW9kdWxlLWxldmVsIHN0YXRlLlxuXG4vKiogVHlwZSB0YWcgcHJlZml4IGZvciBjb250cm9sIG1lc3NhZ2VzLiAqL1xuZXhwb3J0IGNvbnN0IENPTlRST0xfRlJBTUVfUFJFRklYID0gMHgwMDtcblxuLyoqXG4gKiBjb250cm9sRnJhbWUgYnVpbGRzIHRoZSAweDAwLXByZWZpeGVkIGJpbmFyeSBmcmFtZSBjb250YWluaW5nIHRoZVxuICogSlNPTiBlbmNvZGluZyBvZiBtc2cuIFRoZSByZXN1bHQgaXMgdGhlIGV4YWN0IGJ5dGVzIHRvIHBhc3MgdG9cbiAqIGBXZWJTb2NrZXQuc2VuZCguLi4pYC5cbiAqXG4gKiBHZW5lcmljIG92ZXIgdGhlIG1lc3NhZ2UgdHlwZSBzbyBjYWxsZXJzIHJldGFpbiBjb21waWxlLXRpbWVcbiAqIGNoZWNraW5nIG9mIHRoZSBKU09OIHNoYXBlLiBSZXR1cm5zIGEgVWludDhBcnJheSBiYWNrZWQgYnkgYVxuICogZnJlc2ggQXJyYXlCdWZmZXIgKG5vdCBhIFNoYXJlZEFycmF5QnVmZmVyIHNsaWNlKSBzbyBpdCBzYXRpc2ZpZXNcbiAqIFdlYlNvY2tldC5zZW5kJ3MgQnVmZmVyU291cmNlIHBhcmFtZXRlci5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGNvbnRyb2xGcmFtZTxUPihtc2c6IFQpOiBVaW50OEFycmF5PEFycmF5QnVmZmVyPiB7XG4gIGNvbnN0IGJvZHkgPSBuZXcgVGV4dEVuY29kZXIoKS5lbmNvZGUoSlNPTi5zdHJpbmdpZnkobXNnKSk7XG4gIGNvbnN0IGZyYW1lID0gbmV3IFVpbnQ4QXJyYXkobmV3IEFycmF5QnVmZmVyKGJvZHkubGVuZ3RoICsgMSkpO1xuICBmcmFtZVswXSA9IENPTlRST0xfRlJBTUVfUFJFRklYO1xuICBmcmFtZS5zZXQoYm9keSwgMSk7XG4gIHJldHVybiBmcmFtZTtcbn1cbiJdLCJmaWxlIjoiL3dpcmUudHMifQ==
+
+//# vitestCache=W3siZmlsZSI6IjEiLCJpZCI6IjEiLCJ1cmwiOiIyIiwiaW1wb3J0ZWRVcmxzIjoiMyIsIm1hcHBpbmdzIjpmYWxzZX0sIi93b3Jrc3BhY2UvaG9tZWxhYi9hcHBzL3ZpYmVjbGkvc3RhdGljLXNyYy93aXJlLnRzIiwiL3dpcmUudHMiLFtdXQ==

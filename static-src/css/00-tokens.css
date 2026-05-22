@@ -1,0 +1,31 @@
+/* ===== Tokens ===== */
+:root {
+  interpolate-size: allow-keywords;
+
+  --bg: oklch(0% 0 0deg);
+  --surface: oklch(16% 0.005 280deg / 70%);
+  --border: oklch(100% 0 0deg / 15%);
+  --text: oklch(90% 0.005 280deg);
+  --text-active: color-mix(in oklch, var(--text) 15%, transparent);
+  --radius: 0.75rem;
+  --radius-inner: 0.5rem;
+  --touch-target: 2.75rem; /* 44px — Apple HIG minimum */
+  --pill-outer: calc(var(--touch-target) + 2 * var(--sp-1) + 2px); /* touch-target + 2×padding + 2×border */
+  --icon: 1.125rem;        /* 18px */
+  --icon-desktop: 1rem;    /* 16px */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --font-ui: -apple-system, blinkmacsystemfont, "SF Pro Text", system-ui, sans-serif;
+  --font-mono: "MonaspiceNe NFM", monospace;
+  --dur-micro: 0.1s;
+  --dur-standard: 0.2s;
+  --dur-enter: 0.25s;
+  --dur-exit: 0.15s;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-enter: cubic-bezier(0, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --blur: blur(8px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+
