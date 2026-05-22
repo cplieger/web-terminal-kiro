@@ -340,7 +340,8 @@ export function handleScreen(msg: ScreenMessage): void {
   // in the newer frame's changed set.
   if (pendingRows !== null && pendingRows.length === msg.rows.length) {
     for (const idx of msg.changed) {
-      pendingRows[idx] = msg.rows[idx];
+      const row = msg.rows[idx];
+      if (row !== undefined) pendingRows[idx] = row;
     }
   } else {
     pendingRows = msg.rows;
