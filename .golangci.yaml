@@ -78,3 +78,15 @@ linters:
       - path: internal/
         linters:
           - goconst
+      # Integer overflow: deliberate int->uint64 conversion for terminal sizes
+      - text: "G115:"
+        linters:
+          - gosec
+      # Struct alignment: not optimizing for memory layout in this codebase
+      - text: "fieldalignment:"
+        linters:
+          - govet
+      # Unexported return types: internal API design choice
+      - text: "unexported-return"
+        linters:
+          - revive
