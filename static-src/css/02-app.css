@@ -424,17 +424,20 @@
   border-radius: var(--radius);
   padding: var(--sp-1);
   z-index: 30;
-  opacity: 1;
-  scale: 1;
-  transition: opacity 0.15s ease, scale 0.15s ease, display 0.15s allow-discrete;
+  opacity: 0;
+  scale: 0.95;
+  transition:
+    opacity 0.15s ease,
+    scale 0.15s ease,
+    display 0.15s allow-discrete;
 }
 
 .ctx-menu.visible {
   display: flex;
-}
+  opacity: 1;
+  scale: 1;
 
-@starting-style {
-  .ctx-menu.visible {
+  @starting-style {
     opacity: 0;
     scale: 0.95;
   }
