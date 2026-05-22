@@ -468,10 +468,7 @@ func (h *Handler) handleResume(ws *websocket.Conn, state *ClientState, sessionID
 	// small on slow links.
 	const replayChunk = 50
 	for i := 0; i < len(scrollLines); i += replayChunk {
-		end := i + replayChunk
-		if end > len(scrollLines) {
-			end = len(scrollLines)
-		}
+		end := min(i+replayChunk, len(scrollLines))
 		payload := encodeScrollMsg(ack, scrollLines[i:end])
 		ws.Write(ctx, websocket.MessageBinary, payload) //nolint:errcheck // best-effort
 	}
