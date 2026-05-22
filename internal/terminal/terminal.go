@@ -64,6 +64,12 @@ const (
 
 	ctlTypeResize = "resize"
 	ctlTypeResume = "resume"
+
+	// scrollbackCapacity is the number of scrollback lines the server
+	// retains for replay to new/reconnecting clients. Matches the
+	// client's MAX_HISTORY so a full page refresh recovers all history
+	// the client would have kept anyway.
+	scrollbackCapacity = 1000
 )
 
 // Options configures the Handler. Command is required and carries
@@ -79,8 +85,9 @@ type Options struct {
 // to send back, which the client compares to its sent count to
 // determine which bytes (if any) need retransmission after a blip.
 type sessionState struct {
-	lastSeen      time.Time
-	bytesReceived uint64
+	lastSeen           time.Time
+	bytesReceived      uint64
+	replayedScrollback bool // true after first resume; prevents re-replay on reconnect
 }
 
 // clientState tracks per-WS-connection state. session is resolved
@@ -102,28 +109,30 @@ type ClientState struct {
 // performs ws.Write outside the lock so a slow client can't block
 // readLoop / handleControl / new handleWS connections.
 type Handler struct {
-	ptmx      *os.File
-	cmd       *exec.Cmd
-	screen    *vt.Screen
-	registry  *ClientRegistry
-	builder   *FlushFrameBuilder
-	cancel    context.CancelFunc
-	opts      Options
-	rawRing   []byte
-	bootEpoch int64
-	mu        sync.Mutex
-	started   atomic.Bool
-	resized   bool
+	ptmx       *os.File
+	cmd        *exec.Cmd
+	screen     *vt.Screen
+	registry   *ClientRegistry
+	builder    *FlushFrameBuilder
+	scrollback *scrollbackRing
+	cancel     context.CancelFunc
+	opts       Options
+	rawRing    []byte
+	bootEpoch  int64
+	mu         sync.Mutex
+	started    atomic.Bool
+	resized    bool
 }
 
 // NewHandler returns a terminal handler.
 func NewHandler(opts Options) *Handler {
 	return &Handler{
-		opts:      opts,
-		screen:    vt.New(defaultRows, defaultCols),
-		registry:  NewClientRegistry(),
-		builder:   &FlushFrameBuilder{},
-		bootEpoch: time.Now().UnixNano(),
+		opts:       opts,
+		screen:     vt.New(defaultRows, defaultCols),
+		registry:   NewClientRegistry(),
+		builder:    &FlushFrameBuilder{},
+		scrollback: newScrollbackRing(scrollbackCapacity),
+		bootEpoch:  time.Now().UnixNano(),
 	}
 }
 
@@ -274,6 +283,9 @@ func (h *Handler) buildFrame() *FlushFrame {
 	h.mu.Lock()
 	clients := h.registry.Snapshot()
 	frame := h.builder.Build(h.screen, h.resized, clients)
+	if frame != nil && len(frame.scrollLines) > 0 {
+		h.scrollback.Append(frame.scrollLines)
+	}
 	h.mu.Unlock()
 	return frame
 }
@@ -426,7 +438,7 @@ func (h *Handler) handleControl(ws *websocket.Conn, state *ClientState, payload 
 // it to state, replies with a resumeAck carrying the server's current
 // bytesReceived count, and opportunistically GCs idle sessions.
 func (h *Handler) handleResume(ws *websocket.Conn, state *ClientState, sessionID string) {
-	ack := h.registry.ResolveSession(state, sessionID)
+	ack, needsReplay := h.registry.ResolveSession(state, sessionID)
 	// Force a full repaint on the next flush so the resuming client
 	// sees the current screen state rather than diffing against a
 	// `prevRowWires` it never saw (the prior client may have received
@@ -435,15 +447,34 @@ func (h *Handler) handleResume(ws *websocket.Conn, state *ClientState, sessionID
 	h.mu.Lock()
 	h.builder.Reset()
 	// Discard any scrollback that accumulated while the client was
-	// disconnected — the client already has it from before the
-	// disconnect. Sending it again would cause duplicated content.
+	// disconnected — it's already stored in the ring buffer and will
+	// be replayed below. Sending it via the normal flush path would
+	// duplicate lines the replay already delivered.
 	h.screen.DrainScrollback()
+	var scrollLines [][]vt.WireRun
+	if needsReplay {
+		scrollLines = h.scrollback.Lines()
+	}
 	h.mu.Unlock()
-	// Send binary resumeAck so client can trim its outbox to `ack`
-	// and retransmit anything beyond it.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	// Send resumeAck first so the client can trim its outbox.
 	ws.Write(ctx, websocket.MessageBinary, encodeResumeAck(ack, h.bootEpoch)) //nolint:errcheck // best-effort
+
+	// Replay the scrollback ring so the client has full history even
+	// after a page refresh. Send in chunks to keep individual frames
+	// small on slow links.
+	const replayChunk = 50
+	for i := 0; i < len(scrollLines); i += replayChunk {
+		end := i + replayChunk
+		if end > len(scrollLines) {
+			end = len(scrollLines)
+		}
+		payload := encodeScrollMsg(ack, scrollLines[i:end])
+		ws.Write(ctx, websocket.MessageBinary, payload) //nolint:errcheck // best-effort
+	}
 }
 
 // handleResize floors the requested dimensions to a sane minimum and

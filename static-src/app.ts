@@ -84,7 +84,7 @@ connection.init({
           ld.addEventListener("transitionend", () => ld.remove());
         }
       }
-      predict.onScreenFrame(msg.cursor[0], msg.cursor[1]);
+      predict.onScreenFrame(msg.cursor[0], msg.cursor[1], msg.cursorHidden);
     } else if (msg.type === "scroll") {
       render.handleScroll(msg);
     }

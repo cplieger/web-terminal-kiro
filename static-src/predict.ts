@@ -27,6 +27,7 @@ let predRow = 0;
 let predCol = 0;
 let predActive = false;
 let predPendingWrap = false; // matches server VT pendingWrap semantics
+let predFrozen = false; // true when server cursor is hidden (selection prompts)
 let cols = 80;
 let rows = 30;
 
@@ -45,19 +46,24 @@ export function setDimensions(c: number, r: number): void {
   if (r > 0) rows = r;
 }
 
-/** Reset prediction to the server's reported cursor and re-arm. */
-export function onScreenFrame(serverRow: number, serverCol: number): void {
+/** Reset prediction to the server's reported cursor and re-arm.
+ *  When the server cursor is hidden (e.g. during a selection prompt),
+ *  prediction is frozen — the ghost cursor disappears and typed input
+ *  doesn't move it. */
+export function onScreenFrame(serverRow: number, serverCol: number, cursorHidden?: boolean): void {
   predRow = serverRow;
   predCol = serverCol;
-  predActive = true;
   predPendingWrap = false;
+  predFrozen = cursorHidden ?? false;
+  predActive = !predFrozen;
   if (onChange) onChange();
 }
 
 /** Apply locally-typed input bytes to the predicted cursor. Bails out
- *  (suspending prediction) on the first byte we can't model. */
+ *  (suspending prediction) on the first byte we can't model. Also
+ *  bails when frozen (cursor hidden — user is in a selection prompt). */
 export function applyInput(bytes: Uint8Array): void {
-  if (!predActive) return;
+  if (!predActive || predFrozen) return;
   let i = 0;
   while (i < bytes.length) {
     const b = bytes[i]!;
@@ -132,4 +138,10 @@ export function applyInput(bytes: Uint8Array): void {
  *  the overlay so the user sees only one cursor. */
 export function get(): { row: number; col: number; active: boolean } {
   return { row: predRow, col: predCol, active: predActive };
+}
+
+/** True when the server cursor is hidden (selection/approval prompts).
+ *  Callers can use this to suppress local echo of printable chars. */
+export function isFrozen(): boolean {
+  return predFrozen;
 }

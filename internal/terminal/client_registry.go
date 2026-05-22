@@ -58,8 +58,10 @@ func (r *ClientRegistry) Snapshot() map[*websocket.Conn]uint64 {
 
 // ResolveSession looks up or creates a session for the given ID,
 // attaches it to the client state, and returns the session's current
-// bytesReceived. Opportunistically GCs sessions idle >10 min.
-func (r *ClientRegistry) ResolveSession(state *ClientState, sessionID string) uint64 {
+// bytesReceived and whether scrollback replay is needed (true on first
+// resume for this sessionId — i.e. page refresh or new tab).
+// Opportunistically GCs sessions idle >10 min.
+func (r *ClientRegistry) ResolveSession(state *ClientState, sessionID string) (ack uint64, needsReplay bool) {
 	r.mu.Lock()
 	sess, ok := r.sessions[sessionID]
 	if !ok {
@@ -71,10 +73,12 @@ func (r *ClientRegistry) ResolveSession(state *ClientState, sessionID string) ui
 			}
 		}
 	}
+	needsReplay = !sess.replayedScrollback
+	sess.replayedScrollback = true
 	state.session.Store(sess)
-	ack := sess.bytesReceived
+	ack = sess.bytesReceived
 	r.mu.Unlock()
-	return ack
+	return ack, needsReplay
 }
 
 // IncrementReceived adds n to the session's bytesReceived counter.

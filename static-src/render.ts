@@ -339,12 +339,51 @@ export function handleScreen(msg: ScreenMessage): void {
   pendingCursorBlink = msg.cursorBlink ?? true;
   if (msg.bell) pendingBell = true;
   for (const idx of msg.changed) pendingChanged.add(idx);
-  if (pendingFrame !== undefined) return;
-  pendingFrame = requestAnimationFrame(flushScreen);
+  scheduleFlush();
 }
 
-function flushScreen(): void {
+function scheduleFlush(): void {
+  if (pendingFrame !== undefined) return;
+  pendingFrame = requestAnimationFrame(flushAll);
+}
+
+function flushAll(): void {
   pendingFrame = undefined;
+
+  // Process scroll lines FIRST (insert above live zone) so the live
+  // zone indices remain stable for the screen update that follows.
+  // Doing both in one rAF eliminates the visual duplication that
+  // occurred when scroll insertions and screen rewrites painted in
+  // separate frames.
+  if (pendingScrollback.length > 0) {
+    const batch = pendingScrollback.splice(0);
+    const liveStart = allRows.length - liveCount;
+    const refNode = liveStart < allRows.length ? allRows[liveStart]! : null;
+
+    // Scroll anchoring: if the user is scrolled up, inserting rows
+    // above the viewport shifts content down. Compensate by adding
+    // the inserted height to scrollTop so the viewport stays put.
+    const anchorScroll = scroll.isUserScrolledUp();
+    const prevScrollTop = anchorScroll ? termWrap.scrollTop : 0;
+    const prevScrollHeight = anchorScroll ? termWrap.scrollHeight : 0;
+
+    for (const line of batch) {
+      const div = document.createElement("div");
+      div.className = "term-row";
+      div.replaceChildren(...buildRowSpans(line, -1));
+      output.insertBefore(div, refNode);
+      allRows.splice(allRows.length - liveCount, 0, div);
+    }
+    trimHistory();
+
+    if (anchorScroll) {
+      const heightDelta = termWrap.scrollHeight - prevScrollHeight;
+      if (heightDelta > 0) {
+        termWrap.scrollTop = prevScrollTop + heightDelta;
+      }
+    }
+  }
+
   if (pendingRows === null || pendingCursor === null) return;
   const rows = pendingRows;
   const cursor = pendingCursor;
@@ -418,9 +457,11 @@ function flushScreenInner(rows: WireRun[][], cursor: [number, number], changed: 
   // Collapse the browser's internal caret to the end of the
   // contenteditable so typing doesn't scroll to the top — but only
   // when the user has no active text selection (preserves copy ability
-  // during spinner/progress updates).
+  // during spinner/progress updates) AND the user hasn't scrolled up
+  // (collapseToEnd triggers browser scroll-into-view on the caret,
+  // which yanks the viewport to the bottom).
   const sel = window.getSelection();
-  if (sel && document.activeElement === output && sel.isCollapsed) {
+  if (sel && document.activeElement === output && sel.isCollapsed && !scroll.isUserScrolledUp()) {
     sel.selectAllChildren(output);
     sel.collapseToEnd();
   }
@@ -430,7 +471,7 @@ function flushScreenInner(rows: WireRun[][], cursor: [number, number], changed: 
     setTimeout(() => output.classList.remove("term-bell"), 150);
   }
 
-  if (!scroll.isUserScrolledUp() && !scroll.isInUserScroll() && pendingScrollback.length === 0) {
+  if (!scroll.isUserScrolledUp() && !scroll.isInUserScroll()) {
     scroll.scrollToBottom();
   }
 }
@@ -438,38 +479,11 @@ function flushScreenInner(rows: WireRun[][], cursor: [number, number], changed: 
 // --- Scroll message handling (lines that fell off the server's screen) ---
 // These get inserted as frozen history above the live zone.
 const pendingScrollback: WireRun[][] = [];
-let pendingScrollFrame = false;
 
 export function handleScroll(msg: ScrollMessage): void {
   if (msg.lines.length === 0) return;
   pendingScrollback.push(...msg.lines);
-  if (!pendingScrollFrame) {
-    pendingScrollFrame = true;
-    requestAnimationFrame(processPendingScrollback);
-  }
-}
-
-function processPendingScrollback(): void {
-  pendingScrollFrame = false;
-  // Process ALL pending lines in one shot — no per-frame cap.
-  const batch = pendingScrollback.splice(0);
-
-  const liveStart = allRows.length - liveCount;
-  const refNode = liveStart < allRows.length ? allRows[liveStart]! : null;
-
-  for (const line of batch) {
-    const div = document.createElement("div");
-    div.className = "term-row";
-    div.replaceChildren(...buildRowSpans(line, -1));
-    output.insertBefore(div, refNode);
-    allRows.splice(allRows.length - liveCount, 0, div);
-  }
-
-  trimHistory();
-
-  if (!scroll.isInUserScroll()) {
-    scroll.scrollToBottom();
-  }
+  scheduleFlush();
 }
 
 // --- Cursor blink ---
