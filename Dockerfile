@@ -13,8 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # renovate: datasource=golang-version depName=golang
 ARG TARGETARCH
 ARG TARGETOS=linux
+ARG BUILDARCH
 ARG GO_VERSION=1.26.3
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" \
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${BUILDARCH}.tar.gz" \
     | tar -C /usr/local -xz
 ENV PATH="/usr/local/go/bin:${PATH}"
 
@@ -29,8 +30,9 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # See .github/renovate.json for the followTag rule.
 # renovate: datasource=npm depName=@typescript/native-preview
 ARG TSGO_VERSION=7.0.0-dev.20260421.2
-RUN curl -fsSL \
-      "https://registry.npmjs.org/@typescript/native-preview-linux-x64/-/native-preview-linux-x64-${TSGO_VERSION}.tgz" \
+RUN TSGO_ARCH=$([ "$BUILDARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
+    curl -fsSL \
+      "https://registry.npmjs.org/@typescript/native-preview-linux-${TSGO_ARCH}/-/native-preview-linux-${TSGO_ARCH}-${TSGO_VERSION}.tgz" \
     | tar -xz -C /tmp
 
 # Nerd Font. kiro-cli's diff UI uses nerd-font private-use-area
@@ -117,12 +119,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG PYREFLY_VERSION=1.0.0
 # renovate: datasource=npm depName=@typescript/native-preview
 ARG TSGO_VERSION=7.0.0-dev.20260421.2
-RUN curl -fsSL "https://github.com/facebook/pyrefly/releases/download/${PYREFLY_VERSION}/pyrefly-linux-x86_64.tar.gz" \
+ARG TARGETARCH
+RUN PYREFLY_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") && \
+    TSGO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
+    curl -fsSL "https://github.com/facebook/pyrefly/releases/download/${PYREFLY_VERSION}/pyrefly-linux-${PYREFLY_ARCH}.tar.gz" \
       | tar -xz -C /usr/local/bin pyrefly && \
     chmod +x /usr/local/bin/pyrefly && \
     printf '#!/bin/sh\nexec /usr/local/bin/pyrefly lsp\n' > /usr/local/bin/pyright && chmod +x /usr/local/bin/pyright && \
     cp /usr/local/bin/pyright /usr/local/bin/pyright-langserver && \
-    curl -fsSL "https://registry.npmjs.org/@typescript/native-preview-linux-x64/-/native-preview-linux-x64-${TSGO_VERSION}.tgz" \
+    curl -fsSL "https://registry.npmjs.org/@typescript/native-preview-linux-${TSGO_ARCH}/-/native-preview-linux-${TSGO_ARCH}-${TSGO_VERSION}.tgz" \
       | tar -xz -C /usr/local/bin --strip-components=2 --wildcards 'package/lib/tsgo' 'package/lib/lib*.d.ts' && \
     chmod +x /usr/local/bin/tsgo && \
     printf '%s\n' '#!/bin/sh' 'exec /usr/local/bin/tsgo --lsp --stdio' \
