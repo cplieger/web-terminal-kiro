@@ -1,0 +1,12 @@
+services:
+  vibecli:
+    image: ghcr.io/cplieger/vibecli:latest
+    container_name: vibecli
+    restart: unless-stopped
+    user: "1000:1000"
+
+    environment:
+      TZ: "Europe/Paris"
+
+    ports:
+      - "8080:8080"
