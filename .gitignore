@@ -6,3 +6,5 @@
 # editing the CSS sources.
 static/*.js
 static/wire/
+node_modules/
+
