@@ -273,7 +273,6 @@ func (s *Screen) dispatchCSI(final byte) {
 		modes := privateModes(args)
 		if modes[1049] || modes[47] || modes[1047] {
 			s.enterAltScreen()
-			s.Drained = nil
 			slog.Info("vt: alt-screen entered")
 		}
 		if modes[1048] {

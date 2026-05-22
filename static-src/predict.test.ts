@@ -123,3 +123,29 @@ describe("predict: setDimensions invalid input ignored", () => {
     expect(predict.get()).toEqual({ row: 1, col: 1, active: true });
   });
 });
+
+describe("predict: setDimensions clamps position", () => {
+  it("shrinking cols clamps predCol", () => {
+    predict.setDimensions(80, 24);
+    predict.onScreenFrame(0, 70);
+    predict.applyInput(enc("a")); // col = 71
+    predict.setDimensions(50, 24); // clamp to 49
+    expect(predict.get().col).toBe(49);
+  });
+
+  it("shrinking rows clamps predRow", () => {
+    predict.setDimensions(80, 24);
+    predict.onScreenFrame(20, 0);
+    predict.setDimensions(80, 10); // clamp to 9
+    expect(predict.get().row).toBe(9);
+  });
+});
+
+describe("predict: reset()", () => {
+  it("clears all state back to origin", () => {
+    predict.onScreenFrame(5, 10);
+    predict.applyInput(enc("abc"));
+    predict.reset();
+    expect(predict.get()).toEqual({ row: 0, col: 0, active: false });
+  });
+});

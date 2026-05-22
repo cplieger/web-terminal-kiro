@@ -44,6 +44,21 @@ export function subscribe(cb: () => void): void {
 export function setDimensions(c: number, r: number): void {
   if (c > 0) cols = c;
   if (r > 0) rows = r;
+  // Clamp predicted position to new bounds so a resize mid-typing
+  // doesn't leave predCol/predRow past the edge.
+  if (predCol >= cols) predCol = cols - 1;
+  if (predRow >= rows) predRow = rows - 1;
+}
+
+/** Reset all prediction state. Called on server restart to avoid
+ *  stale cursor overlay from the previous session. */
+export function reset(): void {
+  predRow = 0;
+  predCol = 0;
+  predActive = false;
+  predPendingWrap = false;
+  predFrozen = false;
+  if (onChange) onChange();
 }
 
 /** Reset prediction to the server's reported cursor and re-arm.

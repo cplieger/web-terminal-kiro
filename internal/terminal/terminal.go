@@ -215,6 +215,7 @@ func (h *Handler) ensureStarted(cols, rows int) error {
 	h.ptmx = ptmx
 	h.cmd = cmd
 	h.started.Store(true)
+	h.resized = true
 	h.screen.Resize(rows, cols)
 	slog.Info("terminal: process started",
 		"pid", cmd.Process.Pid, "command", h.opts.Command, "cols", cols, "rows", rows)

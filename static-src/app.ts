@@ -124,6 +124,7 @@ connection.init({
     // viewport. Banner explains why.
     render.resetScrollback();
     render.resetScreen();
+    predict.reset();
     status.restarted();
   },
 });

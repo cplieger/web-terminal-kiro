@@ -238,6 +238,8 @@ function buildRowSpans(runs: WireRun[], cursorAt: number): (HTMLSpanElement | HT
     for (const ch of run.t) {
       if (ch === "\uFFFF") {
         // Wide-char continuation placeholder: mark previous span as double-width.
+        // Flush any buffered text first so the wide char is in its own span.
+        flush();
         if (out.length > 0) {
           const prev = out[out.length - 1]!;
           const prevText = prev.textContent ?? "";
@@ -332,7 +334,17 @@ let pendingBell = false;
 let pendingFrame: number | undefined;
 
 export function handleScreen(msg: ScreenMessage): void {
-  pendingRows = msg.rows;
+  // Merge row data: if a previous frame's rows haven't been flushed yet,
+  // overlay the new frame's changed rows onto the existing pending data
+  // so rows from the earlier frame aren't lost when their indices aren't
+  // in the newer frame's changed set.
+  if (pendingRows !== null && pendingRows.length === msg.rows.length) {
+    for (const idx of msg.changed) {
+      pendingRows[idx] = msg.rows[idx];
+    }
+  } else {
+    pendingRows = msg.rows;
+  }
   pendingCursor = msg.cursor;
   pendingCursorHidden = msg.cursorHidden ?? false;
   pendingCursorStyle = msg.cursorStyle ?? 0;
@@ -355,10 +367,19 @@ function flushAll(): void {
   // Doing both in one rAF eliminates the visual duplication that
   // occurred when scroll insertions and screen rewrites painted in
   // separate frames.
-  if (pendingScrollback.length > 0) {
+  // Skip if firstScreen is still true — the first screen frame will
+  // wipe the DOM via innerHTML="", so any scroll lines inserted now
+  // would be lost. They'll arrive again via scrollback replay.
+  if (pendingScrollback.length > 0 && !firstScreen) {
     const batch = pendingScrollback.splice(0);
     const liveStart = allRows.length - liveCount;
     const refNode = liveStart < allRows.length ? allRows[liveStart]! : null;
+
+    // Trim history BEFORE inserting new scroll lines to avoid viewport
+    // jumps. If we trim after insertion, the scroll anchor compensation
+    // will be based on a scrollHeight that includes rows that are then
+    // removed, causing the viewport to jump down.
+    trimHistory();
 
     // Scroll anchoring: if the user is scrolled up, inserting rows
     // above the viewport shifts content down. Compensate by adding
@@ -374,7 +395,6 @@ function flushAll(): void {
       output.insertBefore(div, refNode);
       allRows.splice(allRows.length - liveCount, 0, div);
     }
-    trimHistory();
 
     if (anchorScroll) {
       const heightDelta = termWrap.scrollHeight - prevScrollHeight;
@@ -436,19 +456,6 @@ function flushScreenInner(rows: WireRun[][], cursor: [number, number], changed: 
     if (row !== undefined && el) {
       const cursorAt = (!cursorHidden && idx === cursorRow) ? cursorCol : -1;
       const newSpans = buildRowSpans(row, cursorAt);
-      // Skip DOM update if the text content is identical AND the cursor
-      // is not involved — preserves browser find-in-page highlights and
-      // avoids unnecessary reflows. Cursor rows always update because
-      // the cursor span class/position may differ even when text is the
-      // same (arrow keys, space-over-space, Enter clearing input).
-      const hasCursor = cursorAt >= 0;
-      const hadCursor = el.querySelector(".term-cursor, .term-cursor-underline, .term-cursor-bar") !== null;
-      if (!hasCursor && !hadCursor) {
-        const newText = newSpans.map(s => s.textContent).join("");
-        if (el.textContent === newText && el.childElementCount > 0) {
-          continue;
-        }
-      }
       el.replaceChildren(...newSpans);
     }
   }
