@@ -71,3 +71,7 @@ linters:
           - usetesting
           - noctx
           - revive
+      # Wire codegen: template strings for TypeScript output
+      - path: cmd/
+        linters:
+          - goconst
