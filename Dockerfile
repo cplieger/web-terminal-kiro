@@ -120,7 +120,7 @@ ARG PYREFLY_VERSION=1.0.0
 # renovate: datasource=npm depName=@typescript/native-preview
 ARG TSGO_VERSION=7.0.0-dev.20260421.2
 ARG TARGETARCH
-RUN PYREFLY_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") && \
+RUN PYREFLY_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x86_64") && \
     TSGO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
     curl -fsSL "https://github.com/facebook/pyrefly/releases/download/${PYREFLY_VERSION}/pyrefly-linux-${PYREFLY_ARCH}.tar.gz" \
       | tar -xz -C /usr/local/bin pyrefly && \
