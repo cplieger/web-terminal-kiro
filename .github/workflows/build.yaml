@@ -8,6 +8,10 @@ on:
       - 'go.mod'
       - '*.go'
       - 'internal/**'
+      - 'static-src/**'
+      - 'entrypoint.sh'
+      - 'setup-tools.sh'
+      - 'tools.json'
   workflow_dispatch:
 
 concurrency:
