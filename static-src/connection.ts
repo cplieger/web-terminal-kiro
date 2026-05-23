@@ -26,7 +26,7 @@ import type { ControlMessage, ServerMessage } from "./types.js";
 type ConnState =
   | { status: "disconnected" }
   | { status: "connecting"; sock: WebSocket; abort: AbortController }
-  | { status: "connected"; sock: WebSocket }
+  | { status: "connected"; sock: WebSocket; abort: AbortController }
   | { status: "reconnecting"; timer: ReturnType<typeof setTimeout>; delayMs: number };
 
 let connState: ConnState = { status: "disconnected" };
@@ -171,6 +171,15 @@ function cancelScheduledReconnect(): void {
 export function reconnectNow(): void {
   if (connState.status === "connected") return;
   if (connState.status === "connecting") {
+    // Abort BEFORE close: aborting detaches all listeners on the
+    // existing sock, so any frames that arrive between close() and
+    // the close-handshake completion (or browser shutdown of the
+    // socket) won't be processed twice. Without this, on iPad wake
+    // the visibilitychange + pageshow events both trigger
+    // reconnectNow() within milliseconds; the first sock's listeners
+    // are otherwise still alive and re-process every frame the new
+    // sock receives, leading to duplicated DOM rows.
+    connState.abort.abort();
     try { connState.sock.close(); } catch { /* ignore */ }
   }
   cancelScheduledReconnect();
@@ -182,7 +191,11 @@ export function connect(): void {
   // Guard against double-call: a stray invocation while a previous
   // socket is still CONNECTING/OPEN would orphan it (its handlers
   // remain bound but the new sock assignment makes it unreachable).
+  // Aborting the previous controller detaches all listeners on the
+  // old sock so it can't deliver frames to the page after we've moved
+  // on (the iPad-wake duplicate-output race).
   if (connState.status === "connecting" || connState.status === "connected") {
+    connState.abort.abort();
     try { connState.sock.close(); } catch { /* ignore */ }
   }
 
@@ -191,18 +204,27 @@ export function connect(): void {
   const sock = new WebSocket(wsURL(location.protocol, location.host));
   sock.binaryType = "arraybuffer";
 
+  // One AbortController governs the lifetime of THIS sock's listeners.
+  // - Connect-timeout fallback: aborts after 10s if open never fires.
+  // - Listener auto-detach: every addEventListener below uses
+  //   { signal: connectAbort.signal }, so when the controller is
+  //   aborted (by reconnectNow / connect / close) the listeners are
+  //   removed atomically and can't fire again.
   const connectAbort = new AbortController();
   const timeoutId = setTimeout(() => connectAbort.abort(), 10_000);
   connectAbort.signal.addEventListener("abort", () => {
-    if (sock.readyState === WebSocket.CONNECTING) sock.close();
+    clearTimeout(timeoutId);
+    // Force-close on abort so the OS-level socket goes away promptly,
+    // not only when the browser eventually completes its close
+    // handshake. Belt-and-braces with the .close() in our callers.
+    try { sock.close(); } catch { /* ignore */ }
   });
 
   connState = { status: "connecting", sock, abort: connectAbort };
 
   sock.addEventListener("open", () => {
     clearTimeout(timeoutId);
-    connectAbort.abort(); // clean up signal listeners
-    connState = { status: "connected", sock };
+    connState = { status: "connected", sock, abort: connectAbort };
     reconnectDelay = INITIAL_DELAY_MS;
     lastSentCols = 0;
     lastSentRows = 0;
@@ -212,7 +234,7 @@ export function connect(): void {
     // bytesReceived for this session — we trim/retransmit the outbox
     // when that resumeAck arrives (handled in the message listener).
     sock.send(controlFrame({ type: "resume", sessionId, sentBytes: bytesSent }));
-  });
+  }, { signal: connectAbort.signal });
 
   // Queue for serializing Blob→ArrayBuffer conversion. iOS Safari can
   // deliver binary WS frames as Blob; the conversion is async via
@@ -239,7 +261,7 @@ export function connect(): void {
         // ignore malformed text frames
       }
     }
-  });
+  }, { signal: connectAbort.signal });
 
   function handleDecoded(msg: ServerMessage | null): void {
     if (msg === null) return;
@@ -277,10 +299,16 @@ export function connect(): void {
   }
 
   sock.addEventListener("close", () => {
+    // Only the active sock's close should drive reconnect logic; an
+    // already-superseded sock has been aborted and this listener
+    // wouldn't fire (signal removes it). The check stays as a belt-
+    // and-braces guard in case the abort hasn't propagated yet.
+    if (connState.status !== "connecting" && connState.status !== "connected") return;
+    if (connState.sock !== sock) return;
     connState = { status: "disconnected" };
     cb?.onClose();
     scheduleReconnect();
-  });
+  }, { signal: connectAbort.signal });
 
-  sock.addEventListener("error", () => {});
+  sock.addEventListener("error", () => {}, { signal: connectAbort.signal });
 }
