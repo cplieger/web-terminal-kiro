@@ -288,7 +288,76 @@
    Toggle is first in DOM so it's at top-left of the grid — visible
    when the container clips to 1-cell size. Container is right-anchored
    so it grows leftward on open. */
-.key-toolbar { display: none; }
+.key-toolbar { display: contents; }
+
+/* Touch-only toolbar children: the on-screen Esc/Tab/arrows/hamburger
+   are useless on desktop where the user has a real keyboard. Hidden by
+   default; the @media (pointer: coarse) block below restores them. */
+.kb-key, .kb-toggle { display: none; }
+
+/* Desktop: scroll-to-bottom is still genuinely useful for jumping back
+   after scrolling up to read history, so it surfaces here as a
+   bottom-center pill with a label. .key-toolbar.scrolled-up is
+   toggled by app.ts, same as on touch. The display+opacity transition
+   uses allow-discrete so the fade-out plays cleanly when the user
+   clicks (scroll-to-bottom clears .scrolled-up, reverting display:none
+   after the opacity has gone to 0). */
+.kb-scroll-bottom {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--safe-bottom, 0px) + var(--sp-3));
+  transform: translateX(-50%);
+  display: none;
+  opacity: 0;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  z-index: 10;
+  transition:
+    opacity var(--dur-standard) var(--ease-standard),
+    background-color 150ms var(--ease-standard),
+    display var(--dur-standard) allow-discrete;
+}
+
+.kb-scroll-bottom::after {
+  content: "Scroll to bottom";
+}
+
+.kb-scroll-bottom svg {
+  width: var(--icon);
+  height: var(--icon);
+  stroke: currentcolor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.kb-scroll-bottom:hover {
+  background: color-mix(in oklch, var(--text) 8%, var(--surface));
+}
+
+.kb-scroll-bottom:active {
+  background: var(--text-active);
+}
+
+.key-toolbar.scrolled-up .kb-scroll-bottom {
+  display: inline-flex;
+  opacity: 1;
+
+  @starting-style {
+    opacity: 0;
+  }
+}
 
 @media (pointer: coarse) {
   .key-toolbar {
@@ -338,15 +407,31 @@
   .kb-r2c3 { grid-area: 2 / 3; }
   .kb-r2c4 { grid-area: 2 / 4; }
 
-  /* Scroll-bottom: col 5 row 2 (below toggle). */
+  /* Scroll-bottom: col 5 row 2 (below toggle). Resets the desktop
+     FAB-specific properties (fixed position, pill padding, surface
+     background, label) so the button collapses back to a grid-area
+     icon-only key. */
   .key-toolbar .kb-scroll-bottom {
+    position: static;
+    transform: none;
+    bottom: auto;
+    left: auto;
     grid-area: 2 / 5;
     display: none;
     opacity: 0;
+    padding: 0;
+    background: transparent;
+    backdrop-filter: none;
+    border: none;
+    border-radius: var(--radius-inner);
+    font-size: inherit;
     transition:
       opacity var(--dur-standard) var(--ease-standard),
       display var(--dur-standard) allow-discrete;
   }
+
+  .kb-scroll-bottom::after { content: ""; }
+  .kb-scroll-bottom:hover { background: transparent; }
 
   .key-toolbar.scrolled-up .kb-scroll-bottom {
     display: flex;
