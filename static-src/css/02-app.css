@@ -17,7 +17,16 @@
   font-variant-ligatures: none;
   font-feature-settings: "liga" 0, "calt" 0;
   font-kerning: none;
-  contain: layout style;
+  /* Note: do NOT use `contain: layout style` here. iOS Safari has
+     paint-suppression bugs in WebKit where layout-contained elements
+     receiving frequent replaceChildren() updates can drop paint
+     invalidations for inline children whose styling-only changes
+     don't trigger layout — most visibly the inverse-styled "cursor"
+     span Ink draws inside our rows, which would visually stick at
+     its old column on space/arrow key presses until a content-
+     changing keystroke forced a repaint. Without `contain`, every
+     row update participates in normal paint flow and the cursor
+     cell tracks the column on every flush. */
 }
 
 .term-row:empty::after {

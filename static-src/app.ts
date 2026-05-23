@@ -185,16 +185,20 @@ input.addEventListener("input", (e: Event) => {
     // insertText / insertFromPaste / insertReplacementText etc. The
     // `data` property carries exactly the new content; using it
     // sidesteps having to diff against the placeholder.
-    send(ev.data);
+    //
+    // iOS Safari WebKit quirk: spacebar in a contenteditable can
+    // deliver U+00A0 (NBSP) instead of U+0020. Normalize so kiro-cli
+    // receives an honest space byte.
+    send(ev.data.replace(/\u00A0/g, " "));
   } else {
     // Fallback: anything in the textarea past the placeholder is new
     // content. Covers browsers that don't populate inputType / data
     // (older WebKit).
     const v = input.value;
     if (v.length > INPUT_PLACEHOLDER.length && v.startsWith(INPUT_PLACEHOLDER)) {
-      send(v.slice(INPUT_PLACEHOLDER.length));
+      send(v.slice(INPUT_PLACEHOLDER.length).replace(/\u00A0/g, " "));
     } else if (v !== INPUT_PLACEHOLDER && v.length > 0) {
-      send(v);
+      send(v.replace(/\u00A0/g, " "));
     }
   }
   resetInputPlaceholder();
@@ -285,7 +289,12 @@ outputEl.addEventListener("beforeinput", (e) => {
 
   // Handle typed text (not delete/backspace/enter — those are handled by keydown).
   if (e.inputType === "insertText" && e.data) {
-    send(e.data);
+    // iOS Safari + WebKit contenteditable quirk: the spacebar sometimes
+    // delivers U+00A0 (non-breaking space) instead of U+0020 in the
+    // InputEvent's `data`. kiro-cli/Ink would render NBSP as a visible
+    // glyph (or treat it as a non-word char) instead of a normal space,
+    // breaking the typing flow. Normalize NBSP→space before sending.
+    send(e.data.replace(/\u00A0/g, " "));
   } else if (e.inputType === "insertFromPaste" && e.data) {
     send(bracketTextForPaste(prepareTextForTerminal(e.data)));
   }
