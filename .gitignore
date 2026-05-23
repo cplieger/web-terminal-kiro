@@ -6,3 +6,10 @@ static/wire/
 node_modules/
 .vitest-cache/
 
+# Ad-hoc puppeteer smoke / repro tests live alongside the scaffolding
+# in static-src/puppeteer/ but are never committed; only README.md and
+# bash-wrap.sh in that directory are tracked.
+static-src/puppeteer/*.cjs
+static-src/puppeteer/*.mjs
+static-src/puppeteer/*.js
+
