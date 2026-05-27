@@ -6,3 +6,4 @@ node_modules/
 .vitest-cache/
 
 
+static/style.css
