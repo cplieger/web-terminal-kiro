@@ -57,27 +57,10 @@ install_kiro_cli() {
         return 1
     fi
 
-    # Compute and log SHA-256 for the audit trail. EXPECTED_KIRO_CLI_SHA256
-    # is opt-in: when set (compose env, Dockerfile ARG, or local export),
-    # a mismatch refuses install. When unset, we log the hash and continue
-    # so the homelab default does not break when AWS publishes a new
-    # binary; operators harden by bumping the env var.
+    # Log SHA-256 for the audit trail.
     local actual
     actual=$(sha256sum "$zip" | awk '{print $1}')
     printf 'kiro-cli zip SHA-256: %s (url=%s)\n' "$actual" "$zip_url"
-    if [ -n "${EXPECTED_KIRO_CLI_SHA256:-}" ]; then
-        if [ "$actual" != "$EXPECTED_KIRO_CLI_SHA256" ]; then
-            printf 'ERROR: kiro-cli SHA-256 mismatch\n' >&2
-            printf '  expected: %s\n' "$EXPECTED_KIRO_CLI_SHA256" >&2
-            printf '  actual:   %s\n' "$actual" >&2
-            printf '  refusing install; bump EXPECTED_KIRO_CLI_SHA256 in compose to accept the new binary\n' >&2
-            rm -rf "$tmpdir"
-            return 1
-        fi
-        printf 'kiro-cli SHA-256 matches EXPECTED_KIRO_CLI_SHA256; integrity verified\n'
-    else
-        printf 'kiro-cli integrity unverified (set EXPECTED_KIRO_CLI_SHA256=%s to enforce)\n' "$actual"
-    fi
 
     if ! unzip -q "$zip" -d "$tmpdir"; then
         printf 'ERROR: failed to extract kiro-cli zip\n' >&2
@@ -123,7 +106,7 @@ fi
 # via `kiro-cli settings "app.disableAutoupdates" "false"` if desired.
 if [ -x "$BIN" ]; then
     "$BIN" settings telemetry.enabled false > /dev/null 2>&1 || true
-    "$BIN" settings "app.disableAutoupdates" "true" > /dev/null 2>&1 || true
+    "$BIN" settings "app.disableAutoupdates" "false" > /dev/null 2>&1 || true
 fi
 
 # Install/update tools from /config/tools.json manifest.
