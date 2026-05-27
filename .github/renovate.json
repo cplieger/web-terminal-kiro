@@ -56,6 +56,15 @@
       ]
     }
   ],
+  "customDatasources": {
+    "kiro-cli": {
+      "defaultRegistryUrlTemplate": "https://desktop-release.q.us-east-1.amazonaws.com/index.json",
+      "format": "json",
+      "transformTemplates": [
+        "{ \"releases\": versions.{ \"version\": version, \"digest\": packages[fileType = 'zip' and targetTriple = 'x86_64-unknown-linux-gnu' and variant = 'headless'][0].sha256 } }"
+      ]
+    }
+  },
   "customManagers": [
     {
       "customType": "regex",
@@ -76,6 +85,17 @@
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)(\\s+versioning=(?<versioning>[a-z-]+))?\\s*\\n\\s*VERSION=(?<currentValue>\\S+)"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "kiro-cli version + sha256 pinned in entrypoint.sh",
+      "managerFilePatterns": [
+        "/entrypoint\\.sh$/"
+      ],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>custom\\.kiro-cli)\\s+depName=(?<depName>[^\\s]+)\\s*\\nKIRO_CLI_VERSION=\"(?<currentValue>[^\"]+)\"\\s*\\nKIRO_CLI_SHA256=\"(?<currentDigest>[^\"]+)\""
+      ],
+      "versioningTemplate": "semver"
     }
   ],
   "ignorePaths": [
