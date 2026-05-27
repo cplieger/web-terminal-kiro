@@ -163,39 +163,4 @@ func WriteError(w http.ResponseWriter, r *http.Request, status int, code, msg st
 	})
 }
 
-// DecodeJSON consolidates body capping + json decoding + strict
-// unknown-fields rejection into one call. Returns 400 with a typed
-// APIError on body / decode failure; the handler then returns. The
-// 1 MiB default cap matches MaxJSONBody. Pass a non-zero maxBytes to
-// override (e.g. larger for whoami output).
-//
-// Usage:
-//
-//	var req loginRequest
-//	if !api.DecodeJSON(w, r, 0, &req) { return }
-//	// req is populated and validated for shape
-func DecodeJSON(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any) bool {
-	if maxBytes <= 0 {
-		maxBytes = MaxJSONBody
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
-		var maxErr *http.MaxBytesError
-		switch {
-		case errors.As(err, &maxErr):
-			WriteError(w, r, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds size limit")
-		case errors.Is(err, io.EOF):
-			// Empty body is allowed by callers that pass an
-			// optional payload; signal the caller (false return) but
-			// do not write an error response. This matches the
-			// existing handle_login behaviour.
-			return false
-		default:
-			WriteError(w, r, http.StatusBadRequest, "bad_request", "invalid request body")
-		}
-		return false
-	}
-	return true
-}
+

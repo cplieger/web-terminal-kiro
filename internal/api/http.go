@@ -115,13 +115,6 @@ func BadRequest(w http.ResponseWriter, r *http.Request, msg string) {
 	WriteError(w, r, http.StatusBadRequest, "bad_request", msg)
 }
 
-// BadRequestNoCtx is the legacy variant used in code paths that do
-// not have *http.Request handy (theme handler internals). Equivalent
-// to BadRequest but without request_id correlation.
-func BadRequestNoCtx(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusBadRequest, APIError{Error: msg, Code: "bad_request"})
-}
-
 // Conflict writes a 409.
 func Conflict(w http.ResponseWriter, r *http.Request, msg string) {
 	WriteError(w, r, http.StatusConflict, "conflict", msg)
