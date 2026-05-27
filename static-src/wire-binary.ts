@@ -77,7 +77,9 @@ function readRowRuns(c: Cursor): WireRun[] {
 }
 
 export function decodeWireBinary(buf: ArrayBuffer): ServerMessage | null {
-  if (buf.byteLength < 9) {return null;} // 1B type + 8B ack
+  if (buf.byteLength < 9) {
+    return null;
+  } // 1B type + 8B ack
   try {
     return decodeWireBinaryInner(buf);
   } catch (err) {
@@ -85,7 +87,9 @@ export function decodeWireBinary(buf: ArrayBuffer): ServerMessage | null {
     // frame rather than letting the error bubble into the WebSocket
     // message handler (where it would surface as an unhandled error
     // and clutter logs without stopping the message pump).
-    if (err instanceof RangeError) {return null;}
+    if (err instanceof RangeError) {
+      return null;
+    }
     throw err;
   }
 }
@@ -150,7 +154,9 @@ function decodeWireBinaryInner(buf: ArrayBuffer): ServerMessage | null {
     const numLines = c.u16();
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- pre-allocated array filled below
     const lines: WireRun[][] = new Array(numLines);
-    for (let i = 0; i < numLines; i++) {lines[i] = readRowRuns(c);}
+    for (let i = 0; i < numLines; i++) {
+      lines[i] = readRowRuns(c);
+    }
     const msg: ScrollMessage = { type: "scroll", lines, inputAck };
     return msg;
   }

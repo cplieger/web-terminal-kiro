@@ -136,14 +136,26 @@ export function mapKeyboardEvent(ev: KeyboardEvent): KeyboardResult {
   }
 
   // Home / End — CSI {H,F} with optional modifiers.
-  if (ev.key === "Home") {return { kind: "send", bytes: csiLetter("H", ev) };}
-  if (ev.key === "End") {return { kind: "send", bytes: csiLetter("F", ev) };}
+  if (ev.key === "Home") {
+    return { kind: "send", bytes: csiLetter("H", ev) };
+  }
+  if (ev.key === "End") {
+    return { kind: "send", bytes: csiLetter("F", ev) };
+  }
 
   // Insert / Delete / PageUp / PageDown (no Shift) — CSI tilde forms.
-  if (ev.key === "Insert") {return { kind: "send", bytes: csiTilde(2, ev) };}
-  if (ev.key === "Delete") {return { kind: "send", bytes: csiTilde(3, ev) };}
-  if (ev.key === "PageUp") {return { kind: "send", bytes: csiTilde(5, ev) };}
-  if (ev.key === "PageDown") {return { kind: "send", bytes: csiTilde(6, ev) };}
+  if (ev.key === "Insert") {
+    return { kind: "send", bytes: csiTilde(2, ev) };
+  }
+  if (ev.key === "Delete") {
+    return { kind: "send", bytes: csiTilde(3, ev) };
+  }
+  if (ev.key === "PageUp") {
+    return { kind: "send", bytes: csiTilde(5, ev) };
+  }
+  if (ev.key === "PageDown") {
+    return { kind: "send", bytes: csiTilde(6, ev) };
+  }
 
   // F1-F4 — SS3 with optional modifier-CSI, like xterm.
   const fnLetter = FN_LETTER[ev.key];
@@ -173,8 +185,12 @@ export function mapKeyboardEvent(ev: KeyboardEvent): KeyboardResult {
   // Backspace — \x7f (DEL). Alt+Backspace = ESC + DEL (delete-prev-word
   // in readline). Ctrl+Backspace = \b (^H).
   if (ev.key === "Backspace") {
-    if (ev.altKey) {return { kind: "send", bytes: ESC + DEL };}
-    if (ev.ctrlKey) {return { kind: "send", bytes: "\b" };}
+    if (ev.altKey) {
+      return { kind: "send", bytes: ESC + DEL };
+    }
+    if (ev.ctrlKey) {
+      return { kind: "send", bytes: "\b" };
+    }
     return { kind: "send", bytes: DEL };
   }
 
@@ -185,8 +201,12 @@ export function mapKeyboardEvent(ev: KeyboardEvent): KeyboardResult {
 
   // Space — \x00 with Ctrl (per xterm). Alt+Space = ESC ' '.
   if (ev.key === " ") {
-    if (ev.ctrlKey) {return { kind: "send", bytes: "\x00" };}
-    if (ev.altKey) {return { kind: "send", bytes: ESC + " " };}
+    if (ev.ctrlKey) {
+      return { kind: "send", bytes: "\x00" };
+    }
+    if (ev.altKey) {
+      return { kind: "send", bytes: ESC + " " };
+    }
     return { kind: "ignore" }; // let `input` event handle plain space
   }
 
@@ -202,7 +222,9 @@ export function mapKeyboardEvent(ev: KeyboardEvent): KeyboardResult {
     // Ctrl+key for the C0 set: @[\]^_? produce \x00..\x1f, \x7f.
     if (ev.ctrlKey && !ev.altKey && !ev.metaKey) {
       const c0 = ctrlSymbolByte(ch);
-      if (c0 !== null) {return { kind: "send", bytes: c0 };}
+      if (c0 !== null) {
+        return { kind: "send", bytes: c0 };
+      }
     }
     // Alt+printable → ESC + char (meta prefix). Plain `input` event
     // would still fire with the char, so we'd duplicate. Caller must
@@ -267,7 +289,9 @@ function ctrlSymbolByte(ch: string): string | null {
  * we are bracketing.
  */
 export function bracketTextForPaste(text: string): string {
-  if (!isBracketedPaste()) {return text;}
+  if (!isBracketedPaste()) {
+    return text;
+  }
   // eslint-disable-next-line no-control-regex -- intentional: sanitising ESC bytes in pasted text
   const sanitised = text.replace(/\x1b/g, "\u241B");
   return `\x1b[200~${sanitised}\x1b[201~`;

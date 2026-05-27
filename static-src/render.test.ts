@@ -17,7 +17,10 @@ import type { ScreenMessage, WireRun } from "./types.js";
 // happy-dom does not implement Canvas2D. measureChar() in render.ts
 // requires `getContext("2d").measureText`; stub a minimal version
 // returning a fixed-width metric.
-interface FakeCtx { font: string; measureText: (t: string) => { width: number } }
+interface FakeCtx {
+  font: string;
+  measureText: (t: string) => { width: number };
+}
 HTMLCanvasElement.prototype.getContext = function fakeGetContext(): unknown {
   const ctx: FakeCtx = {
     font: "",
@@ -88,7 +91,9 @@ describe("render: cursor cell updates with inline inverse-video character", () =
     // Establish the screen with row 19 already showing some prompt
     // placeholder + cursor at col 0 (exact pre-typing baseline).
     const initialRows: Record<number, WireRun[]> = {};
-    for (let i = 0; i < 30; i++) {initialRows[i] = blankRow();}
+    for (let i = 0; i < 30; i++) {
+      initialRows[i] = blankRow();
+    }
     initialRows[19] = row19("", " ", 120);
     await flushFrame(frame(initialRows, [19, 0]));
 

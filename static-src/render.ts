@@ -25,15 +25,21 @@ let fontString = "";
 
 function variantContext(variant: number): CanvasRenderingContext2D {
   let ctx = variantCtx[variant];
-  if (ctx) {return ctx;}
+  if (ctx) {
+    return ctx;
+  }
   const canvas = document.createElement("canvas");
   canvas.width = 1;
   canvas.height = 1;
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- 2d context always available on fresh canvas
   ctx = canvas.getContext("2d")!;
   let f = "";
-  if (variant & VARIANT_ITALIC) {f += "italic ";}
-  if (variant & VARIANT_BOLD) {f += "bold ";}
+  if (variant & VARIANT_ITALIC) {
+    f += "italic ";
+  }
+  if (variant & VARIANT_BOLD) {
+    f += "bold ";
+  }
   f += fontString;
   ctx.font = f;
   variantCtx[variant] = ctx;
@@ -41,7 +47,9 @@ function variantContext(variant: number): CanvasRenderingContext2D {
 }
 
 function resetVariantContexts(): void {
-  for (let i = 0; i < variantCtx.length; i++) {variantCtx[i] = null;}
+  for (let i = 0; i < variantCtx.length; i++) {
+    variantCtx[i] = null;
+  }
 }
 
 function measureChar(ch: string, bold: boolean, italic: boolean): number {
@@ -50,7 +58,9 @@ function measureChar(ch: string, bold: boolean, italic: boolean): number {
     if (cp < WIDTH_FLAT_SIZE) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- bounds checked above
       const cached = widthFlat[cp]!;
-      if (cached !== WIDTH_FLAT_UNSET) {return cached;}
+      if (cached !== WIDTH_FLAT_UNSET) {
+        return cached;
+      }
       const w = variantContext(VARIANT_REGULAR).measureText(ch).width;
       widthFlat[cp] = w;
       return w;
@@ -58,10 +68,16 @@ function measureChar(ch: string, bold: boolean, italic: boolean): number {
   }
   const key = (bold ? "B" : "") + (italic ? "I" : "") + ch;
   const cached = widthMap.get(key);
-  if (cached !== undefined) {return cached;}
+  if (cached !== undefined) {
+    return cached;
+  }
   let variant = 0;
-  if (bold) {variant |= VARIANT_BOLD;}
-  if (italic) {variant |= VARIANT_ITALIC;}
+  if (bold) {
+    variant |= VARIANT_BOLD;
+  }
+  if (italic) {
+    variant |= VARIANT_ITALIC;
+  }
   const w = variantContext(variant).measureText(ch).width;
   widthMap.set(key, w);
   return w;
@@ -96,8 +112,12 @@ let cursorStyleVal = 0; // 0-6: DECSCUSR
 function cursorClassName(): string {
   // DECSCUSR: 0/1=blinking block, 2=steady block, 3=blinking underline,
   // 4=steady underline, 5=blinking bar, 6=steady bar
-  if (cursorStyleVal === 3 || cursorStyleVal === 4) {return "term-cursor-underline";}
-  if (cursorStyleVal === 5 || cursorStyleVal === 6) {return "term-cursor-bar";}
+  if (cursorStyleVal === 3 || cursorStyleVal === 4) {
+    return "term-cursor-underline";
+  }
+  if (cursorStyleVal === 5 || cursorStyleVal === 6) {
+    return "term-cursor-bar";
+  }
   return "term-cursor";
 }
 let cellWidth = 8;
@@ -132,7 +152,9 @@ export function resetScrollback(): void {
 
 // --- Color helpers ---
 function colorHex(c: number | undefined): string | null {
-  if (c === undefined || c < 0) {return null;}
+  if (c === undefined || c < 0) {
+    return null;
+  }
   return "#" + c.toString(16).padStart(6, "0");
 }
 
@@ -184,7 +206,9 @@ function buildRowSpans(runs: WireRun[], cursorAt: number): (HTMLSpanElement | HT
   const out: HTMLSpanElement[] = [];
   let col = 0;
   for (const run of runs) {
-    if (!run.t) {continue;}
+    if (!run.t) {
+      continue;
+    }
     const attrs = run.a ?? 0;
     const isBold = (attrs & 1) !== 0;
     const isItalic = (attrs & 2) !== 0;
@@ -212,31 +236,58 @@ function buildRowSpans(runs: WireRun[], cursorAt: number): (HTMLSpanElement | HT
       if (isHidden) {
         span.style.visibility = "hidden";
       }
-      if (fg !== null) {span.style.color = fg;}
-      if (bg !== null) {span.style.background = bg;}
-      if (isBold) {span.style.fontWeight = "bold";}
-      if (isItalic) {span.style.fontStyle = "italic";}
-      if (isDim) {span.style.opacity = ".5";}
+      if (fg !== null) {
+        span.style.color = fg;
+      }
+      if (bg !== null) {
+        span.style.background = bg;
+      }
+      if (isBold) {
+        span.style.fontWeight = "bold";
+      }
+      if (isItalic) {
+        span.style.fontStyle = "italic";
+      }
+      if (isDim) {
+        span.style.opacity = ".5";
+      }
       // Build text-decoration combining all line types.
       const decoLines: string[] = [];
-      if (isDoubleUnderline) {decoLines.push("underline");}
-      else if (isUnderline) {decoLines.push("underline");}
-      if (isOverline) {decoLines.push("overline");}
-      if (isStrike) {decoLines.push("line-through");}
+      if (isDoubleUnderline) {
+        decoLines.push("underline");
+      } else if (isUnderline) {
+        decoLines.push("underline");
+      }
+      if (isOverline) {
+        decoLines.push("overline");
+      }
+      if (isStrike) {
+        decoLines.push("line-through");
+      }
       if (decoLines.length > 0) {
         let deco = decoLines.join(" ");
-        if (isDoubleUnderline) {deco += " double";}
+        if (isDoubleUnderline) {
+          deco += " double";
+        }
         span.style.textDecoration = deco;
       }
-      if (ucColor !== null) {span.style.textDecorationColor = ucColor;}
-      if (spacing !== defaultSpacing) {span.style.letterSpacing = `${spacing}px`;}
-      if (isBlink) {span.classList.add("term-blink");}
+      if (ucColor !== null) {
+        span.style.textDecorationColor = ucColor;
+      }
+      if (spacing !== defaultSpacing) {
+        span.style.letterSpacing = `${spacing}px`;
+      }
+      if (isBlink) {
+        span.classList.add("term-blink");
+      }
     };
 
     let prevSpacing: number | null = null;
     let buffer = "";
     const flush = (): void => {
-      if (buffer.length === 0) {return;}
+      if (buffer.length === 0) {
+        return;
+      }
       const span = document.createElement("span");
       span.textContent = buffer;
       applyStyle(span, prevSpacing ?? 0);
@@ -269,7 +320,9 @@ function buildRowSpans(runs: WireRun[], cursorAt: number): (HTMLSpanElement | HT
         const span = document.createElement("span");
         span.className = cursorClassName();
         span.textContent = ch;
-        if (spacing !== defaultSpacing) {span.style.letterSpacing = `${spacing}px`;}
+        if (spacing !== defaultSpacing) {
+          span.style.letterSpacing = `${spacing}px`;
+        }
         out.push(span);
         col++;
         continue;
@@ -318,7 +371,9 @@ function ensureLiveZone(count: number): void {
   }
   while (liveCount > count) {
     const el = allRows.pop();
-    if (el) {el.remove();}
+    if (el) {
+      el.remove();
+    }
     liveCount--;
   }
 }
@@ -353,7 +408,9 @@ export function handleScreen(msg: ScreenMessage): void {
   if (pendingRows !== null && pendingRows.length === msg.rows.length) {
     for (const idx of msg.changed) {
       const row = msg.rows[idx];
-      if (row !== undefined) {pendingRows[idx] = row;}
+      if (row !== undefined) {
+        pendingRows[idx] = row;
+      }
     }
   } else {
     pendingRows = msg.rows;
@@ -362,13 +419,19 @@ export function handleScreen(msg: ScreenMessage): void {
   pendingCursorHidden = msg.cursorHidden ?? false;
   pendingCursorStyle = msg.cursorStyle ?? 0;
   pendingCursorBlink = msg.cursorBlink ?? true;
-  if (msg.bell) {pendingBell = true;}
-  for (const idx of msg.changed) {pendingChanged.add(idx);}
+  if (msg.bell) {
+    pendingBell = true;
+  }
+  for (const idx of msg.changed) {
+    pendingChanged.add(idx);
+  }
   scheduleFlush();
 }
 
 function scheduleFlush(): void {
-  if (pendingFrame !== undefined) {return;}
+  if (pendingFrame !== undefined) {
+    return;
+  }
   pendingFrame = requestAnimationFrame(flushAll);
 }
 
@@ -418,7 +481,9 @@ function flushAll(): void {
     }
   }
 
-  if (pendingRows === null || pendingCursor === null) {return;}
+  if (pendingRows === null || pendingCursor === null) {
+    return;
+  }
   const rows = pendingRows;
   const cursor = pendingCursor;
   const changed = pendingChanged;
@@ -481,7 +546,9 @@ function flushScreenInner(
       el.replaceChildren(...newSpans);
     }
   }
-  if (onCursorMove) {onCursorMove();}
+  if (onCursorMove) {
+    onCursorMove();
+  }
 
   // Collapse the browser's internal caret to the end of the
   // contenteditable so typing doesn't scroll to the top — but only
@@ -497,7 +564,9 @@ function flushScreenInner(
 
   if (bell) {
     output.classList.add("term-bell");
-    setTimeout(() => { output.classList.remove("term-bell"); }, 150);
+    setTimeout(() => {
+      output.classList.remove("term-bell");
+    }, 150);
   }
 
   if (!scroll.isUserScrolledUp() && !scroll.isInUserScroll()) {
@@ -510,7 +579,9 @@ function flushScreenInner(
 const pendingScrollback: WireRun[][] = [];
 
 export function handleScroll(msg: ScrollMessage): void {
-  if (msg.lines.length === 0) {return;}
+  if (msg.lines.length === 0) {
+    return;
+  }
   pendingScrollback.push(...msg.lines);
   scheduleFlush();
 }
@@ -521,7 +592,9 @@ let blinkInterval: ReturnType<typeof setInterval> | null = null;
 let blinkEnabled = true;
 
 function startCursorBlink(): void {
-  if (blinkInterval !== null) {return;}
+  if (blinkInterval !== null) {
+    return;
+  }
   output.classList.remove("cursor-blink-off");
   blinkInterval = setInterval(() => {
     output.classList.toggle("cursor-blink-off");
@@ -538,10 +611,15 @@ function stopCursorBlink(): void {
 
 /** Called from flushScreenInner when cursorBlink state changes. */
 function setCursorBlink(enabled: boolean): void {
-  if (enabled === blinkEnabled) {return;}
+  if (enabled === blinkEnabled) {
+    return;
+  }
   blinkEnabled = enabled;
-  if (enabled) {startCursorBlink();}
-  else {stopCursorBlink();}
+  if (enabled) {
+    startCursorBlink();
+  } else {
+    stopCursorBlink();
+  }
 }
 
 // --- Font metrics & sizing ---
@@ -592,7 +670,9 @@ export function getCursorPx(): { left: number; top: number; cellH: number } {
 
 export function setPredictedCursor(row: number, col: number, active: boolean): void {
   const el = predCursorEl ?? (predCursorEl = document.getElementById("pred-cursor"));
-  if (!el) {return;}
+  if (!el) {
+    return;
+  }
   if (!active || (row === cursorRow && col === cursorCol)) {
     el.classList.remove("visible");
     return;

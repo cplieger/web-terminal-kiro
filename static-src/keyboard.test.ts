@@ -25,7 +25,9 @@ function ev(init: KeyboardEventInit & { key: string; code?: string }): KeyboardE
 }
 
 function send(result: KeyboardResult): string {
-  if (result.kind !== "send") {throw new Error(`expected send, got ${result.kind}`);}
+  if (result.kind !== "send") {
+    throw new Error(`expected send, got ${result.kind}`);
+  }
   return result.bytes;
 }
 

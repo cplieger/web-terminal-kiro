@@ -18,7 +18,9 @@ let suppressUntil = 0;
 let onUserScrollChange: ((scrolledUp: boolean) => void) | null = null;
 
 function isAtBottom(): boolean {
-  if (!scrollEl) {return true;}
+  if (!scrollEl) {
+    return true;
+  }
   return scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - BOTTOM_TOLERANCE_PX;
 }
 
@@ -32,7 +34,9 @@ export function init(opts: {
   scrollEl.addEventListener(
     "scroll",
     () => {
-      if (Date.now() < suppressUntil) {return;}
+      if (Date.now() < suppressUntil) {
+        return;
+      }
       userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
       const wasScrolledUp = userScrolledUp;
       userScrolledUp = !isAtBottom();
@@ -73,10 +77,14 @@ export function init(opts: {
 
 /** Force scroll-to-bottom and re-engage auto-follow. */
 export function scrollToBottom(): void {
-  if (!scrollEl) {return;}
+  if (!scrollEl) {
+    return;
+  }
   userScrolledUp = false;
   userScrollingUntil = 0;
-  if (onUserScrollChange) {onUserScrollChange(false);}
+  if (onUserScrollChange) {
+    onUserScrollChange(false);
+  }
   // Synchronous scroll — must not be deferred to rAF during burst
   // insertions (e.g. /chat load) because the next batch arrives before
   // the rAF fires, pushing the viewport up again.

@@ -17,7 +17,10 @@ import type { ScreenMessage } from "./types.js";
 
 // happy-dom doesn't implement Canvas2D. Stub measureText so render
 // can compute cell widths.
-interface FakeCtx { font: string; measureText: (t: string) => { width: number } }
+interface FakeCtx {
+  font: string;
+  measureText: (t: string) => { width: number };
+}
 HTMLCanvasElement.prototype.getContext = function fakeGetContext(): unknown {
   const ctx: FakeCtx = {
     font: "",
@@ -49,7 +52,13 @@ HTMLCanvasElement.prototype.getContext = function fakeGetContext(): unknown {
 //       [4B] uc (int32 LE)
 //
 // The cursor_flags byte: bit 0 = hidden, bit 1 = bell, bit 2 = blink.
-interface Run { text: string; fg?: number; bg?: number; attr?: number; uc?: number }
+interface Run {
+  text: string;
+  fg?: number;
+  bg?: number;
+  attr?: number;
+  uc?: number;
+}
 
 function buildScreenFrame(opts: {
   cursorRow: number;
@@ -93,8 +102,12 @@ function buildScreenFrame(opts: {
   dv.setUint8(off, opts.cursorStyle ?? 0);
   off += 1;
   let flags = 0;
-  if (opts.cursorHidden) {flags |= 1;}
-  if (opts.cursorBlink ?? true) {flags |= 4;}
+  if (opts.cursorHidden) {
+    flags |= 1;
+  }
+  if (opts.cursorBlink ?? true) {
+    flags |= 4;
+  }
   dv.setUint8(off, flags);
   off += 1;
 

@@ -105,7 +105,9 @@ function onEnd(): void {
   const startSnapshot = compositionStart;
   const suffixSnapshot = compositionSuffix;
   setTimeout(() => {
-    if (!sendingComposition) {return;}
+    if (!sendingComposition) {
+      return;
+    }
     sendingComposition = false;
     const value = textarea.value;
     const valueEnd =
@@ -113,7 +115,9 @@ function onEnd(): void {
         ? value.length - suffixSnapshot.length
         : value.length;
     const composed = value.substring(startSnapshot, Math.max(startSnapshot, valueEnd));
-    if (composed.length > 0) {send(composed);}
+    if (composed.length > 0) {
+      send(composed);
+    }
     resetTextareaToPlaceholder();
   }, 0);
 }
@@ -122,9 +126,13 @@ function onPaste(ev: ClipboardEvent): void {
   // Native `paste` event handler. Required for iOS where Ctrl+Shift+V
   // is unavailable; users invoke paste from the iOS callout menu and
   // it fires this event on the focused textarea.
-  if (!ev.clipboardData) {return;}
+  if (!ev.clipboardData) {
+    return;
+  }
   const raw = ev.clipboardData.getData("text/plain");
-  if (raw === "") {return;}
+  if (raw === "") {
+    return;
+  }
   ev.preventDefault();
   ev.stopPropagation();
   send(bracketTextForPaste(prepareTextForTerminal(raw)));

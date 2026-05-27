@@ -37,12 +37,18 @@ function startTransition(): void {
   }
   scroll.suppressScroll(SUPPRESS_MS);
 
-  if (settleTimer !== null) {clearTimeout(settleTimer);}
+  if (settleTimer !== null) {
+    clearTimeout(settleTimer);
+  }
   settleTimer = setTimeout(() => {
     settleTimer = null;
     inTransition = false;
-    if (wasAtBottomAtStart) {scroll.scrollToBottom();}
-    if (onSettled) {onSettled(wasAtBottomAtStart);}
+    if (wasAtBottomAtStart) {
+      scroll.scrollToBottom();
+    }
+    if (onSettled) {
+      onSettled(wasAtBottomAtStart);
+    }
   }, SETTLE_MS);
 }
 

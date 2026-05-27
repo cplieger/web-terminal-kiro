@@ -51,11 +51,14 @@ let lastServerEpoch: number | null = null; // process-start nanos of the last co
 export const MAX_OUTBOX_BYTES = 1 << 20;
 
 function generateSessionId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
-    {return crypto.randomUUID();}
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
   // Fallback for older browsers: pseudo-random hex string.
   let s = "";
-  for (let i = 0; i < 8; i++) {s += Math.random().toString(16).slice(2, 6);}
+  for (let i = 0; i < 8; i++) {
+    s += Math.random().toString(16).slice(2, 6);
+  }
   return s;
 }
 
@@ -100,22 +103,26 @@ export function sendBinary(data: Uint8Array): boolean {
   outboxBytes += copy.length;
   bytesSent += copy.length;
   if (connState.status === "connected") {
-    connState.sock.send(
-      copy.buffer.slice(copy.byteOffset, copy.byteOffset + copy.byteLength),
-    );
+    connState.sock.send(copy.buffer.slice(copy.byteOffset, copy.byteOffset + copy.byteLength));
   }
   return true;
 }
 
 function sendControl(msg: ControlMessage): void {
-  if (connState.status !== "connected") {return;}
+  if (connState.status !== "connected") {
+    return;
+  }
   connState.sock.send(controlFrame(msg));
 }
 
 export function sendResize(): void {
-  if (connState.status !== "connected" || !cb) {return;}
+  if (connState.status !== "connected" || !cb) {
+    return;
+  }
   const { cols, rows } = cb.computeSize();
-  if (cols === lastSentCols && rows === lastSentRows) {return;}
+  if (cols === lastSentCols && rows === lastSentRows) {
+    return;
+  }
   lastSentCols = cols;
   lastSentRows = rows;
   sendControl({ type: "resize", cols, rows });
@@ -126,7 +133,9 @@ export function sendResize(): void {
 // in O(chunks_dropped) by tracking outboxBytes incrementally rather
 // than re-summing on every loop iteration.
 function applyAck(received: number): void {
-  if (received <= bytesAcked) {return;}
+  if (received <= bytesAcked) {
+    return;
+  }
   bytesAcked = Math.min(received, bytesSent);
   const targetUnacked = bytesSent - bytesAcked;
   while (outbox.length > 0 && outboxBytes > targetUnacked) {
@@ -148,7 +157,9 @@ function applyAck(received: number): void {
 // resumeAck, replay anything still in the outbox. The server has
 // adjusted bytesAcked already — only unacked bytes remain.
 function retransmitOutbox(): void {
-  if (connState.status !== "connected") {return;}
+  if (connState.status !== "connected") {
+    return;
+  }
   for (const chunk of outbox) {
     connState.sock.send(
       chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer,
@@ -157,7 +168,9 @@ function retransmitOutbox(): void {
 }
 
 function scheduleReconnect(): void {
-  if (connState.status === "reconnecting") {return;}
+  if (connState.status === "reconnecting") {
+    return;
+  }
   const step = nextBackoffDelay(reconnectDelay);
   reconnectDelay = step.nextBaseMs;
   const timer = setTimeout(() => {
@@ -175,7 +188,9 @@ function cancelScheduledReconnect(): void {
 }
 
 export function reconnectNow(): void {
-  if (connState.status === "connected") {return;}
+  if (connState.status === "connected") {
+    return;
+  }
   if (connState.status === "connecting") {
     // Abort BEFORE close: aborting detaches all listeners on the
     // existing sock, so any frames that arrive between close() and
@@ -225,7 +240,9 @@ export function connect(): void {
   //   aborted (by reconnectNow / connect / close) the listeners are
   //   removed atomically and can't fire again.
   const connectAbort = new AbortController();
-  const timeoutId = setTimeout(() => { connectAbort.abort(); }, 10_000);
+  const timeoutId = setTimeout(() => {
+    connectAbort.abort();
+  }, 10_000);
   connectAbort.signal.addEventListener("abort", () => {
     clearTimeout(timeoutId);
     // Force-close on abort so the OS-level socket goes away promptly,
@@ -274,7 +291,9 @@ export function connect(): void {
       if (ev.data instanceof Blob) {
         const blob = ev.data;
         blobChain = blobChain.then(() =>
-          blob.arrayBuffer().then((ab) => { handleDecoded(decodeWireBinary(ab)); }),
+          blob.arrayBuffer().then((ab) => {
+            handleDecoded(decodeWireBinary(ab));
+          }),
         );
         return;
       }
@@ -290,7 +309,9 @@ export function connect(): void {
   );
 
   function handleDecoded(msg: ServerMessage | null): void {
-    if (msg === null) {return;}
+    if (msg === null) {
+      return;
+    }
     if (msg.type === "resumeAck") {
       // Server-restart detection. The first resumeAck we see records
       // the epoch; subsequent ones compare to it. A mismatch means the
@@ -314,13 +335,17 @@ export function connect(): void {
     }
     if (msg.type === "modes") {
       modes.setModes(msg.bracketedPaste, msg.applicationCursor);
-      if (typeof msg.inputAck === "number") {applyAck(msg.inputAck);}
+      if (typeof msg.inputAck === "number") {
+        applyAck(msg.inputAck);
+      }
       // Notify the UI so it can react to mode changes (e.g. clear
       // scrollback on alt-screen entry — handled by the caller).
       cb?.onMessage(msg);
       return;
     }
-    if (typeof msg.inputAck === "number") {applyAck(msg.inputAck);}
+    if (typeof msg.inputAck === "number") {
+      applyAck(msg.inputAck);
+    }
     cb?.onMessage(msg);
   }
 
@@ -331,8 +356,12 @@ export function connect(): void {
       // already-superseded sock has been aborted and this listener
       // wouldn't fire (signal removes it). The check stays as a belt-
       // and-braces guard in case the abort hasn't propagated yet.
-      if (connState.status !== "connecting" && connState.status !== "connected") {return;}
-      if (connState.sock !== sock) {return;}
+      if (connState.status !== "connecting" && connState.status !== "connected") {
+        return;
+      }
+      if (connState.sock !== sock) {
+        return;
+      }
       connState = { status: "disconnected" };
       cb?.onClose();
       scheduleReconnect();
@@ -340,5 +369,11 @@ export function connect(): void {
     { signal: connectAbort.signal },
   );
 
-  sock.addEventListener("error", () => { /* no-op: prevents unhandled error */ }, { signal: connectAbort.signal });
+  sock.addEventListener(
+    "error",
+    () => {
+      /* no-op: prevents unhandled error */
+    },
+    { signal: connectAbort.signal },
+  );
 }

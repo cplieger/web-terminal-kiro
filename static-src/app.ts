@@ -72,7 +72,9 @@ scroll.init({
     // Toggle .scrolled-up on the toolbar so CSS can show/hide the
     // scroll-bottom button and grow the pill vertically.
     const toolbar = document.getElementById("key-toolbar");
-    if (toolbar) {toolbar.classList.toggle("scrolled-up", scrolledUp);}
+    if (toolbar) {
+      toolbar.classList.toggle("scrolled-up", scrolledUp);
+    }
   },
 });
 
@@ -85,7 +87,9 @@ connection.init({
         const ld = document.getElementById("loading");
         if (ld) {
           ld.classList.add("fade");
-          ld.addEventListener("transitionend", () => { ld.remove(); });
+          ld.addEventListener("transitionend", () => {
+            ld.remove();
+          });
         }
       }
       predict.onScreenFrame(msg.cursor[0], msg.cursor[1], msg.cursorHidden);
@@ -166,7 +170,9 @@ input.addEventListener("input", (e: Event) => {
   // events for each composing keystroke. composition.ts owns sending
   // the final composed text in compositionend; we must NOT send the
   // intermediate input value (it would duplicate the composition).
-  if (composition.isComposing()) {return;}
+  if (composition.isComposing()) {
+    return;
+  }
 
   const ev = e as InputEvent;
   const inputType = ev.inputType;
@@ -226,7 +232,9 @@ input.addEventListener("blur", () => {
 function handleKeydown(ev: KeyboardEvent): void {
   // While composing (IME), let the browser pump composition events;
   // keydown bytes during composition would duplicate the composed text.
-  if (composition.isComposing()) {return;}
+  if (composition.isComposing()) {
+    return;
+  }
 
   // Ctrl+Shift+C / Ctrl+Shift+V — desktop clipboard shortcuts. Handled
   // before the generic mapper because they take browser-side selection
@@ -293,7 +301,9 @@ input.addEventListener("keydown", handleKeydown);
 // Prevent contenteditable from actually modifying the DOM, but
 // capture the typed text and send it to the terminal.
 outputEl.addEventListener("beforeinput", (e) => {
-  if (e.inputType.startsWith("insertComposition")) {return;}
+  if (e.inputType.startsWith("insertComposition")) {
+    return;
+  }
   e.preventDefault();
 
   // Handle typed text (not delete/backspace/enter — those are handled by keydown).
@@ -326,7 +336,9 @@ termWrap.addEventListener(
 termWrap.addEventListener("click", () => {
   if (lastPointerType === "touch") {
     const sel = window.getSelection();
-    if (sel && sel.toString().length > 0) {return;}
+    if (sel && sel.toString().length > 0) {
+      return;
+    }
     input.focus({ preventScroll: true });
   } else {
     // Mouse/trackpad: focus the contenteditable for keyboard input.
@@ -348,7 +360,9 @@ let fontsLoaded = false;
 let wsOpen = false;
 
 function maybeSendFirstResize(): void {
-  if (!fontsLoaded || !wsOpen) {return;}
+  if (!fontsLoaded || !wsOpen) {
+    return;
+  }
   render.updateFontMetrics();
   connection.sendResize(); // sends only if size changed
   const sz = render.computeSize();
@@ -357,14 +371,14 @@ function maybeSendFirstResize(): void {
 
 // Only wait for the Regular weight — it determines cell size.
 // Bold/Italic load lazily when first used; style pop is barely noticeable.
-const regularFont = document.fonts
-  .load('14px "MonaspiceNe NFM"')
-  .then(() => {
-    /* discard result */
-  });
+const regularFont = document.fonts.load('14px "MonaspiceNe NFM"').then(() => {
+  /* discard result */
+});
 void regularFont.then(() => {
   fontsLoaded = true;
-  requestAnimationFrame(() => { maybeSendFirstResize(); });
+  requestAnimationFrame(() => {
+    maybeSendFirstResize();
+  });
 });
 
 // ... viewport init
@@ -472,7 +486,9 @@ function showCtxMenu(x: number, y: number): void {
   }
 
   // Don't show an empty menu (iOS without selection has nothing to offer).
-  if (ctxMenu.childElementCount === 0) {return;}
+  if (ctxMenu.childElementCount === 0) {
+    return;
+  }
 
   ctxMenu.style.left = `${x}px`;
   ctxMenu.style.top = `${y}px`;
@@ -523,7 +539,9 @@ if (!isIOS) {
   termWrap.addEventListener(
     "touchmove",
     (e: TouchEvent) => {
-      if (!longPressTimer || e.touches.length !== 1) {return;}
+      if (!longPressTimer || e.touches.length !== 1) {
+        return;
+      }
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- touches.length checked above
       const t = e.touches[0]!;
       const dx = t.clientX - longPressOrigin.x;

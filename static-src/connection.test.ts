@@ -54,27 +54,37 @@ function makeMockWebSocket(): typeof WebSocket {
         handler: (ev: unknown) => void,
         opts?: { signal?: AbortSignal },
       ): void {
-        if (!this.listeners.has(type)) {this.listeners.set(type, []);}
+        if (!this.listeners.has(type)) {
+          this.listeners.set(type, []);
+        }
         this.listeners.get(type)!.push(handler);
         // Honor signal: when aborted, remove this listener.
         if (opts?.signal) {
           const list = this.listeners.get(type)!;
           opts.signal.addEventListener("abort", () => {
             const idx = list.indexOf(handler);
-            if (idx >= 0) {list.splice(idx, 1);}
+            if (idx >= 0) {
+              list.splice(idx, 1);
+            }
           });
         }
       },
       fireOpen(this: MockWS) {
         this.readyState = 1;
-        for (const fn of this.listeners.get("open") ?? []) {fn({});}
+        for (const fn of this.listeners.get("open") ?? []) {
+          fn({});
+        }
       },
       fireMessage(this: MockWS, data) {
-        for (const fn of this.listeners.get("message") ?? []) {fn({ data });}
+        for (const fn of this.listeners.get("message") ?? []) {
+          fn({ data });
+        }
       },
       fireClose(this: MockWS) {
         this.readyState = 3;
-        for (const fn of this.listeners.get("close") ?? []) {fn({});}
+        for (const fn of this.listeners.get("close") ?? []) {
+          fn({});
+        }
       },
     } as unknown as MockWS;
     Object.setPrototypeOf(sock, MockWebSocket.prototype);
