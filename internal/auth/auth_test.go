@@ -10,20 +10,20 @@ func TestLineRing(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name       string
-		halfCap    int
-		perLineCap int
 		lines      []string
 		want       []string
+		halfCap    int
+		perLineCap int
 	}{
-		{"empty", 3, 128, nil, nil},
-		{"under_half_cap", 3, 128, []string{"a", "b"}, []string{"a", "b"}},
-		{"exactly_at_cap", 3, 128, []string{"a", "b", "c"}, []string{"a", "b", "c"}},
-		{"over_cap_rotation", 2, 128,
-			[]string{"1", "2", "3", "4", "5"},
-			[]string{"1", "2", "4", "5"}},
-		{"truncation", 2, 4,
-			[]string{"hello_world", "ab"},
-			[]string{"hell", "ab"}},
+		{name: "empty", halfCap: 3, perLineCap: 128, lines: nil, want: nil},
+		{name: "under_half_cap", halfCap: 3, perLineCap: 128, lines: []string{"a", "b"}, want: []string{"a", "b"}},
+		{name: "exactly_at_cap", halfCap: 3, perLineCap: 128, lines: []string{"a", "b", "c"}, want: []string{"a", "b", "c"}},
+		{name: "over_cap_rotation", halfCap: 2, perLineCap: 128,
+			lines: []string{"1", "2", "3", "4", "5"},
+			want:  []string{"1", "2", "4", "5"}},
+		{name: "truncation", halfCap: 2, perLineCap: 4,
+			lines: []string{"hello_world", "ab"},
+			want:  []string{"hell", "ab"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,16 +52,16 @@ func TestLimitedWriter(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
-		cap    int64
 		writes []string
 		want   string
 		wantN  []int // expected return values from Write
+		cap    int64
 	}{
-		{"under_cap", 10, []string{"hello"}, "hello", []int{5}},
-		{"exactly_at_cap", 5, []string{"hello"}, "hello", []int{5}},
-		{"over_cap_single", 3, []string{"hello"}, "hel", []int{3}},
-		{"multi_writes_past_cap", 5, []string{"abc", "defgh"}, "abcde", []int{3, 2}},
-		{"zero_cap", 0, []string{"hello"}, "", []int{5}},
+		{name: "under_cap", cap: 10, writes: []string{"hello"}, want: "hello", wantN: []int{5}},
+		{name: "exactly_at_cap", cap: 5, writes: []string{"hello"}, want: "hello", wantN: []int{5}},
+		{name: "over_cap_single", cap: 3, writes: []string{"hello"}, want: "hel", wantN: []int{3}},
+		{name: "multi_writes_past_cap", cap: 5, writes: []string{"abc", "defgh"}, want: "abcde", wantN: []int{3, 2}},
+		{name: "zero_cap", cap: 0, writes: []string{"hello"}, want: "", wantN: []int{5}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,12 +118,12 @@ func TestExtractAuthURL(t *testing.T) {
 func TestWhoamiInfo(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
+		check   func(t *testing.T, m map[string]any)
 		name    string
 		input   string
 		wantErr bool
-		check   func(t *testing.T, m map[string]any)
 	}{
-		{"valid_snake_case", `{"account_type":"builderid","email":"u@x.com"}`, false, func(t *testing.T, m map[string]any) {
+		{name: "valid_snake_case", input: `{"account_type":"builderid","email":"u@x.com"}`, wantErr: false, check: func(t *testing.T, m map[string]any) {
 			t.Helper()
 			if m["auth"] != authBuilderID {
 				t.Errorf("auth = %v, want %q", m["auth"], authBuilderID)
@@ -132,38 +132,38 @@ func TestWhoamiInfo(t *testing.T) {
 				t.Errorf("email = %v, want u@x.com", m["email"])
 			}
 		}},
-		{"valid_camel_case", `{"accountType":"identitycenter"}`, false, func(t *testing.T, m map[string]any) {
+		{name: "valid_camel_case", input: `{"accountType":"identitycenter"}`, wantErr: false, check: func(t *testing.T, m map[string]any) {
 			t.Helper()
 			if m["auth"] != authIdentityCenter {
 				t.Errorf("auth = %v, want %q", m["auth"], authIdentityCenter)
 			}
 		}},
-		{"null_json", `null`, false, func(t *testing.T, m map[string]any) {
+		{name: "null_json", input: `null`, wantErr: false, check: func(t *testing.T, m map[string]any) {
 			t.Helper()
 			if m == nil {
 				t.Error("expected non-nil map for null JSON")
 			}
 		}},
-		{"empty_object", `{}`, false, func(t *testing.T, m map[string]any) {
+		{name: "empty_object", input: `{}`, wantErr: false, check: func(t *testing.T, m map[string]any) {
 			t.Helper()
 			if _, ok := m["auth"]; ok {
 				t.Error("auth should not be set for empty object")
 			}
 		}},
-		{"trailing_non_json", `{"account_type":"social"}` + "\nProfile: default", false, func(t *testing.T, m map[string]any) {
+		{name: "trailing_non_json", input: `{"account_type":"social"}` + "\nProfile: default", wantErr: false, check: func(t *testing.T, m map[string]any) {
 			t.Helper()
 			if m["auth"] != authSocialLogin {
 				t.Errorf("auth = %v, want %q", m["auth"], authSocialLogin)
 			}
 		}},
-		{"email_capitalized", `{"Email":"A@B.com"}`, false, func(t *testing.T, m map[string]any) {
+		{name: "email_capitalized", input: `{"Email":"A@B.com"}`, wantErr: false, check: func(t *testing.T, m map[string]any) {
 			t.Helper()
 			if m["email"] != "A@B.com" {
 				t.Errorf("email = %v, want A@B.com", m["email"])
 			}
 		}},
-		{"invalid_json", `not json`, true, nil},
-		{"empty_input", ``, true, nil},
+		{name: "invalid_json", input: `not json`, wantErr: true, check: nil},
+		{name: "empty_input", input: ``, wantErr: true, check: nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -15,12 +15,12 @@ func TestCodegenDrift(t *testing.T) {
 	outDir := filepath.Join("..", "..", "static-src", "wire")
 
 	cases := []struct {
-		file     string
 		generate func(*strings.Builder)
+		file     string
 	}{
-		{"types.gen.ts", generateTypes},
-		{"decoders.gen.ts", generateDecoders},
-		{"constants.gen.ts", generateConstants},
+		{generateTypes, "types.gen.ts"},
+		{generateDecoders, "decoders.gen.ts"},
+		{generateConstants, "constants.gen.ts"},
 	}
 
 	for _, tc := range cases {
