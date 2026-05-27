@@ -83,7 +83,8 @@ export function init(opts: {
   // on screen.orientation; older Safari falls back to the deprecated
   // window.orientationchange event.
   const orientation = (screen as Screen & { orientation?: ScreenOrientation }).orientation;
-  if (orientation && typeof orientation.addEventListener === "function") {
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime guard for older Safari without screen.orientation
+  if (orientation) {
     orientation.addEventListener("change", startTransition);
   } else if ("onorientationchange" in window) {
     window.addEventListener("orientationchange", startTransition);

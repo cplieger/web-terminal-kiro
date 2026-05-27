@@ -268,6 +268,7 @@ function ctrlSymbolByte(ch: string): string | null {
  */
 export function bracketTextForPaste(text: string): string {
   if (!isBracketedPaste()) {return text;}
+  // eslint-disable-next-line no-control-regex -- intentional: sanitising ESC bytes in pasted text
   const sanitised = text.replace(/\x1b/g, "\u241B");
   return `\x1b[200~${sanitised}\x1b[201~`;
 }

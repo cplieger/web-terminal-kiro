@@ -62,6 +62,7 @@ class Cursor {
 
 function readRowRuns(c: Cursor): WireRun[] {
   const numRuns = c.u16();
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- pre-allocated array filled immediately below
   const runs: WireRun[] = new Array(numRuns);
   for (let i = 0; i < numRuns; i++) {
     const tlen = c.u16();
@@ -123,7 +124,9 @@ function decodeWireBinaryInner(buf: ArrayBuffer): ServerMessage | null {
     // indices; absent rows are kept as undefined so the renderer leaves
     // them untouched. rows.length matches the screen height so
     // ensureRows() in the renderer creates the right number of <div>s.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- pre-allocated array filled below
     const rows: WireRun[][] = new Array(screenHeight);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- pre-allocated array filled below
     const changed: number[] = new Array(numChanged);
     for (let i = 0; i < numChanged; i++) {
       const idx = c.u16();
@@ -145,6 +148,7 @@ function decodeWireBinaryInner(buf: ArrayBuffer): ServerMessage | null {
   }
   if (msgType === MSG_SCROLL) {
     const numLines = c.u16();
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- pre-allocated array filled below
     const lines: WireRun[][] = new Array(numLines);
     for (let i = 0; i < numLines; i++) {lines[i] = readRowRuns(c);}
     const msg: ScrollMessage = { type: "scroll", lines, inputAck };

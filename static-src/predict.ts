@@ -81,6 +81,7 @@ export function applyInput(bytes: Uint8Array): void {
   if (!predActive || predFrozen) {return;}
   let i = 0;
   while (i < bytes.length) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- index checked by loop condition
     const b = bytes[i]!;
     if (b === 0x1b) {
       // ESC — start of an escape sequence. Don't try to model it.

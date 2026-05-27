@@ -71,8 +71,8 @@ export function isComposing(): boolean {
 
 function onStart(): void {
   composing = true;
-  const start = textarea.selectionStart ?? textarea.value.length;
-  const end = textarea.selectionEnd ?? start;
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
   compositionStart = Math.min(start, end);
   compositionEnd = Math.max(start, end);
   compositionSuffix = textarea.value.substring(compositionEnd);
@@ -90,7 +90,7 @@ function onUpdate(ev: CompositionEvent): void {
   // Schedule a microtask to refresh the end position after the
   // textarea selection settles.
   setTimeout(() => {
-    const end = textarea.selectionEnd ?? textarea.value.length;
+    const end = textarea.selectionEnd;
     compositionEnd = Math.max(compositionStart, end);
   }, 0);
 }

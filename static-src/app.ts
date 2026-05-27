@@ -11,9 +11,12 @@ import * as predict from "./predict.js";
 import { mapKeyboardEvent, bracketTextForPaste, prepareTextForTerminal } from "./keyboard.js";
 
 // --- DOM refs ---
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- element guaranteed in index.html
 const outputEl = document.getElementById("term-output")!;
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- element guaranteed in index.html
 const termWrap = document.getElementById("term")!;
 const input = document.getElementById("term-input") as HTMLTextAreaElement;
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- element guaranteed in index.html
 const compositionViewEl = document.getElementById("composition-view")!;
 
 const encoder = new TextEncoder();
@@ -231,7 +234,7 @@ function handleKeydown(ev: KeyboardEvent): void {
   if (ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey) {
     if (ev.code === "KeyC") {
       const sel = window.getSelection()?.toString();
-      if (sel && navigator.clipboard.writeText) {
+      if (sel) {
         void navigator.clipboard.writeText(sel).catch(() => {
           /* ignore */
         });
@@ -240,16 +243,14 @@ function handleKeydown(ev: KeyboardEvent): void {
       return;
     }
     if (ev.code === "KeyV") {
-      if (navigator.clipboard.readText) {
-        navigator.clipboard
-          .readText()
-          .then((text) => {
-            send(bracketTextForPaste(prepareTextForTerminal(text)));
-          })
-          .catch(() => {
-            /* ignore */
-          });
-      }
+      navigator.clipboard
+        .readText()
+        .then((text) => {
+          send(bracketTextForPaste(prepareTextForTerminal(text)));
+        })
+        .catch(() => {
+          /* ignore */
+        });
       ev.preventDefault();
       return;
     }
@@ -408,6 +409,7 @@ if (scrollBtn) {
 }
 
 // --- Context menu ---
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- element guaranteed in index.html
 const ctxMenu = document.getElementById("ctx-menu")!;
 
 // iOS Safari shows a system "Paste" permission toast every time
@@ -456,16 +458,14 @@ function showCtxMenu(x: number, y: number): void {
     const pasteBtn = document.createElement("button");
     pasteBtn.textContent = "Paste";
     pasteBtn.addEventListener("click", () => {
-      if (navigator.clipboard.readText) {
-        navigator.clipboard
-          .readText()
-          .then((text) => {
-            send(bracketTextForPaste(prepareTextForTerminal(text)));
-          })
-          .catch(() => {
-            /* ignore */
-          });
-      }
+      navigator.clipboard
+        .readText()
+        .then((text) => {
+          send(bracketTextForPaste(prepareTextForTerminal(text)));
+        })
+        .catch(() => {
+          /* ignore */
+        });
       hideCtxMenu();
     });
     ctxMenu.appendChild(pasteBtn);
@@ -509,6 +509,7 @@ if (!isIOS) {
         }
         return;
       }
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- touches.length checked above
       const t = e.touches[0]!;
       longPressOrigin = { x: t.clientX, y: t.clientY };
       longPressTimer = window.setTimeout(() => {
@@ -523,6 +524,7 @@ if (!isIOS) {
     "touchmove",
     (e: TouchEvent) => {
       if (!longPressTimer || e.touches.length !== 1) {return;}
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- touches.length checked above
       const t = e.touches[0]!;
       const dx = t.clientX - longPressOrigin.x;
       const dy = t.clientY - longPressOrigin.y;

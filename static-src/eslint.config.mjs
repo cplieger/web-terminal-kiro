@@ -42,7 +42,14 @@ export default [
       ecmaVersion: 2024,
       sourceType: "module",
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: [
+            "*.test.ts",
+            "*.property.test.ts",
+            "fc-strict-setup.ts",
+          ],
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 20,
+        },
         tsconfigRootDir: import.meta.dirname,
       },
       globals: {
@@ -155,6 +162,9 @@ export default [
       "@typescript-eslint/no-unsafe-call": "off",
       "@typescript-eslint/no-unsafe-argument": "off",
       "@typescript-eslint/no-unsafe-return": "off",
+      "@typescript-eslint/no-extraneous-class": "off",
+      "@typescript-eslint/no-unnecessary-condition": "off",
+      "@typescript-eslint/no-misused-spread": "off",
       "@typescript-eslint/unbound-method": "off",
       "@typescript-eslint/require-await": "off",
       "no-console": "off",

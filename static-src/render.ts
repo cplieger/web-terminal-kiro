@@ -29,6 +29,7 @@ function variantContext(variant: number): CanvasRenderingContext2D {
   const canvas = document.createElement("canvas");
   canvas.width = 1;
   canvas.height = 1;
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- 2d context always available on fresh canvas
   ctx = canvas.getContext("2d")!;
   let f = "";
   if (variant & VARIANT_ITALIC) {f += "italic ";}
@@ -47,6 +48,7 @@ function measureChar(ch: string, bold: boolean, italic: boolean): number {
   if (!bold && !italic && ch.length === 1) {
     const cp = ch.charCodeAt(0);
     if (cp < WIDTH_FLAT_SIZE) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- bounds checked above
       const cached = widthFlat[cp]!;
       if (cached !== WIDTH_FLAT_UNSET) {return cached;}
       const w = variantContext(VARIANT_REGULAR).measureText(ch).width;
@@ -122,6 +124,7 @@ export function resetScreen(): void {
 export function resetScrollback(): void {
   const historyCount = allRows.length - liveCount;
   for (let i = 0; i < historyCount; i++) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- index within bounds
     allRows[i]!.remove();
   }
   allRows = allRows.slice(historyCount);
@@ -141,6 +144,7 @@ function linkifySpans(
 ): (HTMLSpanElement | HTMLAnchorElement)[] {
   const out: (HTMLSpanElement | HTMLAnchorElement)[] = [];
   for (const span of spans) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- textContent can be null per DOM spec
     const text = span.textContent ?? "";
     URL_RE.lastIndex = 0;
     let match: RegExpExecArray | null;
@@ -181,7 +185,7 @@ function buildRowSpans(runs: WireRun[], cursorAt: number): (HTMLSpanElement | HT
   let col = 0;
   for (const run of runs) {
     if (!run.t) {continue;}
-    const attrs = run.a || 0;
+    const attrs = run.a ?? 0;
     const isBold = (attrs & 1) !== 0;
     const isItalic = (attrs & 2) !== 0;
     const isUnderline = (attrs & 4) !== 0;
@@ -245,9 +249,12 @@ function buildRowSpans(runs: WireRun[], cursorAt: number): (HTMLSpanElement | HT
         // Flush any buffered text first so the wide char is in its own span.
         flush();
         if (out.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- length checked above
           const prev = out[out.length - 1]!;
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- textContent can be null per DOM spec
           const prevText = prev.textContent ?? "";
           if (prevText.length > 0) {
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion, @typescript-eslint/no-misused-spread -- terminal text is ASCII/CJK, safe to spread; .at(-1) guaranteed by length check
             const lastChar = [...prevText].at(-1)!;
             const w = measureChar(lastChar, isBold, isItalic);
             prev.style.letterSpacing = `${cellWidth * 2 - w}px`;
@@ -321,6 +328,7 @@ function trimHistory(): void {
   if (historyCount > MAX_HISTORY) {
     const excess = historyCount - MAX_HISTORY;
     for (let i = 0; i < excess; i++) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- index within bounds
       allRows[i]!.remove();
     }
     allRows = allRows.slice(excess);
@@ -378,6 +386,7 @@ function flushAll(): void {
   if (pendingScrollback.length > 0 && !firstScreen) {
     const batch = pendingScrollback.splice(0);
     const liveStart = allRows.length - liveCount;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- liveStart < length guarantees element exists
     const refNode = liveStart < allRows.length ? allRows[liveStart]! : null;
 
     // Trim history BEFORE inserting new scroll lines to avoid viewport

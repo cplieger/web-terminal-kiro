@@ -130,6 +130,7 @@ function applyAck(received: number): void {
   bytesAcked = Math.min(received, bytesSent);
   const targetUnacked = bytesSent - bytesAcked;
   while (outbox.length > 0 && outboxBytes > targetUnacked) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- length checked above
     const head = outbox[0]!;
     const dropFromHead = outboxBytes - targetUnacked;
     if (head.length <= dropFromHead) {
@@ -339,5 +340,5 @@ export function connect(): void {
     { signal: connectAbort.signal },
   );
 
-  sock.addEventListener("error", () => {}, { signal: connectAbort.signal });
+  sock.addEventListener("error", () => { /* no-op: prevents unhandled error */ }, { signal: connectAbort.signal });
 }
