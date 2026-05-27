@@ -1,5 +1,5 @@
 # vibecli/static/style.css bundle manifest
-# Files concatenated in declared order by lib/shell/build-css.sh.
+# Files concatenated in declared order at Docker build time.
 00-tokens.css
 01-reset.css
 02-app.css
