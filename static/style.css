@@ -110,6 +110,7 @@ html, body {
   font-variant-ligatures: none;
   font-feature-settings: "liga" 0, "calt" 0;
   font-kerning: none;
+
   /* Note: do NOT use `contain: layout style` here. iOS Safari has
      paint-suppression bugs in WebKit where layout-contained elements
      receiving frequent replaceChildren() updates can drop paint
@@ -145,7 +146,7 @@ html, body {
   /* Suppress contenteditable visual artifacts */
   caret-color: transparent;
   outline: none;
-  -webkit-user-modify: read-write-plaintext-only; /* stylelint-disable-line property-no-deprecated */
+  -webkit-user-modify: read-write-plaintext-only; /* stylelint-disable-line property-no-deprecated -- legacy: required for contenteditable plaintext in WebKit */
 
   /* Allow text selection on the content (hterm pattern) */
   user-select: text;
