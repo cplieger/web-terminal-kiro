@@ -54,7 +54,11 @@ export function nextBackoffDelay(
 }
 
 function clamp01(x: number): number {
-  if (!Number.isFinite(x) || x < 0) return 0;
-  if (x >= 1) return 0.999_999_999;
+  if (!Number.isFinite(x) || x < 0) {
+    return 0;
+  }
+  if (x >= 1) {
+    return 0.999_999_999;
+  }
   return x;
 }

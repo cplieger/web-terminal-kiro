@@ -118,12 +118,6 @@ func (s *Screen) CursorPos() (row, col int) {
 	return s.curY, s.curX
 }
 
-// SetCursor sets the cursor position.
-func (s *Screen) SetCursor(row, col int) {
-	s.curY = row
-	s.curX = col
-}
-
 // Resize adjusts the screen dimensions, preserving existing content where
 // possible. When dimensions actually change, cells are cleared so kiro-cli's
 // SIGWINCH redraw starts from a clean slate; on a no-op resize (e.g. client
@@ -225,30 +219,6 @@ func (s *Screen) RowString(y int) string {
 		buf.WriteRune(ch)
 	}
 	return strings.TrimRight(buf.String(), " ")
-}
-
-// RenderRow returns a row as ANSI-colored text. Public-facing wrapper around
-// the package-private renderRow used by the legacy ANSI scrollback path.
-func (s *Screen) RenderRow(y int) string {
-	if y < 0 || y >= s.Height {
-		return ""
-	}
-	return s.renderRow(y)
-}
-
-// renderRow returns a row as an ANSI-escape colored string.
-func (s *Screen) renderRow(y int) string {
-	var buf strings.Builder
-	var prev Style
-	for x, cell := range s.Cells[y] {
-		if x == 0 || cell.Style != prev {
-			buf.WriteString(sgrSequence(cell.Style))
-		}
-		prev = cell.Style
-		buf.WriteRune(cell.Ch)
-	}
-	buf.WriteString("\x1b[0m")
-	return strings.TrimRight(buf.String(), " \x1b[0m")
 }
 
 // --- Cell-level helpers used across files ---

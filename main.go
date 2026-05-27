@@ -10,12 +10,11 @@ package main
 // container.
 //
 // Order matters: wire-codegen first (TS sources reference its output),
-// then the CSS bundle (built from `static-src/css/MANIFEST` via the
-// repo-shared script), then tsgo for the JS bundle (last because it
-// fails fast if either generated input is missing).
+// then tsgo for the JS bundle (last because it fails fast if the
+// generated input is missing). The CSS bundle is concatenated by the
+// Dockerfile at build time; no go:generate step for it.
 //
 //go:generate go run ./cmd/wire-codegen
-//go:generate sh ../../lib/shell/build-css.sh static-src/css/MANIFEST static/style.css
 //go:generate tsgo --project static-src/tsconfig.json
 
 import (

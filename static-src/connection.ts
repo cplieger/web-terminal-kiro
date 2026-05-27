@@ -36,10 +36,10 @@ let lastSentRows = 0;
 
 // Resume-protocol state. sessionId is generated once at module load.
 const sessionId = generateSessionId();
-let bytesSent = 0;       // total bytes ever passed to sendBinary
-let bytesAcked = 0;      // confirmed by server inputAck/resumeAck
+let bytesSent = 0; // total bytes ever passed to sendBinary
+let bytesAcked = 0; // confirmed by server inputAck/resumeAck
 const outbox: Uint8Array[] = []; // chunks of unacked bytes (sum = bytesSent - bytesAcked)
-let outboxBytes = 0;     // running sum of outbox chunk lengths; keeps applyAck O(n) instead of O(n²)
+let outboxBytes = 0; // running sum of outbox chunk lengths; keeps applyAck O(n) instead of O(n²)
 let lastServerEpoch: number | null = null; // process-start nanos of the last connected server
 
 /**
@@ -51,14 +51,18 @@ let lastServerEpoch: number | null = null; // process-start nanos of the last co
 export const MAX_OUTBOX_BYTES = 1 << 20;
 
 function generateSessionId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
   // Fallback for older browsers: pseudo-random hex string.
   let s = "";
-  for (let i = 0; i < 8; i++) s += Math.random().toString(16).slice(2, 6);
+  for (let i = 0; i < 8; i++) {
+    s += Math.random().toString(16).slice(2, 6);
+  }
   return s;
 }
 
-export type Callbacks = {
+export interface Callbacks {
   onMessage(msg: ServerMessage): void;
   onOpen(): void;
   onClose(): void;
@@ -72,7 +76,7 @@ export type Callbacks = {
    *  banner so the user knows old input may have been lost. */
   onServerRestart?(): void;
   computeSize(): { cols: number; rows: number };
-};
+}
 
 let cb: Callbacks | null = null;
 
@@ -99,20 +103,26 @@ export function sendBinary(data: Uint8Array): boolean {
   outboxBytes += copy.length;
   bytesSent += copy.length;
   if (connState.status === "connected") {
-    connState.sock.send(copy.buffer.slice(copy.byteOffset, copy.byteOffset + copy.byteLength) as ArrayBuffer);
+    connState.sock.send(copy.buffer.slice(copy.byteOffset, copy.byteOffset + copy.byteLength));
   }
   return true;
 }
 
 function sendControl(msg: ControlMessage): void {
-  if (connState.status !== "connected") return;
+  if (connState.status !== "connected") {
+    return;
+  }
   connState.sock.send(controlFrame(msg));
 }
 
 export function sendResize(): void {
-  if (connState.status !== "connected" || !cb) return;
+  if (connState.status !== "connected" || !cb) {
+    return;
+  }
   const { cols, rows } = cb.computeSize();
-  if (cols === lastSentCols && rows === lastSentRows) return;
+  if (cols === lastSentCols && rows === lastSentRows) {
+    return;
+  }
   lastSentCols = cols;
   lastSentRows = rows;
   sendControl({ type: "resize", cols, rows });
@@ -123,10 +133,13 @@ export function sendResize(): void {
 // in O(chunks_dropped) by tracking outboxBytes incrementally rather
 // than re-summing on every loop iteration.
 function applyAck(received: number): void {
-  if (received <= bytesAcked) return;
+  if (received <= bytesAcked) {
+    return;
+  }
   bytesAcked = Math.min(received, bytesSent);
   const targetUnacked = bytesSent - bytesAcked;
   while (outbox.length > 0 && outboxBytes > targetUnacked) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- length checked above
     const head = outbox[0]!;
     const dropFromHead = outboxBytes - targetUnacked;
     if (head.length <= dropFromHead) {
@@ -144,14 +157,20 @@ function applyAck(received: number): void {
 // resumeAck, replay anything still in the outbox. The server has
 // adjusted bytesAcked already — only unacked bytes remain.
 function retransmitOutbox(): void {
-  if (connState.status !== "connected") return;
+  if (connState.status !== "connected") {
+    return;
+  }
   for (const chunk of outbox) {
-    connState.sock.send(chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer);
+    connState.sock.send(
+      chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer,
+    );
   }
 }
 
 function scheduleReconnect(): void {
-  if (connState.status === "reconnecting") return;
+  if (connState.status === "reconnecting") {
+    return;
+  }
   const step = nextBackoffDelay(reconnectDelay);
   reconnectDelay = step.nextBaseMs;
   const timer = setTimeout(() => {
@@ -169,7 +188,9 @@ function cancelScheduledReconnect(): void {
 }
 
 export function reconnectNow(): void {
-  if (connState.status === "connected") return;
+  if (connState.status === "connected") {
+    return;
+  }
   if (connState.status === "connecting") {
     // Abort BEFORE close: aborting detaches all listeners on the
     // existing sock, so any frames that arrive between close() and
@@ -180,7 +201,11 @@ export function reconnectNow(): void {
     // are otherwise still alive and re-process every frame the new
     // sock receives, leading to duplicated DOM rows.
     connState.abort.abort();
-    try { connState.sock.close(); } catch { /* ignore */ }
+    try {
+      connState.sock.close();
+    } catch {
+      /* ignore */
+    }
   }
   cancelScheduledReconnect();
   connState = { status: "disconnected" };
@@ -196,7 +221,11 @@ export function connect(): void {
   // on (the iPad-wake duplicate-output race).
   if (connState.status === "connecting" || connState.status === "connected") {
     connState.abort.abort();
-    try { connState.sock.close(); } catch { /* ignore */ }
+    try {
+      connState.sock.close();
+    } catch {
+      /* ignore */
+    }
   }
 
   cb?.onConnecting?.();
@@ -211,30 +240,40 @@ export function connect(): void {
   //   aborted (by reconnectNow / connect / close) the listeners are
   //   removed atomically and can't fire again.
   const connectAbort = new AbortController();
-  const timeoutId = setTimeout(() => connectAbort.abort(), 10_000);
+  const timeoutId = setTimeout(() => {
+    connectAbort.abort();
+  }, 10_000);
   connectAbort.signal.addEventListener("abort", () => {
     clearTimeout(timeoutId);
     // Force-close on abort so the OS-level socket goes away promptly,
     // not only when the browser eventually completes its close
     // handshake. Belt-and-braces with the .close() in our callers.
-    try { sock.close(); } catch { /* ignore */ }
+    try {
+      sock.close();
+    } catch {
+      /* ignore */
+    }
   });
 
   connState = { status: "connecting", sock, abort: connectAbort };
 
-  sock.addEventListener("open", () => {
-    clearTimeout(timeoutId);
-    connState = { status: "connected", sock, abort: connectAbort };
-    reconnectDelay = INITIAL_DELAY_MS;
-    lastSentCols = 0;
-    lastSentRows = 0;
-    cb?.onOpen();
+  sock.addEventListener(
+    "open",
+    () => {
+      clearTimeout(timeoutId);
+      connState = { status: "connected", sock, abort: connectAbort };
+      reconnectDelay = INITIAL_DELAY_MS;
+      lastSentCols = 0;
+      lastSentRows = 0;
+      cb?.onOpen();
 
-    // Send resume immediately so server can respond with its current
-    // bytesReceived for this session — we trim/retransmit the outbox
-    // when that resumeAck arrives (handled in the message listener).
-    sock.send(controlFrame({ type: "resume", sessionId, sentBytes: bytesSent }));
-  }, { signal: connectAbort.signal });
+      // Send resume immediately so server can respond with its current
+      // bytesReceived for this session — we trim/retransmit the outbox
+      // when that resumeAck arrives (handled in the message listener).
+      sock.send(controlFrame({ type: "resume", sessionId, sentBytes: bytesSent }));
+    },
+    { signal: connectAbort.signal },
+  );
 
   // Queue for serializing Blob→ArrayBuffer conversion. iOS Safari can
   // deliver binary WS frames as Blob; the conversion is async via
@@ -242,29 +281,37 @@ export function connect(): void {
   // We chain promises so each frame is processed in arrival order.
   let blobChain: Promise<void> = Promise.resolve();
 
-  sock.addEventListener("message", (ev: MessageEvent) => {
-    if (ev.data instanceof ArrayBuffer) {
-      handleDecoded(decodeWireBinary(ev.data));
-      return;
-    }
-    if (ev.data instanceof Blob) {
-      const blob = ev.data;
-      blobChain = blobChain.then(() =>
-        blob.arrayBuffer().then((ab) => handleDecoded(decodeWireBinary(ab))),
-      );
-      return;
-    }
-    if (typeof ev.data === "string") {
-      try {
-        handleDecoded(JSON.parse(ev.data) as ServerMessage);
-      } catch {
-        // ignore malformed text frames
+  sock.addEventListener(
+    "message",
+    (ev: MessageEvent) => {
+      if (ev.data instanceof ArrayBuffer) {
+        handleDecoded(decodeWireBinary(ev.data));
+        return;
       }
-    }
-  }, { signal: connectAbort.signal });
+      if (ev.data instanceof Blob) {
+        const blob = ev.data;
+        blobChain = blobChain.then(() =>
+          blob.arrayBuffer().then((ab) => {
+            handleDecoded(decodeWireBinary(ab));
+          }),
+        );
+        return;
+      }
+      if (typeof ev.data === "string") {
+        try {
+          handleDecoded(JSON.parse(ev.data) as ServerMessage);
+        } catch {
+          // ignore malformed text frames
+        }
+      }
+    },
+    { signal: connectAbort.signal },
+  );
 
   function handleDecoded(msg: ServerMessage | null): void {
-    if (msg === null) return;
+    if (msg === null) {
+      return;
+    }
     if (msg.type === "resumeAck") {
       // Server-restart detection. The first resumeAck we see records
       // the epoch; subsequent ones compare to it. A mismatch means the
@@ -288,27 +335,45 @@ export function connect(): void {
     }
     if (msg.type === "modes") {
       modes.setModes(msg.bracketedPaste, msg.applicationCursor);
-      if (typeof msg.inputAck === "number") applyAck(msg.inputAck);
+      if (typeof msg.inputAck === "number") {
+        applyAck(msg.inputAck);
+      }
       // Notify the UI so it can react to mode changes (e.g. clear
       // scrollback on alt-screen entry — handled by the caller).
       cb?.onMessage(msg);
       return;
     }
-    if (typeof msg.inputAck === "number") applyAck(msg.inputAck);
+    if (typeof msg.inputAck === "number") {
+      applyAck(msg.inputAck);
+    }
     cb?.onMessage(msg);
   }
 
-  sock.addEventListener("close", () => {
-    // Only the active sock's close should drive reconnect logic; an
-    // already-superseded sock has been aborted and this listener
-    // wouldn't fire (signal removes it). The check stays as a belt-
-    // and-braces guard in case the abort hasn't propagated yet.
-    if (connState.status !== "connecting" && connState.status !== "connected") return;
-    if (connState.sock !== sock) return;
-    connState = { status: "disconnected" };
-    cb?.onClose();
-    scheduleReconnect();
-  }, { signal: connectAbort.signal });
+  sock.addEventListener(
+    "close",
+    () => {
+      // Only the active sock's close should drive reconnect logic; an
+      // already-superseded sock has been aborted and this listener
+      // wouldn't fire (signal removes it). The check stays as a belt-
+      // and-braces guard in case the abort hasn't propagated yet.
+      if (connState.status !== "connecting" && connState.status !== "connected") {
+        return;
+      }
+      if (connState.sock !== sock) {
+        return;
+      }
+      connState = { status: "disconnected" };
+      cb?.onClose();
+      scheduleReconnect();
+    },
+    { signal: connectAbort.signal },
+  );
 
-  sock.addEventListener("error", () => {}, { signal: connectAbort.signal });
+  sock.addEventListener(
+    "error",
+    () => {
+      /* no-op: prevents unhandled error */
+    },
+    { signal: connectAbort.signal },
+  );
 }

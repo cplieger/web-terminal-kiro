@@ -20,7 +20,7 @@ interface MockWS {
   binaryType: string;
   readyState: number;
   closed: boolean;
-  listeners: Map<string, Array<(ev: unknown) => void>>;
+  listeners: Map<string, ((ev: unknown) => void)[]>;
   signals: Map<string, AbortSignal | undefined>;
   send: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
@@ -48,28 +48,43 @@ function makeMockWebSocket(): typeof WebSocket {
         this.closed = true;
         this.readyState = 3; // CLOSED
       }) as unknown as ReturnType<typeof vi.fn>,
-      addEventListener(this: MockWS, type: string, handler: (ev: unknown) => void, opts?: { signal?: AbortSignal }): void {
-        if (!this.listeners.has(type)) this.listeners.set(type, []);
+      addEventListener(
+        this: MockWS,
+        type: string,
+        handler: (ev: unknown) => void,
+        opts?: { signal?: AbortSignal },
+      ): void {
+        if (!this.listeners.has(type)) {
+          this.listeners.set(type, []);
+        }
         this.listeners.get(type)!.push(handler);
         // Honor signal: when aborted, remove this listener.
         if (opts?.signal) {
           const list = this.listeners.get(type)!;
           opts.signal.addEventListener("abort", () => {
             const idx = list.indexOf(handler);
-            if (idx >= 0) list.splice(idx, 1);
+            if (idx >= 0) {
+              list.splice(idx, 1);
+            }
           });
         }
       },
       fireOpen(this: MockWS) {
         this.readyState = 1;
-        for (const fn of this.listeners.get("open") ?? []) fn({});
+        for (const fn of this.listeners.get("open") ?? []) {
+          fn({});
+        }
       },
       fireMessage(this: MockWS, data) {
-        for (const fn of this.listeners.get("message") ?? []) fn({ data });
+        for (const fn of this.listeners.get("message") ?? []) {
+          fn({ data });
+        }
       },
       fireClose(this: MockWS) {
         this.readyState = 3;
-        for (const fn of this.listeners.get("close") ?? []) fn({});
+        for (const fn of this.listeners.get("close") ?? []) {
+          fn({});
+        }
       },
     } as unknown as MockWS;
     Object.setPrototypeOf(sock, MockWebSocket.prototype);

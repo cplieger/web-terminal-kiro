@@ -29,7 +29,7 @@ export const CONTROL_FRAME_PREFIX = 0x00;
  * fresh ArrayBuffer (not a SharedArrayBuffer slice) so it satisfies
  * WebSocket.send's BufferSource parameter.
  */
-export function controlFrame<T>(msg: T): Uint8Array<ArrayBuffer> {
+export function controlFrame(msg: unknown): Uint8Array<ArrayBuffer> {
   const body = new TextEncoder().encode(JSON.stringify(msg));
   const frame = new Uint8Array(new ArrayBuffer(body.length + 1));
   frame[0] = CONTROL_FRAME_PREFIX;

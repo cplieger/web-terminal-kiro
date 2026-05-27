@@ -11,9 +11,12 @@ import * as predict from "./predict.js";
 import { mapKeyboardEvent, bracketTextForPaste, prepareTextForTerminal } from "./keyboard.js";
 
 // --- DOM refs ---
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- element guaranteed in index.html
 const outputEl = document.getElementById("term-output")!;
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- element guaranteed in index.html
 const termWrap = document.getElementById("term")!;
 const input = document.getElementById("term-input") as HTMLTextAreaElement;
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- element guaranteed in index.html
 const compositionViewEl = document.getElementById("composition-view")!;
 
 const encoder = new TextEncoder();
@@ -27,6 +30,7 @@ function send(bytes: string): void {
   const buf = encoder.encode(bytes);
   predict.applyInput(buf);
   if (!connection.sendBinary(buf)) {
+    /* connection not ready — drop silently */
   }
 }
 
@@ -68,7 +72,9 @@ scroll.init({
     // Toggle .scrolled-up on the toolbar so CSS can show/hide the
     // scroll-bottom button and grow the pill vertically.
     const toolbar = document.getElementById("key-toolbar");
-    if (toolbar) toolbar.classList.toggle("scrolled-up", scrolledUp);
+    if (toolbar) {
+      toolbar.classList.toggle("scrolled-up", scrolledUp);
+    }
   },
 });
 
@@ -81,7 +87,9 @@ connection.init({
         const ld = document.getElementById("loading");
         if (ld) {
           ld.classList.add("fade");
-          ld.addEventListener("transitionend", () => ld.remove());
+          ld.addEventListener("transitionend", () => {
+            ld.remove();
+          });
         }
       }
       predict.onScreenFrame(msg.cursor[0], msg.cursor[1], msg.cursorHidden);
@@ -162,7 +170,9 @@ input.addEventListener("input", (e: Event) => {
   // events for each composing keystroke. composition.ts owns sending
   // the final composed text in compositionend; we must NOT send the
   // intermediate input value (it would duplicate the composition).
-  if (composition.isComposing()) return;
+  if (composition.isComposing()) {
+    return;
+  }
 
   const ev = e as InputEvent;
   const inputType = ev.inputType;
@@ -222,7 +232,9 @@ input.addEventListener("blur", () => {
 function handleKeydown(ev: KeyboardEvent): void {
   // While composing (IME), let the browser pump composition events;
   // keydown bytes during composition would duplicate the composed text.
-  if (composition.isComposing()) return;
+  if (composition.isComposing()) {
+    return;
+  }
 
   // Ctrl+Shift+C / Ctrl+Shift+V — desktop clipboard shortcuts. Handled
   // before the generic mapper because they take browser-side selection
@@ -230,18 +242,23 @@ function handleKeydown(ev: KeyboardEvent): void {
   if (ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey) {
     if (ev.code === "KeyC") {
       const sel = window.getSelection()?.toString();
-      if (sel && navigator.clipboard?.writeText) {
-        void navigator.clipboard.writeText(sel).catch(() => { /* ignore */ });
+      if (sel) {
+        void navigator.clipboard.writeText(sel).catch(() => {
+          /* ignore */
+        });
       }
       ev.preventDefault();
       return;
     }
     if (ev.code === "KeyV") {
-      if (navigator.clipboard?.readText) {
-        navigator.clipboard.readText().then((text) => {
+      navigator.clipboard
+        .readText()
+        .then((text) => {
           send(bracketTextForPaste(prepareTextForTerminal(text)));
-        }).catch(() => { /* ignore */ });
-      }
+        })
+        .catch(() => {
+          /* ignore */
+        });
       ev.preventDefault();
       return;
     }
@@ -284,7 +301,9 @@ input.addEventListener("keydown", handleKeydown);
 // Prevent contenteditable from actually modifying the DOM, but
 // capture the typed text and send it to the terminal.
 outputEl.addEventListener("beforeinput", (e) => {
-  if (e.inputType.startsWith("insertComposition")) return;
+  if (e.inputType.startsWith("insertComposition")) {
+    return;
+  }
   e.preventDefault();
 
   // Handle typed text (not delete/backspace/enter — those are handled by keydown).
@@ -307,14 +326,20 @@ function focusTerminal(): void {
 
 // Touch tap: focus the hidden textarea to trigger iOS keyboard.
 let lastPointerType = "mouse";
-termWrap.addEventListener("pointerdown", (e) => {
-  lastPointerType = e.pointerType;
-}, { passive: true });
+termWrap.addEventListener(
+  "pointerdown",
+  (e) => {
+    lastPointerType = e.pointerType;
+  },
+  { passive: true },
+);
 termWrap.addEventListener("click", () => {
   if (lastPointerType === "touch") {
     const sel = window.getSelection();
-    if (sel && sel.toString().length > 0) return;
-    input?.focus({ preventScroll: true });
+    if (sel && sel.toString().length > 0) {
+      return;
+    }
+    input.focus({ preventScroll: true });
   } else {
     // Mouse/trackpad: focus the contenteditable for keyboard input.
     // Selection is preserved because we're focusing the same element
@@ -335,7 +360,9 @@ let fontsLoaded = false;
 let wsOpen = false;
 
 function maybeSendFirstResize(): void {
-  if (!fontsLoaded || !wsOpen) return;
+  if (!fontsLoaded || !wsOpen) {
+    return;
+  }
   render.updateFontMetrics();
   connection.sendResize(); // sends only if size changed
   const sz = render.computeSize();
@@ -344,12 +371,14 @@ function maybeSendFirstResize(): void {
 
 // Only wait for the Regular weight — it determines cell size.
 // Bold/Italic load lazily when first used; style pop is barely noticeable.
-const regularFont = document.fonts
-  ? document.fonts.load('14px "MonaspiceNe NFM"').then(() => {})
-  : Promise.resolve();
+const regularFont = document.fonts.load('14px "MonaspiceNe NFM"').then(() => {
+  /* discard result */
+});
 void regularFont.then(() => {
   fontsLoaded = true;
-  requestAnimationFrame(() => maybeSendFirstResize());
+  requestAnimationFrame(() => {
+    maybeSendFirstResize();
+  });
 });
 
 // ... viewport init
@@ -394,6 +423,7 @@ if (scrollBtn) {
 }
 
 // --- Context menu ---
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- element guaranteed in index.html
 const ctxMenu = document.getElementById("ctx-menu")!;
 
 // iOS Safari shows a system "Paste" permission toast every time
@@ -402,7 +432,8 @@ const ctxMenu = document.getElementById("ctx-menu")!;
 // long-press callout (which routes through the textarea's paste event
 // handler in composition.ts without ever calling readText), so we omit
 // the Paste button from our custom menu on iOS to steer them there.
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+const isIOS =
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
 function hideCtxMenu(): void {
@@ -418,7 +449,9 @@ function showCtxMenu(x: number, y: number): void {
     const copyBtn = document.createElement("button");
     copyBtn.textContent = "Copy";
     copyBtn.addEventListener("click", () => {
-      void navigator.clipboard.writeText(sel).catch(() => { /* ignore */ });
+      void navigator.clipboard.writeText(sel).catch(() => {
+        /* ignore */
+      });
       hideCtxMenu();
     });
     ctxMenu.appendChild(copyBtn);
@@ -428,7 +461,9 @@ function showCtxMenu(x: number, y: number): void {
   selectAllBtn.textContent = "Select All";
   selectAllBtn.addEventListener("click", () => {
     const s = window.getSelection();
-    if (s) { s.selectAllChildren(outputEl); }
+    if (s) {
+      s.selectAllChildren(outputEl);
+    }
     hideCtxMenu();
   });
   ctxMenu.appendChild(selectAllBtn);
@@ -437,18 +472,23 @@ function showCtxMenu(x: number, y: number): void {
     const pasteBtn = document.createElement("button");
     pasteBtn.textContent = "Paste";
     pasteBtn.addEventListener("click", () => {
-      if (navigator.clipboard?.readText) {
-        navigator.clipboard.readText().then((text) => {
+      navigator.clipboard
+        .readText()
+        .then((text) => {
           send(bracketTextForPaste(prepareTextForTerminal(text)));
-        }).catch(() => { /* ignore */ });
-      }
+        })
+        .catch(() => {
+          /* ignore */
+        });
       hideCtxMenu();
     });
     ctxMenu.appendChild(pasteBtn);
   }
 
   // Don't show an empty menu (iOS without selection has nothing to offer).
-  if (ctxMenu.childElementCount === 0) return;
+  if (ctxMenu.childElementCount === 0) {
+    return;
+  }
 
   ctxMenu.style.left = `${x}px`;
   ctxMenu.style.top = `${y}px`;
@@ -475,47 +515,80 @@ let longPressTimer = 0;
 let longPressOrigin = { x: 0, y: 0 };
 
 if (!isIOS) {
-  termWrap.addEventListener("touchstart", (e: TouchEvent) => {
-    if (e.touches.length !== 1) {
-      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = 0; }
-      return;
-    }
-    const t = e.touches[0]!;
-    longPressOrigin = { x: t.clientX, y: t.clientY };
-    longPressTimer = window.setTimeout(() => {
-      longPressTimer = 0;
-      showCtxMenu(longPressOrigin.x, longPressOrigin.y);
-    }, LONG_PRESS_MS);
-  }, { passive: true });
+  termWrap.addEventListener(
+    "touchstart",
+    (e: TouchEvent) => {
+      if (e.touches.length !== 1) {
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = 0;
+        }
+        return;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- touches.length checked above
+      const t = e.touches[0]!;
+      longPressOrigin = { x: t.clientX, y: t.clientY };
+      longPressTimer = window.setTimeout(() => {
+        longPressTimer = 0;
+        showCtxMenu(longPressOrigin.x, longPressOrigin.y);
+      }, LONG_PRESS_MS);
+    },
+    { passive: true },
+  );
 
-  termWrap.addEventListener("touchmove", (e: TouchEvent) => {
-    if (!longPressTimer || e.touches.length !== 1) return;
-    const t = e.touches[0]!;
-    const dx = t.clientX - longPressOrigin.x;
-    const dy = t.clientY - longPressOrigin.y;
-    if (dx * dx + dy * dy > LONG_PRESS_MOVE_THRESHOLD_PX * LONG_PRESS_MOVE_THRESHOLD_PX) {
-      clearTimeout(longPressTimer);
-      longPressTimer = 0;
-    }
-  }, { passive: true });
+  termWrap.addEventListener(
+    "touchmove",
+    (e: TouchEvent) => {
+      if (!longPressTimer || e.touches.length !== 1) {
+        return;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- touches.length checked above
+      const t = e.touches[0]!;
+      const dx = t.clientX - longPressOrigin.x;
+      const dy = t.clientY - longPressOrigin.y;
+      if (dx * dx + dy * dy > LONG_PRESS_MOVE_THRESHOLD_PX * LONG_PRESS_MOVE_THRESHOLD_PX) {
+        clearTimeout(longPressTimer);
+        longPressTimer = 0;
+      }
+    },
+    { passive: true },
+  );
 
-  termWrap.addEventListener("touchend", () => {
-    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = 0; }
-  }, { passive: true });
+  termWrap.addEventListener(
+    "touchend",
+    () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = 0;
+      }
+    },
+    { passive: true },
+  );
 
-  termWrap.addEventListener("touchcancel", () => {
-    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = 0; }
-  }, { passive: true });
+  termWrap.addEventListener(
+    "touchcancel",
+    () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = 0;
+      }
+    },
+    { passive: true },
+  );
 }
 
-document.addEventListener("click", () => { hideCtxMenu(); });
+document.addEventListener("click", () => {
+  hideCtxMenu();
+});
 
 // --- Mobile key toolbar ---
 const keyToolbar = document.getElementById("key-toolbar");
 if (keyToolbar) {
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    keyToolbar.classList.remove("no-transition");
-  }));
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      keyToolbar.classList.remove("no-transition");
+    }),
+  );
   const toggleBtn = document.getElementById("kb-toggle");
   toggleBtn?.addEventListener("pointerdown", (e) => {
     e.preventDefault();

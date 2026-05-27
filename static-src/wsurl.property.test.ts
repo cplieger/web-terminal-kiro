@@ -35,44 +35,32 @@ describe("wsURL property", () => {
 
   it("preserves the host verbatim in the URL", () => {
     fc.assert(
-      fc.property(
-        fc.constantFrom("http:", "https:"),
-        fc.domain(),
-        (proto, host) => {
-          const url = wsURL(proto, host);
-          expect(url).toContain(host);
-        },
-      ),
+      fc.property(fc.constantFrom("http:", "https:"), fc.domain(), (proto, host) => {
+        const url = wsURL(proto, host);
+        expect(url).toContain(host);
+      }),
     );
   });
 
   it("always ends with /ws", () => {
     fc.assert(
-      fc.property(
-        fc.constantFrom("http:", "https:"),
-        fc.domain(),
-        (proto, host) => {
-          const url = wsURL(proto, host);
-          expect(url.endsWith("/ws")).toBe(true);
-        },
-      ),
+      fc.property(fc.constantFrom("http:", "https:"), fc.domain(), (proto, host) => {
+        const url = wsURL(proto, host);
+        expect(url.endsWith("/ws")).toBe(true);
+      }),
     );
   });
 
   it("produces a parseable URL with the expected scheme and path", () => {
     fc.assert(
-      fc.property(
-        fc.constantFrom("http:", "https:"),
-        fc.domain(),
-        (proto, host) => {
-          const url = wsURL(proto, host);
-          // URL parsing accepts ws:// and wss:// (registered schemes).
-          const parsed = new URL(url);
-          expect(parsed.protocol).toBe(proto === "https:" ? "wss:" : "ws:");
-          expect(parsed.host).toBe(host);
-          expect(parsed.pathname).toBe("/ws");
-        },
-      ),
+      fc.property(fc.constantFrom("http:", "https:"), fc.domain(), (proto, host) => {
+        const url = wsURL(proto, host);
+        // URL parsing accepts ws:// and wss:// (registered schemes).
+        const parsed = new URL(url);
+        expect(parsed.protocol).toBe(proto === "https:" ? "wss:" : "ws:");
+        expect(parsed.host).toBe(host);
+        expect(parsed.pathname).toBe("/ws");
+      }),
     );
   });
 });

@@ -12,7 +12,12 @@
 //   - Bracketed paste and CR/LF normalisation
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { mapKeyboardEvent, bracketTextForPaste, prepareTextForTerminal, type KeyboardResult } from "./keyboard.js";
+import {
+  mapKeyboardEvent,
+  bracketTextForPaste,
+  prepareTextForTerminal,
+  type KeyboardResult,
+} from "./keyboard.js";
 import * as modes from "./modes.js";
 
 function ev(init: KeyboardEventInit & { key: string; code?: string }): KeyboardEvent {
@@ -20,7 +25,9 @@ function ev(init: KeyboardEventInit & { key: string; code?: string }): KeyboardE
 }
 
 function send(result: KeyboardResult): string {
-  if (result.kind !== "send") throw new Error(`expected send, got ${result.kind}`);
+  if (result.kind !== "send") {
+    throw new Error(`expected send, got ${result.kind}`);
+  }
   return result.bytes;
 }
 
@@ -43,7 +50,9 @@ describe("mapKeyboardEvent: cursor keys", () => {
     expect(send(mapKeyboardEvent(ev({ key: "ArrowRight", ctrlKey: true })))).toBe("\x1b[1;5C");
     expect(send(mapKeyboardEvent(ev({ key: "ArrowLeft", shiftKey: true })))).toBe("\x1b[1;2D");
     expect(send(mapKeyboardEvent(ev({ key: "ArrowUp", altKey: true })))).toBe("\x1b[1;3A");
-    expect(send(mapKeyboardEvent(ev({ key: "ArrowDown", ctrlKey: true, shiftKey: true })))).toBe("\x1b[1;6B");
+    expect(send(mapKeyboardEvent(ev({ key: "ArrowDown", ctrlKey: true, shiftKey: true })))).toBe(
+      "\x1b[1;6B",
+    );
   });
 });
 

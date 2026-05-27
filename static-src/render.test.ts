@@ -17,7 +17,10 @@ import type { ScreenMessage, WireRun } from "./types.js";
 // happy-dom does not implement Canvas2D. measureChar() in render.ts
 // requires `getContext("2d").measureText`; stub a minimal version
 // returning a fixed-width metric.
-type FakeCtx = { font: string; measureText: (t: string) => { width: number } };
+interface FakeCtx {
+  font: string;
+  measureText: (t: string) => { width: number };
+}
 HTMLCanvasElement.prototype.getContext = function fakeGetContext(): unknown {
   const ctx: FakeCtx = {
     font: "",
@@ -88,7 +91,9 @@ describe("render: cursor cell updates with inline inverse-video character", () =
     // Establish the screen with row 19 already showing some prompt
     // placeholder + cursor at col 0 (exact pre-typing baseline).
     const initialRows: Record<number, WireRun[]> = {};
-    for (let i = 0; i < 30; i++) initialRows[i] = blankRow();
+    for (let i = 0; i < 30; i++) {
+      initialRows[i] = blankRow();
+    }
     initialRows[19] = row19("", " ", 120);
     await flushFrame(frame(initialRows, [19, 0]));
 
@@ -113,21 +118,35 @@ describe("render: cursor cell updates with inline inverse-video character", () =
     // After 2nd Left arrow: row 19 = "abc" + inv " " + "d" + trailing;
     // BUT now the format is different: a normal "d" follows the inverse
     // space. So the row payload is 4 runs: "abc" / inv " " / "d" / trailing.
-    await flushFrame(frame({ 19: [
-      { t: "abc", f: -1, b: -1, a: 0, uc: -1 },
-      { t: " ", f: -1, b: -1, a: 8, uc: -1 },
-      { t: "d", f: -1, b: -1, a: 0, uc: -1 },
-      { t: " ".repeat(115), f: -1, b: -1, a: 0, uc: -1 },
-    ] }, [19, 3]));
+    await flushFrame(
+      frame(
+        {
+          19: [
+            { t: "abc", f: -1, b: -1, a: 0, uc: -1 },
+            { t: " ", f: -1, b: -1, a: 8, uc: -1 },
+            { t: "d", f: -1, b: -1, a: 0, uc: -1 },
+            { t: " ".repeat(115), f: -1, b: -1, a: 0, uc: -1 },
+          ],
+        },
+        [19, 3],
+      ),
+    );
     expectInverseAtCol(outputEl, 19, 3, " ");
 
     // After "X": row 19 = "abcX" + inv " " + "d" + trailing; cursor (19,4)
-    await flushFrame(frame({ 19: [
-      { t: "abcX", f: -1, b: -1, a: 0, uc: -1 },
-      { t: " ", f: -1, b: -1, a: 8, uc: -1 },
-      { t: "d", f: -1, b: -1, a: 0, uc: -1 },
-      { t: " ".repeat(114), f: -1, b: -1, a: 0, uc: -1 },
-    ] }, [19, 4]));
+    await flushFrame(
+      frame(
+        {
+          19: [
+            { t: "abcX", f: -1, b: -1, a: 0, uc: -1 },
+            { t: " ", f: -1, b: -1, a: 8, uc: -1 },
+            { t: "d", f: -1, b: -1, a: 0, uc: -1 },
+            { t: " ".repeat(114), f: -1, b: -1, a: 0, uc: -1 },
+          ],
+        },
+        [19, 4],
+      ),
+    );
     expectInverseAtCol(outputEl, 19, 4, " ");
   });
 });
