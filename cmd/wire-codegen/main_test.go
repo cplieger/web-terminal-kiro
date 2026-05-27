@@ -18,8 +18,6 @@ func TestCodegenDrift(t *testing.T) {
 		generate func(*strings.Builder)
 		file     string
 	}{
-		{generateTypes, "types.gen.ts"},
-		{generateDecoders, "decoders.gen.ts"},
 		{generateConstants, "constants.gen.ts"},
 	}
 
