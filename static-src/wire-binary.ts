@@ -4,8 +4,22 @@
 // exact frame layout — wire message type tags and mode flags are generated
 // from Go source into wire/constants.gen.ts by cmd/wire-codegen.
 
-import type { WireRun, ScreenMessage, ScrollMessage, ResumeAckMessage, ModesMessage, ServerMessage } from "./types.js";
-import { MSG_SCREEN, MSG_SCROLL, MSG_RESUME_ACK, MSG_MODES, MODE_FLAG_BRACKETED_PASTE, MODE_FLAG_APP_CURSOR_KEYS } from "./wire/constants.gen.js";
+import type {
+  WireRun,
+  ScreenMessage,
+  ScrollMessage,
+  ResumeAckMessage,
+  ModesMessage,
+  ServerMessage,
+} from "./types.js";
+import {
+  MSG_SCREEN,
+  MSG_SCROLL,
+  MSG_RESUME_ACK,
+  MSG_MODES,
+  MODE_FLAG_BRACKETED_PASTE,
+  MODE_FLAG_APP_CURSOR_KEYS,
+} from "./wire/constants.gen.js";
 
 class Cursor {
   view: DataView;
@@ -15,9 +29,21 @@ class Cursor {
     this.view = new DataView(buf);
     this.bytes = new Uint8Array(buf);
   }
-  u8(): number { const v = this.view.getUint8(this.off); this.off += 1; return v; }
-  u16(): number { const v = this.view.getUint16(this.off, true); this.off += 2; return v; }
-  i32(): number { const v = this.view.getInt32(this.off, true); this.off += 4; return v; }
+  u8(): number {
+    const v = this.view.getUint8(this.off);
+    this.off += 1;
+    return v;
+  }
+  u16(): number {
+    const v = this.view.getUint16(this.off, true);
+    this.off += 2;
+    return v;
+  }
+  i32(): number {
+    const v = this.view.getInt32(this.off, true);
+    this.off += 4;
+    return v;
+  }
   // Read a 64-bit unsigned integer using BigInt then narrow to Number.
   // Realistic byte counts fit in Number.MAX_SAFE_INTEGER (2^53), so the
   // narrow is lossless for our use; using Number throughout keeps the
@@ -50,7 +76,7 @@ function readRowRuns(c: Cursor): WireRun[] {
 }
 
 export function decodeWireBinary(buf: ArrayBuffer): ServerMessage | null {
-  if (buf.byteLength < 9) return null; // 1B type + 8B ack
+  if (buf.byteLength < 9) {return null;} // 1B type + 8B ack
   try {
     return decodeWireBinaryInner(buf);
   } catch (err) {
@@ -58,7 +84,7 @@ export function decodeWireBinary(buf: ArrayBuffer): ServerMessage | null {
     // frame rather than letting the error bubble into the WebSocket
     // message handler (where it would surface as an unhandled error
     // and clutter logs without stopping the message pump).
-    if (err instanceof RangeError) return null;
+    if (err instanceof RangeError) {return null;}
     throw err;
   }
 }
@@ -77,9 +103,10 @@ function decodeWireBinaryInner(buf: ArrayBuffer): ServerMessage | null {
     if (buf.byteLength >= 17) {
       serverEpoch = c.u64();
     }
-    const msg: ResumeAckMessage = serverEpoch !== undefined
-      ? { type: "resumeAck", received: inputAck, serverEpoch }
-      : { type: "resumeAck", received: inputAck };
+    const msg: ResumeAckMessage =
+      serverEpoch !== undefined
+        ? { type: "resumeAck", received: inputAck, serverEpoch }
+        : { type: "resumeAck", received: inputAck };
     return msg;
   }
   if (msgType === MSG_SCREEN) {
@@ -119,7 +146,7 @@ function decodeWireBinaryInner(buf: ArrayBuffer): ServerMessage | null {
   if (msgType === MSG_SCROLL) {
     const numLines = c.u16();
     const lines: WireRun[][] = new Array(numLines);
-    for (let i = 0; i < numLines; i++) lines[i] = readRowRuns(c);
+    for (let i = 0; i < numLines; i++) {lines[i] = readRowRuns(c);}
     const msg: ScrollMessage = { type: "scroll", lines, inputAck };
     return msg;
   }

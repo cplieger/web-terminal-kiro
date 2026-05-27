@@ -19,20 +19,18 @@ import { isApplicationCursor, isBracketedPaste } from "./modes.js";
 /** Result of mapping a keyboard event. */
 export type KeyboardResult =
   | { kind: "send"; bytes: string }
-  | { kind: "scroll-up" }     // Shift+PageUp — handled locally
-  | { kind: "scroll-down" }   // Shift+PageDown — handled locally
-  | { kind: "ignore" };       // Modifier-only press, etc.
+  | { kind: "scroll-up" } // Shift+PageUp — handled locally
+  | { kind: "scroll-down" } // Shift+PageDown — handled locally
+  | { kind: "ignore" }; // Modifier-only press, etc.
 
 const ESC = "\x1b";
 const DEL = "\x7f";
 
 /** Compute the xterm modifier digit (used in CSI 1;{n}letter sequences). */
 function modifiersDigit(ev: KeyboardEvent): number {
-  return 1
-    + (ev.shiftKey ? 1 : 0)
-    + (ev.altKey   ? 2 : 0)
-    + (ev.ctrlKey  ? 4 : 0)
-    + (ev.metaKey  ? 8 : 0);
+  return (
+    1 + (ev.shiftKey ? 1 : 0) + (ev.altKey ? 2 : 0) + (ev.ctrlKey ? 4 : 0) + (ev.metaKey ? 8 : 0)
+  );
 }
 
 // -- Cursor / navigation keys -----------------------------------------------
@@ -47,9 +45,15 @@ function modifiersDigit(ev: KeyboardEvent): number {
 function csiLetter(letter: string, ev: KeyboardEvent): string {
   const m = modifiersDigit(ev);
   if (m === 1) {
-    if (isApplicationCursor() && (letter === "A" || letter === "B" ||
-        letter === "C" || letter === "D" ||
-        letter === "H" || letter === "F")) {
+    if (
+      isApplicationCursor() &&
+      (letter === "A" ||
+        letter === "B" ||
+        letter === "C" ||
+        letter === "D" ||
+        letter === "H" ||
+        letter === "F")
+    ) {
       return `${ESC}O${letter}`;
     }
     return `${ESC}[${letter}`;
@@ -64,14 +68,27 @@ function csiTilde(num: number, ev: KeyboardEvent): string {
 }
 
 const FN_LETTER: Record<string, string | undefined> = {
-  F1: "P", F2: "Q", F3: "R", F4: "S",
+  F1: "P",
+  F2: "Q",
+  F3: "R",
+  F4: "S",
 };
 const FN_TILDE: Record<string, number | undefined> = {
-  F5: 15, F6: 17, F7: 18, F8: 19, F9: 20, F10: 21, F11: 23, F12: 24,
+  F5: 15,
+  F6: 17,
+  F7: 18,
+  F8: 19,
+  F9: 20,
+  F10: 21,
+  F11: 23,
+  F12: 24,
 };
 
 const ARROW_LETTER: Record<string, string | undefined> = {
-  ArrowUp: "A", ArrowDown: "B", ArrowRight: "C", ArrowLeft: "D",
+  ArrowUp: "A",
+  ArrowDown: "B",
+  ArrowRight: "C",
+  ArrowLeft: "D",
 };
 
 /**
@@ -119,14 +136,14 @@ export function mapKeyboardEvent(ev: KeyboardEvent): KeyboardResult {
   }
 
   // Home / End — CSI {H,F} with optional modifiers.
-  if (ev.key === "Home") return { kind: "send", bytes: csiLetter("H", ev) };
-  if (ev.key === "End")  return { kind: "send", bytes: csiLetter("F", ev) };
+  if (ev.key === "Home") {return { kind: "send", bytes: csiLetter("H", ev) };}
+  if (ev.key === "End") {return { kind: "send", bytes: csiLetter("F", ev) };}
 
   // Insert / Delete / PageUp / PageDown (no Shift) — CSI tilde forms.
-  if (ev.key === "Insert")    return { kind: "send", bytes: csiTilde(2, ev) };
-  if (ev.key === "Delete")    return { kind: "send", bytes: csiTilde(3, ev) };
-  if (ev.key === "PageUp")    return { kind: "send", bytes: csiTilde(5, ev) };
-  if (ev.key === "PageDown")  return { kind: "send", bytes: csiTilde(6, ev) };
+  if (ev.key === "Insert") {return { kind: "send", bytes: csiTilde(2, ev) };}
+  if (ev.key === "Delete") {return { kind: "send", bytes: csiTilde(3, ev) };}
+  if (ev.key === "PageUp") {return { kind: "send", bytes: csiTilde(5, ev) };}
+  if (ev.key === "PageDown") {return { kind: "send", bytes: csiTilde(6, ev) };}
 
   // F1-F4 — SS3 with optional modifier-CSI, like xterm.
   const fnLetter = FN_LETTER[ev.key];
@@ -156,8 +173,8 @@ export function mapKeyboardEvent(ev: KeyboardEvent): KeyboardResult {
   // Backspace — \x7f (DEL). Alt+Backspace = ESC + DEL (delete-prev-word
   // in readline). Ctrl+Backspace = \b (^H).
   if (ev.key === "Backspace") {
-    if (ev.altKey)  return { kind: "send", bytes: ESC + DEL };
-    if (ev.ctrlKey) return { kind: "send", bytes: "\b" };
+    if (ev.altKey) {return { kind: "send", bytes: ESC + DEL };}
+    if (ev.ctrlKey) {return { kind: "send", bytes: "\b" };}
     return { kind: "send", bytes: DEL };
   }
 
@@ -168,8 +185,8 @@ export function mapKeyboardEvent(ev: KeyboardEvent): KeyboardResult {
 
   // Space — \x00 with Ctrl (per xterm). Alt+Space = ESC ' '.
   if (ev.key === " ") {
-    if (ev.ctrlKey) return { kind: "send", bytes: "\x00" };
-    if (ev.altKey)  return { kind: "send", bytes: ESC + " " };
+    if (ev.ctrlKey) {return { kind: "send", bytes: "\x00" };}
+    if (ev.altKey) {return { kind: "send", bytes: ESC + " " };}
     return { kind: "ignore" }; // let `input` event handle plain space
   }
 
@@ -185,7 +202,7 @@ export function mapKeyboardEvent(ev: KeyboardEvent): KeyboardResult {
     // Ctrl+key for the C0 set: @[\]^_? produce \x00..\x1f, \x7f.
     if (ev.ctrlKey && !ev.altKey && !ev.metaKey) {
       const c0 = ctrlSymbolByte(ch);
-      if (c0 !== null) return { kind: "send", bytes: c0 };
+      if (c0 !== null) {return { kind: "send", bytes: c0 };}
     }
     // Alt+printable → ESC + char (meta prefix). Plain `input` event
     // would still fire with the char, so we'd duplicate. Caller must
@@ -215,14 +232,22 @@ export function mapKeyboardEvent(ev: KeyboardEvent): KeyboardResult {
  */
 function ctrlSymbolByte(ch: string): string | null {
   switch (ch) {
-    case "@": return "\x00";
-    case "[": return "\x1b";
-    case "\\": return "\x1c";
-    case "]": return "\x1d";
-    case "^": return "\x1e";
-    case "_": return "\x1f";
-    case "?": return "\x7f";
-    default:  return null;
+    case "@":
+      return "\x00";
+    case "[":
+      return "\x1b";
+    case "\\":
+      return "\x1c";
+    case "]":
+      return "\x1d";
+    case "^":
+      return "\x1e";
+    case "_":
+      return "\x1f";
+    case "?":
+      return "\x7f";
+    default:
+      return null;
   }
 }
 
@@ -242,7 +267,7 @@ function ctrlSymbolByte(ch: string): string | null {
  * we are bracketing.
  */
 export function bracketTextForPaste(text: string): string {
-  if (!isBracketedPaste()) return text;
+  if (!isBracketedPaste()) {return text;}
   const sanitised = text.replace(/\x1b/g, "\u241B");
   return `\x1b[200~${sanitised}\x1b[201~`;
 }

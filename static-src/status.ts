@@ -30,14 +30,14 @@ export function open(): void {
 
 /** Mark a reconnect attempt in progress (after a close, before re-open). */
 export function reconnecting(): void {
-  if (document.getElementById("loading")) return;
+  if (document.getElementById("loading")) {return;}
   setState("reconnecting", CONNECTING_GRACE_MS);
 }
 
 /** Mark the connection as closed; shows banner after grace period. */
 export function closed(): void {
   consecutiveFailures++;
-  if (document.getElementById("loading")) return;
+  if (document.getElementById("loading")) {return;}
   setState(consecutiveFailures > 3 ? "offline" : "reconnecting", CONNECTING_GRACE_MS);
 }
 
@@ -49,7 +49,7 @@ export function restarted(): void {
   // Auto-clear the banner after a few seconds; "open" will re-arrive
   // when the next screen frame renders, but we don't want to wait.
   setTimeout(() => {
-    if (state === "restarted") setState("open", 0);
+    if (state === "restarted") {setState("open", 0);}
   }, 4000);
 }
 
@@ -73,7 +73,7 @@ function setState(next: State, delay: number): void {
 /** Surface a brief transient message (e.g. "Copied") using the same
  *  banner system as connection status. Auto-clears after `ms`. */
 export function toast(msg: string, ms = 3000): void {
-  if (!banner) return;
+  if (!banner) {return;}
   banner.textContent = msg;
   banner.dataset["state"] = "toast";
   banner.classList.add("visible");
@@ -85,13 +85,13 @@ let toastDismissMs = 3000;
 
 function scheduleToastDismiss(ms: number): void {
   toastDismissMs = ms;
-  if (toastDismissTimer !== null) clearTimeout(toastDismissTimer);
+  if (toastDismissTimer !== null) {clearTimeout(toastDismissTimer);}
   toastDismissTimer = setTimeout(dismissToast, ms);
 }
 
 function dismissToast(): void {
   toastDismissTimer = null;
-  if (!banner) return;
+  if (!banner) {return;}
   // Only clear if still showing a toast (not overridden by connection state).
   if (state === "open" && banner.dataset["state"] === "toast") {
     banner.classList.remove("visible");
@@ -119,15 +119,19 @@ export function init(): void {
 
   // Escape-dismiss: pressing Escape while a toast is visible clears it.
   document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape" && banner?.classList.contains("visible") && banner.dataset["state"] === "toast") {
-      if (toastDismissTimer !== null) clearTimeout(toastDismissTimer);
+    if (
+      ev.key === "Escape" &&
+      banner?.classList.contains("visible") &&
+      banner.dataset["state"] === "toast"
+    ) {
+      if (toastDismissTimer !== null) {clearTimeout(toastDismissTimer);}
       dismissToast();
     }
   });
 }
 
 function applyState(): void {
-  if (!banner) return;
+  if (!banner) {return;}
   switch (state) {
     case "open":
       banner.classList.remove("visible");

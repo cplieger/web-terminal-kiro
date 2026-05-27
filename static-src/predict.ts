@@ -42,12 +42,12 @@ export function subscribe(cb: () => void): void {
 /** Update the screen dimensions used for wrap calculations. Should be
  *  called whenever the renderer learns a new size from the server. */
 export function setDimensions(c: number, r: number): void {
-  if (c > 0) cols = c;
-  if (r > 0) rows = r;
+  if (c > 0) {cols = c;}
+  if (r > 0) {rows = r;}
   // Clamp predicted position to new bounds so a resize mid-typing
   // doesn't leave predCol/predRow past the edge.
-  if (predCol >= cols) predCol = cols - 1;
-  if (predRow >= rows) predRow = rows - 1;
+  if (predCol >= cols) {predCol = cols - 1;}
+  if (predRow >= rows) {predRow = rows - 1;}
 }
 
 /** Reset all prediction state. Called on server restart to avoid
@@ -58,7 +58,7 @@ export function reset(): void {
   predActive = false;
   predPendingWrap = false;
   predFrozen = false;
-  if (onChange) onChange();
+  if (onChange) {onChange();}
 }
 
 /** Reset prediction to the server's reported cursor and re-arm.
@@ -71,21 +71,21 @@ export function onScreenFrame(serverRow: number, serverCol: number, cursorHidden
   predPendingWrap = false;
   predFrozen = cursorHidden ?? false;
   predActive = !predFrozen;
-  if (onChange) onChange();
+  if (onChange) {onChange();}
 }
 
 /** Apply locally-typed input bytes to the predicted cursor. Bails out
  *  (suspending prediction) on the first byte we can't model. Also
  *  bails when frozen (cursor hidden — user is in a selection prompt). */
 export function applyInput(bytes: Uint8Array): void {
-  if (!predActive || predFrozen) return;
+  if (!predActive || predFrozen) {return;}
   let i = 0;
   while (i < bytes.length) {
     const b = bytes[i]!;
     if (b === 0x1b) {
       // ESC — start of an escape sequence. Don't try to model it.
       predActive = false;
-      if (onChange) onChange();
+      if (onChange) {onChange();}
       return;
     }
     if (b === 0x08 || b === 0x7f) {
@@ -103,13 +103,15 @@ export function applyInput(bytes: Uint8Array): void {
       i++;
       continue;
     }
-    if (b === 0x0d) { // CR
+    if (b === 0x0d) {
+      // CR
       predPendingWrap = false;
       predCol = 0;
       i++;
       continue;
     }
-    if (b === 0x0a) { // LF
+    if (b === 0x0a) {
+      // LF
       predPendingWrap = false;
       predRow = Math.min(predRow + 1, rows - 1);
       i++;
@@ -118,7 +120,7 @@ export function applyInput(bytes: Uint8Array): void {
     if (b < 0x20) {
       // Other C0 — probably interpreted by the application; bail.
       predActive = false;
-      if (onChange) onChange();
+      if (onChange) {onChange();}
       return;
     }
     // Printable ASCII or UTF-8 lead byte. Detect the codepoint length
@@ -127,9 +129,9 @@ export function applyInput(bytes: Uint8Array): void {
     // pendingWrap is set we wrap to (row+1, 0) BEFORE writing, then
     // record pendingWrap if the new col is the last one.
     let len = 1;
-    if (b >= 0xc0 && b < 0xe0) len = 2;
-    else if (b >= 0xe0 && b < 0xf0) len = 3;
-    else if (b >= 0xf0) len = 4;
+    if (b >= 0xc0 && b < 0xe0) {len = 2;}
+    else if (b >= 0xe0 && b < 0xf0) {len = 3;}
+    else if (b >= 0xf0) {len = 4;}
     i += len;
     if (predPendingWrap) {
       predCol = 0;
@@ -144,7 +146,7 @@ export function applyInput(bytes: Uint8Array): void {
       predCol++;
     }
   }
-  if (onChange) onChange();
+  if (onChange) {onChange();}
 }
 
 /** Current predicted cursor state. `active` is false when prediction

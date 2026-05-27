@@ -13,7 +13,7 @@ export interface ScreenMessage {
   rows: WireRun[][];
   cursor: [number, number];
   changed: number[];
-  cursorStyle?: number;  // 0-6: DECSCUSR values
+  cursorStyle?: number; // 0-6: DECSCUSR values
   cursorHidden?: boolean;
   cursorBlink?: boolean;
   bell?: boolean;

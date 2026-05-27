@@ -21,29 +21,23 @@ beforeEach(() => {
 describe("keyboard: arrow keys honor DECCKM", () => {
   it("default (CSI) cursor mode emits CSI", () => {
     modes.setModes(true, false);
-    expect((mapKeyboardEvent(ev({ key: "ArrowUp" })) as { bytes: string }).bytes)
-      .toBe("\x1b[A");
+    expect((mapKeyboardEvent(ev({ key: "ArrowUp" })) as { bytes: string }).bytes).toBe("\x1b[A");
   });
   it("application cursor mode emits SS3", () => {
     modes.setModes(true, true);
-    expect((mapKeyboardEvent(ev({ key: "ArrowUp" })) as { bytes: string }).bytes)
-      .toBe("\x1bOA");
-    expect((mapKeyboardEvent(ev({ key: "ArrowDown" })) as { bytes: string }).bytes)
-      .toBe("\x1bOB");
-    expect((mapKeyboardEvent(ev({ key: "ArrowLeft" })) as { bytes: string }).bytes)
-      .toBe("\x1bOD");
-    expect((mapKeyboardEvent(ev({ key: "ArrowRight" })) as { bytes: string }).bytes)
-      .toBe("\x1bOC");
+    expect((mapKeyboardEvent(ev({ key: "ArrowUp" })) as { bytes: string }).bytes).toBe("\x1bOA");
+    expect((mapKeyboardEvent(ev({ key: "ArrowDown" })) as { bytes: string }).bytes).toBe("\x1bOB");
+    expect((mapKeyboardEvent(ev({ key: "ArrowLeft" })) as { bytes: string }).bytes).toBe("\x1bOD");
+    expect((mapKeyboardEvent(ev({ key: "ArrowRight" })) as { bytes: string }).bytes).toBe("\x1bOC");
     // Home/End in app cursor mode also switch to SS3.
-    expect((mapKeyboardEvent(ev({ key: "Home" })) as { bytes: string }).bytes)
-      .toBe("\x1bOH");
-    expect((mapKeyboardEvent(ev({ key: "End" })) as { bytes: string }).bytes)
-      .toBe("\x1bOF");
+    expect((mapKeyboardEvent(ev({ key: "Home" })) as { bytes: string }).bytes).toBe("\x1bOH");
+    expect((mapKeyboardEvent(ev({ key: "End" })) as { bytes: string }).bytes).toBe("\x1bOF");
   });
   it("modifier-extended arrows always use CSI (no SS3 modifier form)", () => {
     modes.setModes(true, true);
-    expect((mapKeyboardEvent(ev({ key: "ArrowUp", ctrlKey: true })) as { bytes: string }).bytes)
-      .toBe("\x1b[1;5A");
+    expect(
+      (mapKeyboardEvent(ev({ key: "ArrowUp", ctrlKey: true })) as { bytes: string }).bytes,
+    ).toBe("\x1b[1;5A");
   });
 });
 

@@ -18,9 +18,8 @@ let suppressUntil = 0;
 let onUserScrollChange: ((scrolledUp: boolean) => void) | null = null;
 
 function isAtBottom(): boolean {
-  if (!scrollEl) return true;
-  return scrollEl.scrollTop + scrollEl.clientHeight
-    >= scrollEl.scrollHeight - BOTTOM_TOLERANCE_PX;
+  if (!scrollEl) {return true;}
+  return scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - BOTTOM_TOLERANCE_PX;
 }
 
 export function init(opts: {
@@ -30,38 +29,54 @@ export function init(opts: {
   scrollEl = opts.scrollEl;
   onUserScrollChange = opts.onUserScrollChange ?? null;
 
-  scrollEl.addEventListener("scroll", () => {
-    if (Date.now() < suppressUntil) return;
-    userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
-    const wasScrolledUp = userScrolledUp;
-    userScrolledUp = !isAtBottom();
-    if (wasScrolledUp !== userScrolledUp && onUserScrollChange) {
-      onUserScrollChange(userScrolledUp);
-    }
-  }, { passive: true });
+  scrollEl.addEventListener(
+    "scroll",
+    () => {
+      if (Date.now() < suppressUntil) {return;}
+      userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
+      const wasScrolledUp = userScrolledUp;
+      userScrolledUp = !isAtBottom();
+      if (wasScrolledUp !== userScrolledUp && onUserScrollChange) {
+        onUserScrollChange(userScrolledUp);
+      }
+    },
+    { passive: true },
+  );
 
   // Touch-driven scroll on iOS doesn't always fire 'scroll' events
   // synchronously; flushes that race with the touch can snap the
   // viewport back to bottom mid-drag. Treat any active touch on the
   // scroll container as "user is scrolling" so auto-follow disengages
   // immediately and only re-engages 150ms after touch ends.
-  scrollEl.addEventListener("touchstart", () => {
-    userScrollingUntil = Date.now() + 60_000; // refreshed by touchend
-  }, { passive: true });
-  scrollEl.addEventListener("touchend", () => {
-    userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
-  }, { passive: true });
-  scrollEl.addEventListener("touchcancel", () => {
-    userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
-  }, { passive: true });
+  scrollEl.addEventListener(
+    "touchstart",
+    () => {
+      userScrollingUntil = Date.now() + 60_000; // refreshed by touchend
+    },
+    { passive: true },
+  );
+  scrollEl.addEventListener(
+    "touchend",
+    () => {
+      userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
+    },
+    { passive: true },
+  );
+  scrollEl.addEventListener(
+    "touchcancel",
+    () => {
+      userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
+    },
+    { passive: true },
+  );
 }
 
 /** Force scroll-to-bottom and re-engage auto-follow. */
 export function scrollToBottom(): void {
-  if (!scrollEl) return;
+  if (!scrollEl) {return;}
   userScrolledUp = false;
   userScrollingUntil = 0;
-  if (onUserScrollChange) onUserScrollChange(false);
+  if (onUserScrollChange) {onUserScrollChange(false);}
   // Synchronous scroll — must not be deferred to rAF during burst
   // insertions (e.g. /chat load) because the next batch arrives before
   // the rAF fires, pushing the viewport up again.

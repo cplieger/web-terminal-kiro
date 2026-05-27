@@ -62,9 +62,7 @@ function buildScreenFrame(opts: {
 }): ArrayBuffer {
   const enc = new TextEncoder();
   // Pre-encode all run text bytes so we know total length.
-  const runBytes = opts.changed.map((r) =>
-    r.runs.map((run) => enc.encode(run.text)),
-  );
+  const runBytes = opts.changed.map((r) => r.runs.map((run) => enc.encode(run.text)));
   let len = 1 + 8 + 2 + 2 + 2 + 2 + 1 + 1;
   for (let i = 0; i < opts.changed.length; i++) {
     len += 2; // idx
@@ -80,31 +78,47 @@ function buildScreenFrame(opts: {
   const dv = new DataView(buf);
   const u8 = new Uint8Array(buf);
   let off = 0;
-  dv.setUint8(off, 0); off += 1; // msg_type = screen
-  dv.setBigUint64(off, 0n, true); off += 8; // ack
-  dv.setUint16(off, opts.cursorRow, true); off += 2;
-  dv.setUint16(off, opts.cursorCol, true); off += 2;
-  dv.setUint16(off, opts.screenHeight, true); off += 2;
-  dv.setUint16(off, opts.changed.length, true); off += 2;
-  dv.setUint8(off, opts.cursorStyle ?? 0); off += 1;
+  dv.setUint8(off, 0);
+  off += 1; // msg_type = screen
+  dv.setBigUint64(off, 0n, true);
+  off += 8; // ack
+  dv.setUint16(off, opts.cursorRow, true);
+  off += 2;
+  dv.setUint16(off, opts.cursorCol, true);
+  off += 2;
+  dv.setUint16(off, opts.screenHeight, true);
+  off += 2;
+  dv.setUint16(off, opts.changed.length, true);
+  off += 2;
+  dv.setUint8(off, opts.cursorStyle ?? 0);
+  off += 1;
   let flags = 0;
   if (opts.cursorHidden) flags |= 1;
   if (opts.cursorBlink ?? true) flags |= 4;
-  dv.setUint8(off, flags); off += 1;
+  dv.setUint8(off, flags);
+  off += 1;
 
   for (let i = 0; i < opts.changed.length; i++) {
     const c = opts.changed[i]!;
-    dv.setUint16(off, c.idx, true); off += 2;
-    dv.setUint16(off, c.runs.length, true); off += 2;
+    dv.setUint16(off, c.idx, true);
+    off += 2;
+    dv.setUint16(off, c.runs.length, true);
+    off += 2;
     for (let j = 0; j < c.runs.length; j++) {
       const run = c.runs[j]!;
       const tb = runBytes[i]![j]!;
-      dv.setUint16(off, tb.length, true); off += 2;
-      u8.set(tb, off); off += tb.length;
-      dv.setInt32(off, run.fg ?? -1, true); off += 4;
-      dv.setInt32(off, run.bg ?? -1, true); off += 4;
-      dv.setUint16(off, run.attr ?? 0, true); off += 2;
-      dv.setInt32(off, run.uc ?? -1, true); off += 4;
+      dv.setUint16(off, tb.length, true);
+      off += 2;
+      u8.set(tb, off);
+      off += tb.length;
+      dv.setInt32(off, run.fg ?? -1, true);
+      off += 4;
+      dv.setInt32(off, run.bg ?? -1, true);
+      off += 4;
+      dv.setUint16(off, run.attr ?? 0, true);
+      off += 2;
+      dv.setInt32(off, run.uc ?? -1, true);
+      off += 4;
     }
   }
   return buf;
@@ -135,176 +149,212 @@ describe("full pipeline: binary frame -> decoder -> renderer", () => {
     // Initial blank frame so allRows[19] exists.
     const blankRow: Run[] = [{ text: " ".repeat(120), attr: 0 }];
     const initialChanged = Array.from({ length: 30 }, (_, i) => ({ idx: i, runs: blankRow }));
-    await flushFrame(buildScreenFrame({
-      cursorRow: 0,
-      cursorCol: 0,
-      screenHeight: 30,
-      cursorHidden: true,
-      changed: initialChanged,
-    }));
+    await flushFrame(
+      buildScreenFrame({
+        cursorRow: 0,
+        cursorCol: 0,
+        screenHeight: 30,
+        cursorHidden: true,
+        changed: initialChanged,
+      }),
+    );
 
     // Frame after typing 'a': row 19 = "a" + inv " " + 118 trailing
-    await flushFrame(buildScreenFrame({
-      cursorRow: 19,
-      cursorCol: 1,
-      screenHeight: 30,
-      cursorHidden: true,
-      changed: [{
-        idx: 19,
-        runs: [
-          { text: "a", attr: 0 },
-          { text: " ", attr: 8 }, // inverse
-          { text: " ".repeat(118), attr: 0 },
+    await flushFrame(
+      buildScreenFrame({
+        cursorRow: 19,
+        cursorCol: 1,
+        screenHeight: 30,
+        cursorHidden: true,
+        changed: [
+          {
+            idx: 19,
+            runs: [
+              { text: "a", attr: 0 },
+              { text: " ", attr: 8 }, // inverse
+              { text: " ".repeat(118), attr: 0 },
+            ],
+          },
         ],
-      }],
-    }));
+      }),
+    );
     expectInverseAtCol(outputEl, 19, 1, " ");
 
     // Frame after typing 'b': row 19 = "ab" + inv " " + 117 trailing
-    await flushFrame(buildScreenFrame({
-      cursorRow: 19,
-      cursorCol: 2,
-      screenHeight: 30,
-      cursorHidden: true,
-      changed: [{
-        idx: 19,
-        runs: [
-          { text: "ab", attr: 0 },
-          { text: " ", attr: 8 },
-          { text: " ".repeat(117), attr: 0 },
+    await flushFrame(
+      buildScreenFrame({
+        cursorRow: 19,
+        cursorCol: 2,
+        screenHeight: 30,
+        cursorHidden: true,
+        changed: [
+          {
+            idx: 19,
+            runs: [
+              { text: "ab", attr: 0 },
+              { text: " ", attr: 8 },
+              { text: " ".repeat(117), attr: 0 },
+            ],
+          },
         ],
-      }],
-    }));
+      }),
+    );
     expectInverseAtCol(outputEl, 19, 2, " ");
 
     // Frame after typing 'c'
-    await flushFrame(buildScreenFrame({
-      cursorRow: 19,
-      cursorCol: 3,
-      screenHeight: 30,
-      cursorHidden: true,
-      changed: [{
-        idx: 19,
-        runs: [
-          { text: "abc", attr: 0 },
-          { text: " ", attr: 8 },
-          { text: " ".repeat(116), attr: 0 },
+    await flushFrame(
+      buildScreenFrame({
+        cursorRow: 19,
+        cursorCol: 3,
+        screenHeight: 30,
+        cursorHidden: true,
+        changed: [
+          {
+            idx: 19,
+            runs: [
+              { text: "abc", attr: 0 },
+              { text: " ", attr: 8 },
+              { text: " ".repeat(116), attr: 0 },
+            ],
+          },
         ],
-      }],
-    }));
+      }),
+    );
     expectInverseAtCol(outputEl, 19, 3, " ");
 
     // Frame after typing space
-    await flushFrame(buildScreenFrame({
-      cursorRow: 19,
-      cursorCol: 4,
-      screenHeight: 30,
-      cursorHidden: true,
-      changed: [{
-        idx: 19,
-        runs: [
-          { text: "abc ", attr: 0 },
-          { text: " ", attr: 8 },
-          { text: " ".repeat(115), attr: 0 },
+    await flushFrame(
+      buildScreenFrame({
+        cursorRow: 19,
+        cursorCol: 4,
+        screenHeight: 30,
+        cursorHidden: true,
+        changed: [
+          {
+            idx: 19,
+            runs: [
+              { text: "abc ", attr: 0 },
+              { text: " ", attr: 8 },
+              { text: " ".repeat(115), attr: 0 },
+            ],
+          },
         ],
-      }],
-    }));
+      }),
+    );
     expectInverseAtCol(outputEl, 19, 4, " ");
 
     // Frame after typing 'd'
-    await flushFrame(buildScreenFrame({
-      cursorRow: 19,
-      cursorCol: 5,
-      screenHeight: 30,
-      cursorHidden: true,
-      changed: [{
-        idx: 19,
-        runs: [
-          { text: "abc d", attr: 0 },
-          { text: " ", attr: 8 },
-          { text: " ".repeat(114), attr: 0 },
+    await flushFrame(
+      buildScreenFrame({
+        cursorRow: 19,
+        cursorCol: 5,
+        screenHeight: 30,
+        cursorHidden: true,
+        changed: [
+          {
+            idx: 19,
+            runs: [
+              { text: "abc d", attr: 0 },
+              { text: " ", attr: 8 },
+              { text: " ".repeat(114), attr: 0 },
+            ],
+          },
         ],
-      }],
-    }));
+      }),
+    );
     expectInverseAtCol(outputEl, 19, 5, " ");
 
     // Frame after Left Arrow (no content typed; inverse moves to 'd')
     // Cursor moves from col 5 to col 4. Cells: "abc " then inverse "d"
     // (col 4 was 'd', is now 'd' with inverse). Server's diff sees cells
     // 4 and 5 changed; trackCursor adds row 19 if not already present.
-    await flushFrame(buildScreenFrame({
-      cursorRow: 19,
-      cursorCol: 4,
-      screenHeight: 30,
-      cursorHidden: true,
-      changed: [{
-        idx: 19,
-        runs: [
-          { text: "abc ", attr: 0 },
-          { text: "d", attr: 8 },
-          { text: " ".repeat(115), attr: 0 },
+    await flushFrame(
+      buildScreenFrame({
+        cursorRow: 19,
+        cursorCol: 4,
+        screenHeight: 30,
+        cursorHidden: true,
+        changed: [
+          {
+            idx: 19,
+            runs: [
+              { text: "abc ", attr: 0 },
+              { text: "d", attr: 8 },
+              { text: " ".repeat(115), attr: 0 },
+            ],
+          },
         ],
-      }],
-    }));
+      }),
+    );
     expectInverseAtCol(outputEl, 19, 4, "d");
 
     // Another Left Arrow: cursor col 3, on space. Cells: "abc" + inv " " + "d"
-    await flushFrame(buildScreenFrame({
-      cursorRow: 19,
-      cursorCol: 3,
-      screenHeight: 30,
-      cursorHidden: true,
-      changed: [{
-        idx: 19,
-        runs: [
-          { text: "abc", attr: 0 },
-          { text: " ", attr: 8 },
-          { text: "d", attr: 0 },
-          { text: " ".repeat(115), attr: 0 },
+    await flushFrame(
+      buildScreenFrame({
+        cursorRow: 19,
+        cursorCol: 3,
+        screenHeight: 30,
+        cursorHidden: true,
+        changed: [
+          {
+            idx: 19,
+            runs: [
+              { text: "abc", attr: 0 },
+              { text: " ", attr: 8 },
+              { text: "d", attr: 0 },
+              { text: " ".repeat(115), attr: 0 },
+            ],
+          },
         ],
-      }],
-    }));
+      }),
+    );
     expectInverseAtCol(outputEl, 19, 3, " ");
   });
 
   it("when two screen frames arrive in the same rAF tick, the LATEST frame's row content wins", async () => {
     const blankRow: Run[] = [{ text: " ".repeat(120), attr: 0 }];
     const initialChanged = Array.from({ length: 30 }, (_, i) => ({ idx: i, runs: blankRow }));
-    await flushFrame(buildScreenFrame({
-      cursorRow: 0,
-      cursorCol: 0,
-      screenHeight: 30,
-      cursorHidden: true,
-      changed: initialChanged,
-    }));
+    await flushFrame(
+      buildScreenFrame({
+        cursorRow: 0,
+        cursorCol: 0,
+        screenHeight: 30,
+        cursorHidden: true,
+        changed: initialChanged,
+      }),
+    );
 
     const frame1 = buildScreenFrame({
       cursorRow: 19,
       cursorCol: 3,
       screenHeight: 30,
       cursorHidden: true,
-      changed: [{
-        idx: 19,
-        runs: [
-          { text: "abc", attr: 0 },
-          { text: " ", attr: 8 },
-          { text: " ".repeat(116), attr: 0 },
-        ],
-      }],
+      changed: [
+        {
+          idx: 19,
+          runs: [
+            { text: "abc", attr: 0 },
+            { text: " ", attr: 8 },
+            { text: " ".repeat(116), attr: 0 },
+          ],
+        },
+      ],
     });
     const frame2 = buildScreenFrame({
       cursorRow: 19,
       cursorCol: 4,
       screenHeight: 30,
       cursorHidden: true,
-      changed: [{
-        idx: 19,
-        runs: [
-          { text: "abc ", attr: 0 },
-          { text: " ", attr: 8 },
-          { text: " ".repeat(115), attr: 0 },
-        ],
-      }],
+      changed: [
+        {
+          idx: 19,
+          runs: [
+            { text: "abc ", attr: 0 },
+            { text: " ", attr: 8 },
+            { text: " ".repeat(115), attr: 0 },
+          ],
+        },
+      ],
     });
     const msg1 = decodeWireBinary(frame1) as ScreenMessage;
     const msg2 = decodeWireBinary(frame2) as ScreenMessage;
@@ -313,7 +363,6 @@ describe("full pipeline: binary frame -> decoder -> renderer", () => {
     await new Promise((r) => setTimeout(r, 16));
     expectInverseAtCol(outputEl, 19, 4, " ");
   });
-
 });
 
 function expectInverseAtCol(

@@ -14,10 +14,17 @@ function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
 }
 
 /** GET `path`, validate with `decoder`, return T or null. */
-export async function apiGetTyped<T>(path: string, decoder: Decoder<T>, signal?: AbortSignal): Promise<T | null> {
+export async function apiGetTyped<T>(
+  path: string,
+  decoder: Decoder<T>,
+  signal?: AbortSignal,
+): Promise<T | null> {
   try {
     const r = await fetch(path, { signal: withTimeout(signal, API_TIMEOUT_MS) });
-    if (!r.ok) { console.warn("api: non-ok GET", path, r.status); return null; }
+    if (!r.ok) {
+      console.warn("api: non-ok GET", path, r.status);
+      return null;
+    }
     const parsed: unknown = await r.json();
     return decoder(parsed);
   } catch (e) {
@@ -27,7 +34,12 @@ export async function apiGetTyped<T>(path: string, decoder: Decoder<T>, signal?:
 }
 
 /** POST `body` as JSON to `path`, validate with `decoder`, return T or null. */
-export async function apiPostTyped<T>(path: string, body: unknown, decoder: Decoder<T>, signal?: AbortSignal): Promise<T | null> {
+export async function apiPostTyped<T>(
+  path: string,
+  body: unknown,
+  decoder: Decoder<T>,
+  signal?: AbortSignal,
+): Promise<T | null> {
   try {
     const r = await fetch(path, {
       method: "POST",
@@ -35,7 +47,10 @@ export async function apiPostTyped<T>(path: string, body: unknown, decoder: Deco
       body: JSON.stringify(body),
       signal: withTimeout(signal, API_TIMEOUT_MS),
     });
-    if (!r.ok) { console.warn("api: non-ok POST", path, r.status); return null; }
+    if (!r.ok) {
+      console.warn("api: non-ok POST", path, r.status);
+      return null;
+    }
     const parsed: unknown = await r.json();
     return decoder(parsed);
   } catch (e) {

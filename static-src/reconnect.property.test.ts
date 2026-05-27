@@ -13,12 +13,7 @@
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 
-import {
-  nextBackoffDelay,
-  INITIAL_DELAY_MS,
-  MAX_DELAY_MS,
-  JITTER_MS,
-} from "./reconnect.js";
+import { nextBackoffDelay, INITIAL_DELAY_MS, MAX_DELAY_MS, JITTER_MS } from "./reconnect.js";
 
 describe("nextBackoffDelay property", () => {
   it("nextBaseMs is min(currentBaseMs * 2, MAX_DELAY_MS)", () => {
@@ -100,15 +95,12 @@ describe("nextBackoffDelay property", () => {
 
   it("INITIAL_DELAY_MS first call produces scheduledMs in [500, 750)", () => {
     fc.assert(
-      fc.property(
-        fc.double({ min: 0, max: 0.999, noNaN: true, noDefaultInfinity: true }),
-        (r) => {
-          const { scheduledMs, nextBaseMs } = nextBackoffDelay(INITIAL_DELAY_MS, () => r);
-          expect(scheduledMs).toBeGreaterThanOrEqual(500);
-          expect(scheduledMs).toBeLessThan(750);
-          expect(nextBaseMs).toBe(1000); // 500 * 2
-        },
-      ),
+      fc.property(fc.double({ min: 0, max: 0.999, noNaN: true, noDefaultInfinity: true }), (r) => {
+        const { scheduledMs, nextBaseMs } = nextBackoffDelay(INITIAL_DELAY_MS, () => r);
+        expect(scheduledMs).toBeGreaterThanOrEqual(500);
+        expect(scheduledMs).toBeLessThan(750);
+        expect(nextBaseMs).toBe(1000); // 500 * 2
+      }),
     );
   });
 });

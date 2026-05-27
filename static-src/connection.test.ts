@@ -48,7 +48,12 @@ function makeMockWebSocket(): typeof WebSocket {
         this.closed = true;
         this.readyState = 3; // CLOSED
       }) as unknown as ReturnType<typeof vi.fn>,
-      addEventListener(this: MockWS, type: string, handler: (ev: unknown) => void, opts?: { signal?: AbortSignal }): void {
+      addEventListener(
+        this: MockWS,
+        type: string,
+        handler: (ev: unknown) => void,
+        opts?: { signal?: AbortSignal },
+      ): void {
         if (!this.listeners.has(type)) this.listeners.set(type, []);
         this.listeners.get(type)!.push(handler);
         // Honor signal: when aborted, remove this listener.
