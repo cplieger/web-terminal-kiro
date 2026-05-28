@@ -88,16 +88,31 @@ func parseExtColor(params []int, i int, c *Color) int {
 	switch params[i+1] {
 	case 5:
 		if i+2 < len(params) {
-			*c = Color{Type: 2, Val: uint8(params[i+2])}
+			*c = Color{Type: 2, Val: clampByte(params[i+2])}
 			return i + 2
 		}
 	case 2:
 		if i+4 < len(params) {
-			*c = Color{Type: 3, R: uint8(params[i+2]), G: uint8(params[i+3]), B: uint8(params[i+4])}
+			*c = Color{Type: 3, R: clampByte(params[i+2]), G: clampByte(params[i+3]), B: clampByte(params[i+4])}
 			return i + 4
 		}
 	}
 	return i + 1
+}
+
+// clampByte clamps an int from a parsed SGR parameter to the [0,255] byte
+// range. Per ECMA-48 / ANSI X3.64 the SGR extended-color values (38;5;N
+// and 38;2;R;G;B) MUST be 0-255; a malformed VT stream sending values
+// outside that range is treated as the closest valid value rather than
+// silently wrapping via uint8 truncation. Fixes CodeQL go/incorrect-integer-conversion.
+func clampByte(v int) uint8 {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return uint8(v)
 }
 
 // --- CSI parameter parsing helpers ---
