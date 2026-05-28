@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 
@@ -60,7 +61,15 @@ func (r *ClientRegistry) Snapshot() map[*websocket.Conn]uint64 {
 // attaches it to the client state, and returns the session's current
 // bytesReceived and whether scrollback replay is needed (true on first
 // resume for this sessionId — i.e. page refresh or new tab).
-// Opportunistically GCs sessions idle >10 min.
+// Opportunistically GCs sessions idle >60 min. The 60-minute window is
+// long enough to survive iOS Safari aggressively unloading a backgrounded
+// tab (which can keep the same sessionId via sessionStorage but suspends
+// the WebSocket for an unbounded period). A shorter window (the previous
+// 10-minute one) caused a duplicate-resend bug: tab suspended >10 min →
+// session GC'd → reconnect creates new session with bytesReceived=0 →
+// client's resumeAck handler trims nothing → retransmitOutbox replays
+// every queued chunk → kiro re-receives the same input as fresh
+// keystrokes and queues duplicate messages.
 func (r *ClientRegistry) ResolveSession(state *ClientState, sessionID string) (ack uint64, needsReplay bool) {
 	r.mu.Lock()
 	sess, ok := r.sessions[sessionID]
@@ -68,7 +77,19 @@ func (r *ClientRegistry) ResolveSession(state *ClientState, sessionID string) (a
 		sess = &sessionState{lastSeen: time.Now()}
 		r.sessions[sessionID] = sess
 		for id, s := range r.sessions {
-			if time.Since(s.lastSeen) > 10*time.Minute {
+			if time.Since(s.lastSeen) > 60*time.Minute {
+				// Log when GCing a session that received input — a
+				// reconnecting client with this sessionId will see
+				// bytesReceived=0 and (per its own safeguard) drop
+				// any unacked bytes, surfacing as input-loss rather
+				// than duplicate-resend. The log entry helps correlate
+				// user-visible "my input vanished" reports with the GC.
+				if s.bytesReceived > 0 {
+					slog.Info("terminal: gc'd idle session with received bytes",
+						"session_id", id,
+						"bytes_received", s.bytesReceived,
+						"idle", time.Since(s.lastSeen).Round(time.Second))
+				}
 				delete(r.sessions, id)
 			}
 		}
