@@ -24,12 +24,12 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # typescript-go preview tarball, invoke the binary with --project on
 # static-src/tsconfig.json, emit lands in static/app.js for go:embed.
 # The same tsgo binary is also installed in the final stage for LSP.
-# Tracks @typescript/native-preview's `beta` dist-tag (Microsoft's curated
+# Tracks @typescript/native-preview's `latest` dist-tag (Microsoft's curated
 # stabler channel) rather than the daily `latest`; the platform-specific
 # linux-x64 tarball is published in lockstep at the same version string.
 # See .github/renovate.json for the followTag rule.
 # renovate: datasource=npm depName=@typescript/native-preview
-ARG TSGO_VERSION=7.0.0-dev.20260421.2
+ARG TSGO_VERSION=7.0.0-dev.20260527.2
 RUN TSGO_ARCH=$([ "$BUILDARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
     curl -fsSL \
       "https://registry.npmjs.org/@typescript/native-preview-linux-${TSGO_ARCH}/-/native-preview-linux-${TSGO_ARCH}-${TSGO_VERSION}.tgz" \
@@ -116,7 +116,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 # renovate: datasource=github-releases depName=facebook/pyrefly
 ARG PYREFLY_VERSION=1.0.0
 # renovate: datasource=npm depName=@typescript/native-preview
-ARG TSGO_VERSION=7.0.0-dev.20260421.2
+ARG TSGO_VERSION=7.0.0-dev.20260527.2
 ARG TARGETARCH
 RUN PYREFLY_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x86_64") && \
     TSGO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
