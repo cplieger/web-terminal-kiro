@@ -528,6 +528,12 @@
     border: none;
     border-radius: var(--radius-inner);
     font-size: inherit;
+    /* Touch override drops the desktop label (::after content: "")
+       so only the SVG remains. The base rule sets align-items:center
+       but inherits justify-content:flex-start, which would push the
+       lone icon to the left edge of the touch-target-sized cell —
+       same unequal-padding issue as the toolbar toggle. Center it. */
+    justify-content: center;
     transition:
       opacity var(--dur-standard) var(--ease-standard),
       display var(--dur-standard) allow-discrete;
@@ -597,10 +603,17 @@
     stroke-linejoin: round;
   }
 
-  /* Toggle icon crossfade */
+  /* Toggle icon crossfade. Both icons are stacked absolute so they
+     can independently fade + rotate during the open<->close
+     transition. inset:0 + margin:auto centers them within the
+     button (works because the SVGs carry explicit width/height); a
+     bare `position: absolute` would pin them at the top-left, giving
+     the toggle visibly unequal left/right padding when collapsed. */
   .kb-toggle .icon-hamburger,
   .kb-toggle .icon-close {
     position: absolute;
+    inset: 0;
+    margin: auto;
     transition:
       opacity var(--dur-standard) linear,
       transform var(--dur-standard) linear;
