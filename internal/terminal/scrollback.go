@@ -44,6 +44,8 @@ func (r *scrollbackRing) Lines() [][]vt.WireRun {
 	return out
 }
 
+
+
 // Clear discards all buffered lines.
 func (r *scrollbackRing) Clear() {
 	r.start = 0

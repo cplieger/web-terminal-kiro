@@ -150,6 +150,17 @@ export function resetScrollback(): void {
   allRows = allRows.slice(historyCount);
 }
 
+/** Number of frozen history (scrollback) rows currently in the DOM —
+ *  excludes the live screen zone. Sent on the resume control message
+ *  so the server replays only the rows the client doesn't have. iOS
+ *  Safari can preserve sessionStorage (and therefore the sessionId)
+ *  while evicting the page entirely; on reload the scrollback count
+ *  is zero and we want a full replay. A WS drop within the same page
+ *  lifetime keeps the count and avoids duplicate scrollback rows. */
+export function getScrollbackRowCount(): number {
+  return allRows.length - liveCount;
+}
+
 // --- Color helpers ---
 function colorHex(c: number | undefined): string | null {
   if (c === undefined || c < 0) {
@@ -518,7 +529,30 @@ function flushScreenInner(
     liveCount = 0;
     firstScreen = false;
   }
-  ensureLiveZone(rows.length);
+  // Trim trailing empty rows from the DOM live zone. The screen buffer
+  // is always pty-height tall, but kiro CLI's TUI typically draws
+  // content + a bottom status row and leaves the rows in between (and
+  // any rows below content when content reflowed shorter after a
+  // resize) as default empty cells. Those rows render as a visible
+  // "black gap" between content and the bottom-of-viewport status —
+  // most reliably reproduced by switching device (iPhone → iPad), where
+  // kiro's SIGWINCH-driven repaint may not touch every row of the new
+  // larger screen until the user sends fresh input.
+  //
+  // Visible row count = max(cursor row + 1, last non-empty row + 1).
+  // Always include the cursor row so we never trim it. New content
+  // arriving for a previously-trimmed row index just grows the live
+  // zone again on the next frame.
+  let lastNonEmpty = -1;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (row !== undefined && row.length > 0 && row.some((r) => r.t !== "" && r.t.trim() !== "")) {
+      lastNonEmpty = i;
+      break;
+    }
+  }
+  const visibleEnd = Math.max(cursor[0] + 1, lastNonEmpty + 1, 1);
+  ensureLiveZone(visibleEnd);
 
   const newCursorRow = cursor[0];
   const newCursorCol = cursor[1];

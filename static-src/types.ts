@@ -45,4 +45,4 @@ export type ServerMessage = ScreenMessage | ScrollMessage | ResumeAckMessage | M
 
 export type ControlMessage =
   | { type: "resize"; cols: number; rows: number }
-  | { type: "resume"; sessionId: string; sentBytes: number };
+  | { type: "resume"; sessionId: string; sentBytes: number; scrollbackHave: number };

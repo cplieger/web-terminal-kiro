@@ -21,6 +21,7 @@ import { controlFrame } from "./wire.js";
 import { decodeWireBinary } from "./wire-binary.js";
 import { INITIAL_DELAY_MS, nextBackoffDelay } from "./reconnect.js";
 import * as modes from "./modes.js";
+import { getScrollbackRowCount } from "./render.js";
 import type { ControlMessage, ServerMessage } from "./types.js";
 
 type ConnState =
@@ -300,7 +301,20 @@ export function connect(): void {
       // Send resume immediately so server can respond with its current
       // bytesReceived for this session — we trim/retransmit the outbox
       // when that resumeAck arrives (handled in the message listener).
-      sock.send(controlFrame({ type: "resume", sessionId, sentBytes: bytesSent }));
+      sock.send(
+        controlFrame({
+          type: "resume",
+          sessionId,
+          sentBytes: bytesSent,
+          // iOS Safari can preserve sessionStorage (so sessionId
+          // survives) while evicting the page entirely; on reload
+          // the DOM has zero scrollback rows and we want a full
+          // replay. A WS drop that doesn't lose the page keeps the
+          // count and avoids duplicating scrollback rows the client
+          // still has.
+          scrollbackHave: getScrollbackRowCount(),
+        }),
+      );
     },
     { signal: connectAbort.signal },
   );

@@ -100,7 +100,7 @@ jobs:
         continue-on-error: true
         run: |
           (
-            output=$(deadcode -test ./... 2>&1 | grep -v "cli_runner.go" || true)
+            output=$(deadcode -test ./... 2>&1 | grep -v "cli_runner.go" | grep -v "node_modules" || true)
             if [ -n "$output" ]; then echo "$output"; exit 1; fi
           ) || { echo "Dead code (deadcode)" >> /tmp/_ci_failures; exit 1; }
 

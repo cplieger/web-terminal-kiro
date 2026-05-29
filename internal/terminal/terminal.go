@@ -350,6 +350,16 @@ type controlMsg struct {
 	SentBytes uint64 `json:"sentBytes,omitempty"`
 	Cols      int    `json:"cols,omitempty"`
 	Rows      int    `json:"rows,omitempty"`
+	// ScrollbackHave is the number of scrollback rows the client
+	// already has in DOM. Sent in resume control messages so the
+	// server can replay only rows the client is missing — handles
+	// iOS Safari DOM eviction (where sessionStorage preserves the
+	// sessionId but the page reloads with empty DOM) without
+	// duplicating scrollback when the DOM survived (e.g. brief WS
+	// drop during the same page lifetime). Zero means "send me the
+	// full scrollback". Negative or oversize values are treated as
+	// zero by the server's clamp in handleResume.
+	ScrollbackHave int `json:"scrollbackHave,omitempty"`
 }
 
 // handleWS upgrades to WebSocket, spawns the configured command in a
@@ -427,7 +437,7 @@ func (h *Handler) handleControl(ws *websocket.Conn, state *ClientState, payload 
 		return
 	}
 	if c.Type == ctlTypeResume && c.SessionID != "" {
-		h.handleResume(ws, state, c.SessionID)
+		h.handleResume(ws, state, c.SessionID, c.ScrollbackHave)
 		return
 	}
 	if c.Type == ctlTypeResize {
@@ -438,7 +448,12 @@ func (h *Handler) handleControl(ws *websocket.Conn, state *ClientState, payload 
 // handleResume looks up or creates the session for sessionID, attaches
 // it to state, replies with a resumeAck carrying the server's current
 // bytesReceived count, and opportunistically GCs idle sessions.
-func (h *Handler) handleResume(ws *websocket.Conn, state *ClientState, sessionID string) {
+//
+// scrollbackHave is the number of scrollback rows the client says it
+// already has in DOM (zero on cold load / iOS DOM eviction). The
+// server replays rows[scrollbackHave:end] so the client gets the
+// missing tail without duplicating rows it still has.
+func (h *Handler) handleResume(ws *websocket.Conn, state *ClientState, sessionID string, scrollbackHave int) {
 	ack, needsReplay := h.registry.ResolveSession(state, sessionID)
 	// Force a full repaint on the next flush so the resuming client
 	// sees the current screen state rather than diffing against a
@@ -452,9 +467,21 @@ func (h *Handler) handleResume(ws *websocket.Conn, state *ClientState, sessionID
 	// be replayed below. Sending it via the normal flush path would
 	// duplicate lines the replay already delivered.
 	h.screen.DrainScrollback()
+	// Replay scrollback the client doesn't have. needsReplay is true
+	// on the first resume per sessionState; we additionally honour the
+	// client-reported scrollbackHave so iOS Safari's "evict the page,
+	// reload, sessionId still present" cycle gets a fresh replay
+	// instead of the previous "we already replayed once for this
+	// session, never again" short-circuit which left the user staring
+	// at only the current screen with the start of long responses
+	// scrolled past where the DOM ends.
 	var scrollLines [][]vt.WireRun
-	if needsReplay {
-		scrollLines = h.scrollback.Lines()
+	all := h.scrollback.Lines()
+	if needsReplay || scrollbackHave < len(all) {
+		// Clamp scrollbackHave into [0, len(all)] in case of bogus
+		// or stale client values.
+		start := min(max(scrollbackHave, 0), len(all))
+		scrollLines = all[start:]
 	}
 	h.mu.Unlock()
 

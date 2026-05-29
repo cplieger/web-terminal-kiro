@@ -31,9 +31,6 @@ type CLIError struct {
 	Kind CLIErrorKind
 }
 
-func (e *CLIError) Error() string { return e.Err.Error() }
-func (e *CLIError) Unwrap() error { return e.Err }
-
 // classifyCLIError maps a cmd.Run/cmd.Start error + context into a
 // CLIError. ctx must be the context used for the command.
 func classifyCLIError(ctx context.Context, err error) *CLIError {
