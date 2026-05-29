@@ -325,27 +325,61 @@ function focusTerminal(): void {
 }
 
 // Touch tap: focus the hidden textarea to trigger iOS keyboard.
+// On iOS Safari, focusing a hidden textarea from a `click` handler
+// only opens the virtual keyboard if the click event arrives within
+// iOS's user-gesture window. During heavy DOM mutations (kiro
+// streaming), the click event timing slips past that window — symptom:
+// "while kiro is thinking I can't open the keyboard; only when the
+// turn ends does tap work." `pointerup` fires synchronously with the
+// user's finger lift and captures the gesture before iOS layout work
+// can defer it, so focus() lands while the gesture is still "live".
+// We track the start position from pointerdown and only treat the
+// pointerup as a tap (vs scroll) when total movement is sub-threshold.
 let lastPointerType = "mouse";
+let pointerDownX = 0;
+let pointerDownY = 0;
+const TAP_MOVEMENT_PX = 10;
 termWrap.addEventListener(
   "pointerdown",
   (e) => {
     lastPointerType = e.pointerType;
+    pointerDownX = e.clientX;
+    pointerDownY = e.clientY;
+  },
+  { passive: true },
+);
+termWrap.addEventListener(
+  "pointerup",
+  (e) => {
+    if (e.pointerType !== "touch") {
+      return; // mouse/trackpad handled by the click listener below
+    }
+    const dx = Math.abs(e.clientX - pointerDownX);
+    const dy = Math.abs(e.clientY - pointerDownY);
+    if (dx > TAP_MOVEMENT_PX || dy > TAP_MOVEMENT_PX) {
+      return; // user was scrolling, not tapping
+    }
+    const sel = window.getSelection();
+    if (sel && sel.toString().length > 0) {
+      return; // preserve selection (long-tap selected text)
+    }
+    // Synchronous focus inside pointerup keeps us inside iOS's
+    // user-gesture window even when the streaming flush queue is busy.
+    input.focus({ preventScroll: true });
   },
   { passive: true },
 );
 termWrap.addEventListener("click", () => {
   if (lastPointerType === "touch") {
-    const sel = window.getSelection();
-    if (sel && sel.toString().length > 0) {
-      return;
-    }
-    input.focus({ preventScroll: true });
-  } else {
-    // Mouse/trackpad: focus the contenteditable for keyboard input.
-    // Selection is preserved because we're focusing the same element
-    // the selection lives in.
-    focusTerminal();
+    // Touch path is handled by pointerup above. The click listener
+    // is kept so non-pointer-event environments (very old iOS
+    // builds without PointerEvent support) still get a focus hook.
+    return;
   }
+  // Mouse/trackpad: focus the contenteditable for keyboard input.
+  // Selection is preserved because we're focusing the same element
+  // the selection lives in.
+  focusTerminal();
 });
 
 // --- Viewport ---

@@ -16,6 +16,11 @@ body {
   -webkit-font-smoothing: antialiased;
   text-size-adjust: 100%;
   overscroll-behavior: none;
+  /* Disable pinch-to-zoom and double-tap-to-zoom. The viewport meta tag
+     blocks browser zoom; touch-action: pan-x pan-y additionally lets only
+     scroll/pan gestures through, blocking the pinch-zoom and double-tap-zoom
+     gestures iOS Safari otherwise still honors. */
+  touch-action: pan-x pan-y;
 }
 
 /* stylelint-disable declaration-no-important, time-min-milliseconds --

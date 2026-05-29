@@ -37,16 +37,28 @@
 }
 
 .term-input {
+  /* Keep the input INSIDE the viewport (not at left:-9999px) — iOS
+   * Safari is increasingly strict about not opening the virtual
+   * keyboard for off-screen inputs, especially during heavy DOM
+   * mutations like a streaming agent turn. A 1×1 fully-transparent
+   * pinned-bottom input is "visible enough" for iOS without being
+   * tappable or perceptible to the user. opacity:0 + size:1px hides
+   * it visually; pointer-events:none makes sure stray taps don't
+   * land on it (programmatic focus() still works). */
   position: fixed;
-  left: -9999px;
-  top: 0;
+  inset-block-end: 0;
+  inset-inline-start: 0;
   width: 1px;
-  height: 17px;
+  height: 1px;
   opacity: 0;
   pointer-events: none;
   border: 0;
   resize: none;
   outline: none;
+  /* iOS auto-zooms on input focus when the input's font-size < 16px.
+   * Lock to 16px so the keyboard pop doesn't trigger a viewport zoom
+   * (which would also defer the keyboard show animation). */
+  font-size: 16px;
 }
 
 .term-output {

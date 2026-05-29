@@ -130,9 +130,30 @@ func (s *Screen) Resize(rows, cols int) {
 		rows = 1
 	}
 	dimsChanged := rows != s.Height || cols != s.Width
-	for rows > s.Height {
-		s.Cells = append(s.Cells, makeRow(s.Width, Color{}))
-		s.Height++
+	// When growing height, prepend empty rows at the TOP rather than
+	// appending them at the bottom. xterm/iTerm/Terminal.app all
+	// behave this way: existing content keeps its relative position
+	// to the cursor (which moves down toward the new bottom), and
+	// fresh empty space appears above (in scrollback territory).
+	//
+	// The previous append-at-bottom behaviour put empty rows BELOW
+	// the cursor, where they remained visible until kiro CLI's
+	// SIGWINCH-driven redraw filled them — a window the user sees as
+	// a "black gap between content and the input bar" on iPhone →
+	// iPad device switches. Combined with the client's trim of
+	// trailing empty rows in render.ts, this makes the gap impossible
+	// regardless of whether kiro's repaint happens immediately.
+	if rows > s.Height {
+		grow := rows - s.Height
+		newRows := make([][]Cell, grow, grow+s.Height)
+		for i := range newRows {
+			newRows[i] = makeRow(s.Width, Color{})
+		}
+		s.Cells = append(newRows, s.Cells...)
+		s.Height = rows
+		// Cursor stays at the same content row (which is now further
+		// down in the new larger buffer).
+		s.curY += grow
 	}
 	if rows < s.Height {
 		s.Cells = s.Cells[:rows]

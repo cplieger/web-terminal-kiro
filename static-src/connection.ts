@@ -21,6 +21,7 @@ import { controlFrame } from "./wire.js";
 import { decodeWireBinary } from "./wire-binary.js";
 import { INITIAL_DELAY_MS, nextBackoffDelay } from "./reconnect.js";
 import * as modes from "./modes.js";
+import { getScrollbackRowCount } from "./render.js";
 import type { ControlMessage, ServerMessage } from "./types.js";
 
 type ConnState =
@@ -34,8 +35,15 @@ let reconnectDelay = INITIAL_DELAY_MS;
 let lastSentCols = 0;
 let lastSentRows = 0;
 
-// Resume-protocol state. sessionId is generated once at module load.
-const sessionId = generateSessionId();
+// Resume-protocol state. sessionId persists across iOS tab-suspend/reload
+// via sessionStorage. Without this persistence, an iOS Safari tab unload
+// (which Safari does aggressively when the user backgrounds the tab) and
+// subsequent reconstruction from history triggers a fresh JS module load
+// → new sessionId → server treats it as a new session → resumeAck.received
+// returns 0 → applyAck(0) doesn't trim the outbox → retransmitOutbox sends
+// every queued chunk again, causing the duplicate-message-resend bug.
+const SESSION_ID_KEY = "vibecli-session-id";
+const sessionId = loadOrCreateSessionId();
 let bytesSent = 0; // total bytes ever passed to sendBinary
 let bytesAcked = 0; // confirmed by server inputAck/resumeAck
 const outbox: Uint8Array[] = []; // chunks of unacked bytes (sum = bytesSent - bytesAcked)
@@ -49,6 +57,29 @@ let lastServerEpoch: number | null = null; // process-start nanos of the last co
  * silently grow memory unbounded.
  */
 export const MAX_OUTBOX_BYTES = 1 << 20;
+
+function loadOrCreateSessionId(): string {
+  // sessionStorage is per-tab and survives most iOS lifecycle events
+  // (suspend/resume, BFCache restore, page reload). It does NOT survive
+  // a true tab close + reopen, which is the desired semantic: a fresh
+  // tab should be a fresh terminal session, not a resume of an older one.
+  try {
+    const existing = sessionStorage.getItem(SESSION_ID_KEY);
+    if (existing) {
+      return existing;
+    }
+    const fresh = generateSessionId();
+    sessionStorage.setItem(SESSION_ID_KEY, fresh);
+    return fresh;
+  } catch {
+    // Private mode or storage disabled — fall back to in-memory only.
+    // Reload-as-new-session semantics in this fallback path are
+    // unavoidable; the outbox-clear safeguard in handleResumeAck below
+    // protects against duplicate retransmission when the server returns
+    // bytesReceived=0 for a session it doesn't recognize.
+    return generateSessionId();
+  }
+}
 
 function generateSessionId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -270,7 +301,20 @@ export function connect(): void {
       // Send resume immediately so server can respond with its current
       // bytesReceived for this session — we trim/retransmit the outbox
       // when that resumeAck arrives (handled in the message listener).
-      sock.send(controlFrame({ type: "resume", sessionId, sentBytes: bytesSent }));
+      sock.send(
+        controlFrame({
+          type: "resume",
+          sessionId,
+          sentBytes: bytesSent,
+          // iOS Safari can preserve sessionStorage (so sessionId
+          // survives) while evicting the page entirely; on reload
+          // the DOM has zero scrollback rows and we want a full
+          // replay. A WS drop that doesn't lose the page keeps the
+          // count and avoids duplicating scrollback rows the client
+          // still has.
+          scrollbackHave: getScrollbackRowCount(),
+        }),
+      );
     },
     { signal: connectAbort.signal },
   );
@@ -328,6 +372,24 @@ export function connect(): void {
           cb?.onServerRestart?.();
         }
         lastServerEpoch = epoch;
+      }
+      // Server-doesn't-recognize-this-session safeguard: if the server
+      // returns received=0 but the client already had bytesAcked > 0,
+      // the server has forgotten our session (idle GC kicked in, or
+      // sessionId persistence failed and a reload created a new one).
+      // Replaying the outbox would deliver every queued chunk again,
+      // causing the iOS tab-suspend duplicate-resend bug. Drop the
+      // outbox and notify the UI as if the server restarted — input
+      // since the last successful ack is irrecoverable but at least
+      // not duplicated. Skip this branch when bytesSent = 0 (genuine
+      // first-connect; received=0 is correct).
+      if (msg.received === 0 && bytesAcked > 0) {
+        bytesSent = 0;
+        bytesAcked = 0;
+        outbox.length = 0;
+        outboxBytes = 0;
+        cb?.onServerRestart?.();
+        return;
       }
       applyAck(msg.received);
       retransmitOutbox();
