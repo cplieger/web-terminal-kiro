@@ -23,7 +23,9 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # Matches the approach in apps/vibekit's Dockerfile: pull Microsoft's
 # typescript-go preview tarball, invoke the binary with --project on
 # static-src/tsconfig.json, emit lands in static/app.js for go:embed.
-# The same tsgo binary is also installed in the final stage for LSP.
+# The tsgo binary is used here at build time only (TS compilation).
+# Runtime LSPs are no longer baked — they install on-demand via
+# setup-tools.sh from /config/tools.json.
 # Tracks @typescript/native-preview's `latest` dist-tag (Microsoft's curated
 # stabler channel) rather than the daily `latest`; the platform-specific
 # linux-x64 tarball is published in lockstep at the same version string.
@@ -110,27 +112,12 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Language servers kiro-cli's workspace_manager spawns on startup.
-# Without them the Ink TUI silently stalls for ~15 minutes on first
-# paint. Both ship as native binaries (no Node runtime needed).
-# renovate: datasource=github-releases depName=facebook/pyrefly
-ARG PYREFLY_VERSION=1.0.0
-# renovate: datasource=npm depName=@typescript/native-preview
-ARG TSGO_VERSION=7.0.0-dev.20260527.2
-ARG TARGETARCH
-RUN PYREFLY_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x86_64") && \
-    TSGO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
-    curl -fsSL "https://github.com/facebook/pyrefly/releases/download/${PYREFLY_VERSION}/pyrefly-linux-${PYREFLY_ARCH}.tar.gz" \
-      | tar -xz -C /usr/local/bin pyrefly && \
-    chmod +x /usr/local/bin/pyrefly && \
-    printf '#!/bin/sh\nexec /usr/local/bin/pyrefly lsp\n' > /usr/local/bin/pyright && chmod +x /usr/local/bin/pyright && \
-    cp /usr/local/bin/pyright /usr/local/bin/pyright-langserver && \
-    curl -fsSL "https://registry.npmjs.org/@typescript/native-preview-linux-${TSGO_ARCH}/-/native-preview-linux-${TSGO_ARCH}-${TSGO_VERSION}.tgz" \
-      | tar -xz -C /usr/local/bin --strip-components=2 --wildcards 'package/lib/tsgo' 'package/lib/lib*.d.ts' && \
-    chmod +x /usr/local/bin/tsgo && \
-    printf '%s\n' '#!/bin/sh' 'exec /usr/local/bin/tsgo --lsp --stdio' \
-      > /usr/local/bin/typescript-language-server && \
-    chmod +x /usr/local/bin/typescript-language-server
+# Language servers are no longer baked into the image. They install
+# on-demand via setup-tools.sh from /config/tools.json (same mechanism
+# as vibekit). Users who want TS/Python/Go LSPs add them to their
+# tools.json with the shim pattern — see the borgcube config for an
+# example. This saves ~32 MB off the compressed image and eliminates
+# the daily tsgo-bump Docker rebuild churn.
 
 # Developer tools (gh, etc.) are installed dynamically from
 # /config/tools.json on first boot via setup-tools.sh. This lets
