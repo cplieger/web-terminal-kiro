@@ -369,7 +369,18 @@ termWrap.addEventListener(
   },
   { passive: true },
 );
-termWrap.addEventListener("click", () => {
+termWrap.addEventListener("click", (e) => {
+  // Terminal links: URLs detected by render.ts's linkifySpans are wrapped
+  // in <a class="term-link" target="_blank">. In a contenteditable element
+  // the browser treats link clicks as cursor-placement, not navigation.
+  // Intercept and open explicitly.
+  const link = (e.target as HTMLElement).closest<HTMLAnchorElement>(".term-link");
+  if (link) {
+    e.preventDefault();
+    window.open(link.href, "_blank", "noopener,noreferrer");
+    return;
+  }
+
   if (lastPointerType === "touch") {
     // Touch path is handled by pointerup above. The click listener
     // is kept so non-pointer-event environments (very old iOS
