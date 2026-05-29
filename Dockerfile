@@ -99,7 +99,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # replays the current snapshot on each WS reconnect. No external
 # multiplexer (tmux/dtach) is required.
 # hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     curl \
