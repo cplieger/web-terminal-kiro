@@ -1,15 +1,33 @@
 #!/bin/bash
-# Reads /config/tools.json, checks for updates, and installs missing tools.
-# Runs on every container boot; tools persist in /config/tools/ volume.
+# Reads /config/tools.json on container boot, checks for updates, and
+# installs enabled tools into /config/tools (persisted across restarts).
+#
+# vibecli has no management UI, so everything is driven by tools.json:
+#   enabled      bool        install this entry (missing -> true)
+#   auto_update  bool        bump version on boot (missing -> true; false pins)
+#   requires     []"sec.name" deps that must be enabled first (e.g. lsp gopls
+#                            requires runtimes.go)
+#   shims        {name: cmd} wrapper scripts written to BIN exec'ing cmd —
+#                            lets tsgo masquerade as typescript-language-server
+#                            and pyrefly as pyright (the names kiro-cli probes)
+#   version / update{method,...} / install
+#   lsp.method   binary|go   which install pipeline an lsp entry uses
+#
+# Sections (install order): runtimes, binary, custom, lsp, apt.
 set -uo pipefail
 
-TOOLS="/tools"
+TOOLS="/config/tools"
 BIN="$TOOLS/bin"
+RUNTIMES="$TOOLS/runtimes"
+GOBIN="$TOOLS/go/bin"
 MANIFEST="/config/tools.json"
 
-export PATH="$BIN:$PATH"
+export GOROOT="$RUNTIMES/go"
+export GOPATH="$TOOLS/go"
+export GOBIN
+export PATH="$BIN:$GOBIN:$RUNTIMES/go/bin:$PATH"
 
-mkdir -p "$BIN"
+mkdir -p "$BIN" "$GOBIN" "$RUNTIMES" "$TOOLS/lib"
 
 if [ ! -f "$MANIFEST" ]; then
     printf "ERROR: %s not found\n" "$MANIFEST"
@@ -18,24 +36,32 @@ fi
 
 printf "[%s] Tool setup starting\n" "$(date -Iseconds)"
 
-# --- GitHub auth for rate limits ---
+# --- Architecture detection (consumed via expand() placeholders) ---
+case "$(uname -m)" in
+    aarch64|arm64)
+        ARCH_X64_OR_ARM64="arm64"; ARCH_AMD64_OR_ARM64="arm64"
+        ARCH_X86_64_OR_AARCH64="aarch64"; ARCH_X64_OR_AARCH64="aarch64"
+        ARCH_X86_64_OR_ARM64="arm64" ;;
+    *)
+        ARCH_X64_OR_ARM64="x64"; ARCH_AMD64_OR_ARM64="amd64"
+        ARCH_X86_64_OR_AARCH64="x86_64"; ARCH_X64_OR_AARCH64="x64"
+        ARCH_X86_64_OR_ARM64="x86_64" ;;
+esac
 
+# --- GitHub auth for higher API rate limits (optional) ---
 GH_AUTH=""
 if command -v gh >/dev/null 2>&1; then
     GH_AUTH=$(gh auth token 2>/dev/null) || true
 fi
-
 gh_curl() {
     if [ -n "$GH_AUTH" ]; then
-        curl -fsSL --connect-timeout 10 --max-time 15 \
-            -H "Authorization: Bearer $GH_AUTH" "$@" 2>/dev/null
+        curl -fsSL --connect-timeout 10 --max-time 15 -H "Authorization: Bearer $GH_AUTH" "$@" 2>/dev/null
     else
         curl -fsSL --connect-timeout 10 --max-time 15 "$@" 2>/dev/null
     fi
 }
 
 # --- Helpers ---
-
 expand() {
     local cmd="$1" version="$2"
     local version_nopfx="${version#v}"
@@ -43,12 +69,19 @@ expand() {
     cmd="${cmd//\$\{VERSION_NOPFX\}/$version_nopfx}"
     cmd="${cmd//\$\{BIN\}/$BIN}"
     cmd="${cmd//\$\{TOOLS\}/$TOOLS}"
+    cmd="${cmd//\$\{RUNTIMES\}/$RUNTIMES}"
+    cmd="${cmd//\$\{GOBIN\}/$GOBIN}"
     cmd="${cmd//\$\{HOME\}/$HOME}"
+    cmd="${cmd//\$\{ARCH_X64_OR_ARM64\}/$ARCH_X64_OR_ARM64}"
+    cmd="${cmd//\$\{ARCH_AMD64_OR_ARM64\}/$ARCH_AMD64_OR_ARM64}"
+    cmd="${cmd//\$\{ARCH_X86_64_OR_AARCH64\}/$ARCH_X86_64_OR_AARCH64}"
+    cmd="${cmd//\$\{ARCH_X64_OR_AARCH64\}/$ARCH_X64_OR_AARCH64}"
+    cmd="${cmd//\$\{ARCH_X86_64_OR_ARM64\}/$ARCH_X86_64_OR_ARM64}"
     printf '%s' "$cmd"
 }
 
 has_bin() {
-    [ -f "$BIN/$1" ]
+    [ -x "$BIN/$1" ] || [ -x "$GOBIN/$1" ]
 }
 
 section_empty() {
@@ -57,116 +90,209 @@ section_empty() {
     [ "$count" = "0" ]
 }
 
+# enabled/auto_update default to true when the field is absent. jq's `//`
+# treats false as empty, so test `!= false` (true when true OR absent).
+entry_enabled()     { [ "$(jq -r "${1}.enabled != false" "$MANIFEST")" = "true" ]; }
+entry_auto_update() { [ "$(jq -r "${1}.auto_update != false" "$MANIFEST")" = "true" ]; }
+
+# Write wrapper scripts for each .shims entry so kiro-cli can spawn the
+# real binary under the LSP name it expects.
+write_shims() {
+    local jq_path="$1" shim_name shim_cmd
+    [ "$(jq -r "(${jq_path}.shims // {}) | length" "$MANIFEST" 2>/dev/null || echo 0)" = "0" ] && return 0
+    while IFS=$'\t' read -r shim_name shim_cmd; do
+        [ -z "$shim_name" ] && continue
+        printf '#!/bin/sh\nexec %s "$@"\n' "$shim_cmd" > "$BIN/$shim_name"
+        chmod 755 "$BIN/$shim_name"
+        printf "    shim: %s -> %s\n" "$shim_name" "$shim_cmd"
+    done < <(jq -r "${jq_path}.shims // {} | to_entries[] | \"\(.key)\t\(.value)\"" "$MANIFEST")
+}
+
+remove_shims() {
+    local jq_path="$1" shim_name
+    while IFS= read -r shim_name; do
+        [ -z "$shim_name" ] && continue
+        rm -f "$BIN/$shim_name"
+    done < <(jq -r "${jq_path}.shims // {} | keys[]" "$MANIFEST" 2>/dev/null)
+}
+
+# Check upstream for a newer version and rewrite the manifest. Returns 0 if
+# changed. Honors auto_update:false. Methods: github, gomod, url.
 check_update() {
-    local jq_path="$1" name="$2" current="$3" method="$4"
-    local latest=""
-
-    case "$method" in
-        manual|null) return 1 ;;
-    esac
-
+    local jq_path="$1" name="$2" current="$3" method="$4" latest=""
+    entry_auto_update "$jq_path" || return 1
+    case "$method" in manual|null) return 1 ;; esac
+    # Skip pure-hex commit pins (not comparable); everything else is a tag.
     case "$current" in
-        v*|[0-9]*) ;;
-        *) return 1 ;;
+        *[!0-9a-f]*) ;;
+        [0-9a-f]*[0-9a-f]) return 1 ;;
     esac
-
     case "$method" in
         github)
-            local repo
-            repo=$(jq -r "${jq_path}.update.repo" "$MANIFEST")
-            latest=$(gh_curl \
-                "https://api.github.com/repos/${repo}/releases/latest" \
-                | jq -r '.tag_name // empty') || true
-            ;;
+            local repo; repo=$(jq -r "${jq_path}.update.repo" "$MANIFEST")
+            latest=$(gh_curl "https://api.github.com/repos/${repo}/releases/latest" | jq -r '.tag_name // empty') || true ;;
+        gomod)
+            local mod; mod=$(jq -r "${jq_path}.update.module" "$MANIFEST")
+            latest=$(curl -fsSL --connect-timeout 10 --max-time 15 "https://proxy.golang.org/${mod}/@latest" 2>/dev/null | jq -r '.Version // empty') || true ;;
+        url)
+            local url prefix raw
+            url=$(jq -r "${jq_path}.update.url" "$MANIFEST")
+            prefix=$(jq -r "${jq_path}.update.strip_prefix // empty" "$MANIFEST")
+            raw=$(curl -fsSL --connect-timeout 10 --max-time 15 "$url" 2>/dev/null | head -1) || true
+            [ -n "$raw" ] && latest="${raw#"$prefix"}" ;;
     esac
-
-    if [ -z "$latest" ] || [ "$current" = "$latest" ]; then
-        return 1
-    fi
-
+    [ -z "$latest" ] && { printf "    update: fetch failed\n"; return 1; }
+    # Reject version strings with shell metacharacters (eval'd into install).
+    case "$latest" in *[!a-zA-Z0-9._+-]*)
+        printf "    update: rejected upstream version (illegal chars), keeping pinned\n"; return 1 ;;
+    esac
+    [ "$current" = "$latest" ] && return 1
     printf "    update: %s -> %s\n" "$current" "$latest"
     local tmp
-    if ! tmp=$(jq --arg v "$latest" "${jq_path}.version = \$v" "$MANIFEST"); then
-        printf "    update: jq rewrite failed, keeping pinned version\n"
-        return 1
-    fi
-    if [ -z "$tmp" ] || ! printf '%s' "$tmp" | jq empty >/dev/null 2>&1; then
-        printf "    update: jq produced invalid output, keeping pinned version\n"
-        return 1
+    if ! tmp=$(jq --arg v "$latest" "${jq_path}.version = \$v" "$MANIFEST") || [ -z "$tmp" ] || ! printf '%s' "$tmp" | jq empty >/dev/null 2>&1; then
+        printf "    update: jq rewrite failed, keeping pinned version\n"; return 1
     fi
     printf '%s\n' "$tmp" > "${MANIFEST}.tmp" && mv "${MANIFEST}.tmp" "$MANIFEST"
     return 0
 }
 
+# Remove a tool's install footprint so the next loop re-downloads it.
 clear_tool() {
-    rm -f "$BIN/$1"
+    local section="$1" name="$2" jq_path=".${section}[\"$2\"]"
+    case "$section" in
+        runtimes) rm -rf "${RUNTIMES:?}/$name" ;;
+        binary|custom) rm -f "$BIN/$name" ;;
+        lsp)
+            case "$(jq -r "${jq_path}.method // \"binary\"" "$MANIFEST")" in
+                go) for b in $(jq -r "${jq_path}.binaries[]?" "$MANIFEST" 2>/dev/null); do rm -f "$GOBIN/$b"; done ;;
+                *)  rm -f "$BIN/$name" ;;
+            esac ;;
+    esac
+    remove_shims "$jq_path"
 }
 
-# --- Binary tools ---
+# Refuse to install an entry until every "section.name" in .requires is
+# enabled (transitive deps, e.g. gopls -> runtimes.go).
+requires_satisfied() {
+    local jq_path="$1" req sec n ok
+    while IFS= read -r req; do
+        [ -z "$req" ] && continue
+        sec="${req%%.*}"; n="${req#*.}"
+        ok=$(jq -r "(.${sec}[\"${n}\"] != null) and (.${sec}[\"${n}\"].enabled != false)" "$MANIFEST" 2>/dev/null)
+        if [ "$ok" != "true" ]; then printf "    skipped: requires %s (not enabled)\n" "$req"; return 1; fi
+    done < <(jq -r "${jq_path}.requires[]?" "$MANIFEST" 2>/dev/null)
+    return 0
+}
+
+run_install() {
+    local jq_path="$1" version="$2" install_cmd
+    install_cmd=$(jq -r "${jq_path}.install" "$MANIFEST")
+    [ "$install_cmd" = "null" ] || [ -z "$install_cmd" ] && { printf "    error: no install command\n"; return 1; }
+    eval "$(expand "$install_cmd" "$version")"
+}
+
+# --- Sections (order matters: runtimes before lsp which may require them) ---
+
+printf "\n=== Runtimes ===\n"
+if section_empty runtimes; then printf "  (none configured)\n"; else
+    for name in $(jq -r '.runtimes | keys[]' "$MANIFEST"); do
+        jq_path=".runtimes[\"$name\"]"
+        version=$(jq -r "${jq_path}.version" "$MANIFEST")
+        method=$(jq -r "${jq_path}.update.method // \"manual\"" "$MANIFEST")
+        printf "  %s (%s):\n" "$name" "$version"
+        entry_enabled "$jq_path" || { printf "    disabled\n"; continue; }
+        if check_update "$jq_path" "$name" "$version" "$method"; then
+            clear_tool runtimes "$name"; version=$(jq -r "${jq_path}.version" "$MANIFEST")
+        fi
+        probe=$(jq -r "${jq_path}.probe // \"\"" "$MANIFEST")
+        [ -z "$probe" ] && probe="$RUNTIMES/$name/bin/$name"
+        if [ ! -e "$probe" ]; then
+            printf "    install: %s\n" "$version"
+            run_install "$jq_path" "$version" || printf "    error: runtime install failed\n"
+        else printf "    installed\n"; fi
+    done
+fi
 
 printf "\n=== Binary tools ===\n"
-if section_empty binary; then
-    printf "  (none configured)\n"
-else
+if section_empty binary; then printf "  (none configured)\n"; else
     for name in $(jq -r '.binary | keys[]' "$MANIFEST"); do
-        version=$(jq -r ".binary[\"$name\"].version" "$MANIFEST")
-        method=$(jq -r ".binary[\"$name\"].update.method" "$MANIFEST")
+        jq_path=".binary[\"$name\"]"
+        version=$(jq -r "${jq_path}.version" "$MANIFEST")
+        method=$(jq -r "${jq_path}.update.method // \"manual\"" "$MANIFEST")
         printf "  %s (%s):\n" "$name" "$version"
-        if check_update ".binary[\"$name\"]" "$name" "$version" "$method"; then
-            clear_tool "$name"
-            version=$(jq -r ".binary[\"$name\"].version" "$MANIFEST")
+        entry_enabled "$jq_path" || { printf "    disabled\n"; continue; }
+        if check_update "$jq_path" "$name" "$version" "$method"; then
+            clear_tool binary "$name"; version=$(jq -r "${jq_path}.version" "$MANIFEST")
         fi
         if ! has_bin "$name"; then
-            install_cmd=$(jq -r ".binary[\"$name\"].install" "$MANIFEST")
-            printf "    installing...\n"
-            eval "$(expand "$install_cmd" "$version")"
-        else
-            printf "    installed\n"
-        fi
+            printf "    install: %s\n" "$version"
+            run_install "$jq_path" "$version" || printf "    error: install failed\n"
+        else printf "    installed\n"; fi
+        write_shims "$jq_path"
     done
 fi
-
-# --- Custom tools ---
 
 printf "\n=== Custom tools ===\n"
-if section_empty custom; then
-    printf "  (none configured)\n"
-else
+if section_empty custom; then printf "  (none configured)\n"; else
     for name in $(jq -r '.custom | keys[]' "$MANIFEST"); do
-        version=$(jq -r ".custom[\"$name\"].version" "$MANIFEST")
-        method=$(jq -r ".custom[\"$name\"].update.method" "$MANIFEST")
+        jq_path=".custom[\"$name\"]"
+        version=$(jq -r "${jq_path}.version" "$MANIFEST")
+        method=$(jq -r "${jq_path}.update.method // \"manual\"" "$MANIFEST")
         printf "  %s (%s):\n" "$name" "$version"
-        if check_update ".custom[\"$name\"]" "$name" "$version" "$method"; then
-            clear_tool "$name"
-            version=$(jq -r ".custom[\"$name\"].version" "$MANIFEST")
+        entry_enabled "$jq_path" || { printf "    disabled\n"; continue; }
+        requires_satisfied "$jq_path" || continue
+        if check_update "$jq_path" "$name" "$version" "$method"; then
+            clear_tool custom "$name"; version=$(jq -r "${jq_path}.version" "$MANIFEST")
         fi
         if ! has_bin "$name"; then
-            install_cmd=$(jq -r ".custom[\"$name\"].install" "$MANIFEST")
-            printf "    installing...\n"
-            eval "$(expand "$install_cmd" "$version")"
-        else
-            printf "    installed\n"
-        fi
+            printf "    install: %s\n" "$version"
+            run_install "$jq_path" "$version" || printf "    error: install failed\n"
+        else printf "    installed\n"; fi
+        write_shims "$jq_path"
     done
 fi
 
-# --- System packages (apt) ---
+printf "\n=== Language servers (lsp) ===\n"
+if section_empty lsp; then printf "  (none configured)\n"; else
+    for name in $(jq -r '.lsp | keys[]' "$MANIFEST"); do
+        jq_path=".lsp[\"$name\"]"
+        version=$(jq -r "${jq_path}.version" "$MANIFEST")
+        method=$(jq -r "${jq_path}.update.method // \"manual\"" "$MANIFEST")
+        install_method=$(jq -r "${jq_path}.method // \"binary\"" "$MANIFEST")
+        printf "  %s (%s, via %s):\n" "$name" "$version" "$install_method"
+        entry_enabled "$jq_path" || { printf "    disabled\n"; continue; }
+        requires_satisfied "$jq_path" || continue
+        if check_update "$jq_path" "$name" "$version" "$method"; then
+            clear_tool lsp "$name"; version=$(jq -r "${jq_path}.version" "$MANIFEST")
+        fi
+        primary=$(jq -r "${jq_path}.primary // \"$name\"" "$MANIFEST")
+        if has_bin "$primary"; then printf "    installed\n"; write_shims "$jq_path"; continue; fi
+        printf "    install: %s\n" "$version"
+        case "$install_method" in
+            binary)
+                run_install "$jq_path" "$version" || printf "    error: install failed\n" ;;
+            go)
+                if ! command -v go >/dev/null 2>&1; then printf "    skipped: go not available\n"; continue; fi
+                pkg=$(jq -r "${jq_path}.package" "$MANIFEST"); pkg="${pkg//\$\{VERSION\}/$version}"
+                go install "$pkg" || printf "    error: go install failed\n" ;;
+            *) printf "    error: unknown install method '%s'\n" "$install_method" ;;
+        esac
+        write_shims "$jq_path"
+    done
+fi
 
 printf "\n=== System packages (apt) ===\n"
-if section_empty apt; then
-    printf "  (none configured)\n"
-else
+if section_empty apt; then printf "  (none configured)\n"; else
     apt_list=""
     for name in $(jq -r '.apt | keys[]' "$MANIFEST"); do
-        if ! command -v "$name" > /dev/null 2>&1; then
+        entry_enabled ".apt[\"$name\"]" || { printf "  %s: disabled\n" "$name"; continue; }
+        if ! command -v "$name" >/dev/null 2>&1 && ! dpkg -s "$name" >/dev/null 2>&1; then
             apt_list="$apt_list $name"
-        else
-            printf "  %s: installed\n" "$name"
-        fi
+        else printf "  %s: installed\n" "$name"; fi
     done
     if [ -n "$apt_list" ]; then
         printf "  installing:%s\n" "$apt_list"
-        # shellcheck disable=SC2086 # word-splitting intentional: $apt_list is a space-separated package list
+        # shellcheck disable=SC2086
         apt-get update -qq && apt-get install -y -qq --no-install-recommends $apt_list 2>&1 | tail -3
         rm -rf /var/lib/apt/lists/*
     fi

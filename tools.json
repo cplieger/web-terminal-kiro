@@ -1,27 +1,82 @@
 {
   "_comment": [
-    "Tool manifest read by setup-tools.sh on container boot.",
-    "Add tools your AI agent should have access to; they install into",
-    "/config/tools/ and persist across container restarts.",
+    "Tool manifest read by setup-tools.sh on container boot. Tools install",
+    "into /config/tools/ and persist across container restarts.",
     "",
-    "Sections: binary, custom, apt.",
-    "Each tool has a version and an 'update' block; set method to 'manual'",
-    "to pin, or use 'github'/'url' to track upstream.",
+    "This SHIPPED default is bare-bones: every entry is \"enabled\": false.",
+    "vibecli has no management UI, so each host opts in by editing its own",
+    "/config/tools.json and setting \"enabled\": true on the entries it wants.",
+    "(Editing this repo file only changes the seed for FRESH /config volumes.)",
     "",
-    "kiro-cli is downloaded separately by entrypoint.sh (licensing).",
-    "dtach, git, jq, less, curl, ca-certificates, openssh-client, unzip",
-    "are baked into the image (core runtime deps)."
+    "Per entry: 'enabled', 'auto_update' (false pins a version), 'requires'",
+    "([\"section.name\"] deps), 'shims' (wrapper names kiro-cli probes for).",
+    "Sections: runtimes, binary, custom, lsp, apt.",
+    "",
+    "LSPs use the shim pattern to stay small: tsgo (TS) and pyrefly (Python)",
+    "are single standalone binaries with NO Node runtime, shimmed as",
+    "typescript-language-server / pyright. gopls (Go) additionally needs",
+    "runtimes.go enabled (~190 MB) — enable BOTH lsp.gopls and runtimes.go.",
+    "",
+    "kiro-cli is downloaded separately by entrypoint.sh (licensing)."
   ],
+  "runtimes": {
+    "go": {
+      "enabled": false,
+      "auto_update": true,
+      "version": "1.23.4",
+      "update": { "method": "url", "url": "https://go.dev/VERSION?m=text", "strip_prefix": "go" },
+      "description": "Go toolchain. Required only by lsp.gopls. ~190 MB. Enable together with lsp.gopls.",
+      "install": "rm -rf ${RUNTIMES}/go && curl -fsSL https://go.dev/dl/go${VERSION}.linux-${ARCH_AMD64_OR_ARM64}.tar.gz | tar -xz -C ${RUNTIMES}",
+      "probe": "/config/tools/runtimes/go/bin/go"
+    }
+  },
   "binary": {
     "gh": {
+      "enabled": false,
+      "auto_update": true,
       "version": "v2.74.1",
-      "update": {
-        "method": "github",
-        "repo": "cli/cli"
-      },
-      "install": "curl -fsSL https://github.com/cli/cli/releases/download/${VERSION}/gh_${VERSION_NOPFX}_linux_amd64.tar.gz | tar -xz --strip-components=1 -C ${TOOLS} gh_${VERSION_NOPFX}_linux_amd64/bin/gh"
+      "update": { "method": "github", "repo": "cli/cli" },
+      "description": "GitHub CLI for PR creation, repo cloning, and authenticated git operations.",
+      "install": "curl -fsSL https://github.com/cli/cli/releases/download/${VERSION}/gh_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}.tar.gz | tar -xz -C ${BIN} --strip-components=2 gh_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}/bin/gh"
     }
   },
   "custom": {},
+  "lsp": {
+    "tsgo": {
+      "enabled": false,
+      "auto_update": false,
+      "version": "7.0.0-dev.20260527.2",
+      "method": "binary",
+      "description": "TypeScript/JavaScript LSP (tsgo native preview, Go-compiled standalone binary — no Node runtime). Shimmed as typescript-language-server. Pinned: bump 'version' manually (npm-published; no in-image npm to auto-check).",
+      "install": "curl -fsSL https://registry.npmjs.org/@typescript/native-preview-linux-${ARCH_X64_OR_ARM64}/-/native-preview-linux-${ARCH_X64_OR_ARM64}-${VERSION}.tgz | tar -xz -C ${BIN} --strip-components=2 --wildcards 'package/lib/tsgo' 'package/lib/lib*.d.ts' && chmod 755 ${BIN}/tsgo",
+      "primary": "typescript-language-server",
+      "shims": { "typescript-language-server": "/config/tools/bin/tsgo --lsp --stdio" }
+    },
+    "pyrefly": {
+      "enabled": false,
+      "auto_update": true,
+      "version": "1.0.0",
+      "update": { "method": "github", "repo": "facebook/pyrefly" },
+      "method": "binary",
+      "description": "Python LSP (Meta pyrefly, native Rust standalone binary — no Node runtime). Shimmed as pyright / pyright-langserver.",
+      "install": "curl -fsSL https://github.com/facebook/pyrefly/releases/download/${VERSION_NOPFX}/pyrefly-linux-${ARCH_X86_64_OR_ARM64}.tar.gz | tar -xz -C ${BIN} pyrefly && chmod 755 ${BIN}/pyrefly",
+      "primary": "pyright",
+      "shims": {
+        "pyright": "/config/tools/bin/pyrefly lsp",
+        "pyright-langserver": "/config/tools/bin/pyrefly lsp"
+      }
+    },
+    "gopls": {
+      "enabled": false,
+      "auto_update": true,
+      "version": "v0.22.0",
+      "update": { "method": "gomod", "module": "golang.org/x/tools/gopls" },
+      "method": "go",
+      "package": "golang.org/x/tools/gopls@${VERSION}",
+      "binaries": ["gopls"],
+      "requires": ["runtimes.go"],
+      "description": "Go LSP (gopls), built via 'go install' into /config/tools/go/bin. Requires runtimes.go; no standalone binary exists."
+    }
+  },
   "apt": {}
 }
