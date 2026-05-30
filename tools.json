@@ -3,32 +3,36 @@
     "Tool manifest read by setup-tools.sh on container boot. Tools install",
     "into /config/tools/ and persist across container restarts.",
     "",
-    "vibecli has no management UI: this file is the only control surface.",
-    "Per entry: 'enabled' (false to skip), 'auto_update' (false to pin a",
-    "version), 'requires' ([\"section.name\"] deps), 'shims' (wrapper names",
-    "kiro-cli probes for). Sections: runtimes, binary, custom, lsp, apt.",
+    "This SHIPPED default is bare-bones: every entry is \"enabled\": false.",
+    "vibecli has no management UI, so each host opts in by editing its own",
+    "/config/tools.json and setting \"enabled\": true on the entries it wants.",
+    "(Editing this repo file only changes the seed for FRESH /config volumes.)",
+    "",
+    "Per entry: 'enabled', 'auto_update' (false pins a version), 'requires'",
+    "([\"section.name\"] deps), 'shims' (wrapper names kiro-cli probes for).",
+    "Sections: runtimes, binary, custom, lsp, apt.",
     "",
     "LSPs use the shim pattern to stay small: tsgo (TS) and pyrefly (Python)",
     "are single standalone binaries with NO Node runtime, shimmed as",
-    "typescript-language-server / pyright. gopls (Go) is the exception — it",
-    "needs the Go toolchain (~190 MB); disable runtimes.go + lsp.gopls to drop it.",
+    "typescript-language-server / pyright. gopls (Go) additionally needs",
+    "runtimes.go enabled (~190 MB) — enable BOTH lsp.gopls and runtimes.go.",
     "",
     "kiro-cli is downloaded separately by entrypoint.sh (licensing)."
   ],
   "runtimes": {
     "go": {
-      "enabled": true,
+      "enabled": false,
       "auto_update": true,
       "version": "1.23.4",
       "update": { "method": "url", "url": "https://go.dev/VERSION?m=text", "strip_prefix": "go" },
-      "description": "Go toolchain. Required only by lsp.gopls. ~190 MB. Disable this and lsp.gopls together if you don't need Go support.",
+      "description": "Go toolchain. Required only by lsp.gopls. ~190 MB. Enable together with lsp.gopls.",
       "install": "rm -rf ${RUNTIMES}/go && curl -fsSL https://go.dev/dl/go${VERSION}.linux-${ARCH_AMD64_OR_ARM64}.tar.gz | tar -xz -C ${RUNTIMES}",
       "probe": "/config/tools/runtimes/go/bin/go"
     }
   },
   "binary": {
     "gh": {
-      "enabled": true,
+      "enabled": false,
       "auto_update": true,
       "version": "v2.74.1",
       "update": { "method": "github", "repo": "cli/cli" },
@@ -39,7 +43,7 @@
   "custom": {},
   "lsp": {
     "tsgo": {
-      "enabled": true,
+      "enabled": false,
       "auto_update": false,
       "version": "7.0.0-dev.20260527.2",
       "method": "binary",
@@ -49,7 +53,7 @@
       "shims": { "typescript-language-server": "/config/tools/bin/tsgo --lsp --stdio" }
     },
     "pyrefly": {
-      "enabled": true,
+      "enabled": false,
       "auto_update": true,
       "version": "1.0.0",
       "update": { "method": "github", "repo": "facebook/pyrefly" },
@@ -63,7 +67,7 @@
       }
     },
     "gopls": {
-      "enabled": true,
+      "enabled": false,
       "auto_update": true,
       "version": "v0.22.0",
       "update": { "method": "gomod", "module": "golang.org/x/tools/gopls" },
