@@ -169,9 +169,16 @@ if [ -x "$BIN" ]; then
     "$BIN" settings "app.disableAutoupdates" "true" > /dev/null 2>&1 || true
 fi
 
-# Install/update tools from /config/tools.json manifest.
-if [ -f /config/tools.json ]; then
-    bash /opt/vibecli/setup-tools.sh
+# Install/update tools from /config/tools.json, FOREGROUND (blocking) so LSPs
+# and other tools are on PATH before the server can spawn kiro-cli — kiro-cli
+# scans PATH for language servers at code-intelligence init, and a non-blocking
+# install here would race that scan on first boot, leaving LSPs undetected.
+# Logged so an incomplete/failed run is diagnosable rather than silent.
+if [ -s /config/tools.json ]; then
+    SETUP_LOG="/tmp/setup-tools.log"
+    printf 'Running setup-tools.sh (log: %s)\n' "$SETUP_LOG"
+    bash /opt/vibecli/setup-tools.sh 2>&1 | tee "$SETUP_LOG" \
+        || printf 'WARNING: setup-tools.sh reported failures; check %s\n' "$SETUP_LOG"
 fi
 
 # Hardcode dark theme. kiro-cli's "default" diff preset resolves

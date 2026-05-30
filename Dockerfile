@@ -110,6 +110,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     less \
     openssh-client \
     unzip \
+    xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Language servers are no longer baked into the image. They install
@@ -126,7 +127,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 # kiro-cli installs under $HOME/.local. Home is under /config so the
 # install survives container restarts.
 ENV HOME=/config/home
-ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/tools/runtimes/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/tools/runtimes/go/bin:/config/tools/runtimes/node/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV GOROOT="/config/tools/runtimes/go"
 ENV GOPATH="/config/tools/go"
 ENV GOBIN="/config/tools/go/bin"
