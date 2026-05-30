@@ -36,6 +36,10 @@ fi
 
 printf "[%s] Tool setup starting\n" "$(date -Iseconds)"
 
+# Count install failures so the run can exit non-zero — lets the entrypoint
+# surface a WARNING instead of a partial install passing silently.
+FAILURES=0
+
 # --- Architecture detection (consumed via expand() placeholders) ---
 case "$(uname -m)" in
     aarch64|arm64)
@@ -208,7 +212,7 @@ if section_empty runtimes; then printf "  (none configured)\n"; else
         [ -z "$probe" ] && probe="$RUNTIMES/$name/bin/$name"
         if [ ! -e "$probe" ]; then
             printf "    install: %s\n" "$version"
-            run_install "$jq_path" "$version" || printf "    error: runtime install failed\n"
+            run_install "$jq_path" "$version" || { printf "    error: runtime install failed\n"; FAILURES=$((FAILURES + 1)); }
         else printf "    installed\n"; fi
     done
 fi
@@ -226,7 +230,7 @@ if section_empty binary; then printf "  (none configured)\n"; else
         fi
         if ! has_bin "$name"; then
             printf "    install: %s\n" "$version"
-            run_install "$jq_path" "$version" || printf "    error: install failed\n"
+            run_install "$jq_path" "$version" || { printf "    error: install failed\n"; FAILURES=$((FAILURES + 1)); }
         else printf "    installed\n"; fi
         write_shims "$jq_path"
     done
@@ -246,7 +250,7 @@ if section_empty custom; then printf "  (none configured)\n"; else
         fi
         if ! has_bin "$name"; then
             printf "    install: %s\n" "$version"
-            run_install "$jq_path" "$version" || printf "    error: install failed\n"
+            run_install "$jq_path" "$version" || { printf "    error: install failed\n"; FAILURES=$((FAILURES + 1)); }
         else printf "    installed\n"; fi
         write_shims "$jq_path"
     done
@@ -270,11 +274,11 @@ if section_empty lsp; then printf "  (none configured)\n"; else
         printf "    install: %s\n" "$version"
         case "$install_method" in
             binary)
-                run_install "$jq_path" "$version" || printf "    error: install failed\n" ;;
+                run_install "$jq_path" "$version" || { printf "    error: install failed\n"; FAILURES=$((FAILURES + 1)); } ;;
             go)
                 if ! command -v go >/dev/null 2>&1; then printf "    skipped: go not available\n"; continue; fi
                 pkg=$(jq -r "${jq_path}.package" "$MANIFEST"); pkg="${pkg//\$\{VERSION\}/$version}"
-                go install "$pkg" || printf "    error: go install failed\n" ;;
+                go install "$pkg" || { printf "    error: go install failed\n"; FAILURES=$((FAILURES + 1)); } ;;
             *) printf "    error: unknown install method '%s'\n" "$install_method" ;;
         esac
         write_shims "$jq_path"
@@ -298,4 +302,8 @@ if section_empty apt; then printf "  (none configured)\n"; else
     fi
 fi
 
+if [ "$FAILURES" -gt 0 ]; then
+    printf "\n[%s] Tool setup complete with %d failure(s)\n" "$(date -Iseconds)" "$FAILURES"
+    exit 1
+fi
 printf "\n[%s] Tool setup complete\n" "$(date -Iseconds)"
