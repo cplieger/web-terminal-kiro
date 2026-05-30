@@ -25,7 +25,7 @@ MANIFEST="/config/tools.json"
 export GOROOT="$RUNTIMES/go"
 export GOPATH="$TOOLS/go"
 export GOBIN
-export PATH="$BIN:$GOBIN:$RUNTIMES/go/bin:$PATH"
+export PATH="$BIN:$GOBIN:$RUNTIMES/go/bin:$RUNTIMES/node/bin:$PATH"
 
 mkdir -p "$BIN" "$GOBIN" "$RUNTIMES" "$TOOLS/lib"
 
