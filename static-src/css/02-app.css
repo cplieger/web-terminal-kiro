@@ -473,17 +473,20 @@
       height var(--dur-enter) var(--ease-standard);
   }
 
-  /* Collapsed: fixed size = 1 button + padding. Content is right-
-     aligned (justify-content:end) so the toggle (col 5) stays at
-     the right edge, visible within the clipped area. */
+  /* Collapsed: fixed size = 1 button + padding + border. Content is
+     right-aligned (justify-content:end) so the toggle (col 5) stays at
+     the right edge, visible within the clipped area. --pill-outer
+     includes the 2px border (box-sizing:border-box); omitting it left
+     the content box 2px short, pinning the button top-right with
+     unequal bottom/left gaps. */
   .key-toolbar.collapsed {
-    width: calc(var(--touch-target) + 2 * var(--sp-1));
-    height: calc(var(--touch-target) + 2 * var(--sp-1));
+    width: var(--pill-outer);
+    height: var(--pill-outer);
   }
 
-  /* Collapsed + scrolled up: 2 buttons tall. */
+  /* Collapsed + scrolled up: 2 buttons tall (+2px border). */
   .key-toolbar.collapsed.scrolled-up {
-    height: calc(2 * var(--touch-target) + var(--sp-1) + 2 * var(--sp-1));
+    height: calc(2 * var(--touch-target) + var(--sp-1) + 2 * var(--sp-1) + 2px);
   }
 
   /* Grid placement: toggle at col 5 row 1 (top-right). */

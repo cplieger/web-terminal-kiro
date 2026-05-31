@@ -462,6 +462,15 @@ window.addEventListener("pageshow", () => {
 // --- Scroll-to-bottom (inside toolbar grid) ---
 const scrollBtn = document.getElementById("scroll-bottom");
 if (scrollBtn) {
+  // pointerdown (like the other toolbar keys) so touch devices enter
+  // :active and show press feedback; preventDefault keeps focus on the
+  // terminal. click is kept for keyboard activation of the desktop FAB.
+  // scrollToBottom() is idempotent, so the pointerdown+click pair on a
+  // mouse press is harmless.
+  scrollBtn.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    scroll.scrollToBottom();
+  });
   scrollBtn.addEventListener("click", () => {
     scroll.scrollToBottom();
   });
