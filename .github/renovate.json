@@ -1,25 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:best-practices"],
-  "timezone": "Europe/Paris",
-  "automerge": true,
-  "automergeType": "pr",
-  "platformAutomerge": true,
-  "labels": ["dependencies"],
+  "extends": ["github>cplieger/ci"],
   "packageRules": [
-    {
-      "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
-      "automerge": true
-    },
-    {
-      "matchUpdateTypes": ["major"],
-      "automerge": false,
-      "labels": ["major-update"]
-    },
-    {
-      "matchManagers": ["gomod"],
-      "groupName": "Go dependencies"
-    },
     {
       "description": "tsgo / TypeScript 7 native preview. Tracks the latest dist-tag (Microsoft's curated channel with up-to-date Go-stdlib CVE fixes). tsgo emits the browser JS bundle at build time, so every bump needs a rebuild. CLEANUP WHEN TS 7 IS STABLE: drop followTag + ignoreUnstable, restore default release cadence.",
       "matchPackageNames": ["@typescript/native-preview"],
@@ -45,22 +27,6 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Dockerfile ARG versions with renovate comments",
-      "managerFilePatterns": ["/Dockerfile$/"],
-      "matchStrings": [
-        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)(\\s+versioning=(?<versioning>[a-z-]+))?\\nARG\\s+\\w+=(?<currentValue>\\S+)"
-      ]
-    },
-    {
-      "customType": "regex",
-      "description": "golangci-lint version in workflows",
-      "managerFilePatterns": ["/^\\.github/workflows/.+\\.yaml$/"],
-      "matchStrings": [
-        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)(\\s+versioning=(?<versioning>[a-z-]+))?\\s*\\n\\s*VERSION=(?<currentValue>\\S+)"
-      ]
-    },
-    {
-      "customType": "regex",
       "description": "kiro-cli version + sha256 pinned in entrypoint.sh",
       "managerFilePatterns": ["/entrypoint\\.sh$/"],
       "matchStrings": [
@@ -68,7 +34,5 @@
       ],
       "versioningTemplate": "semver"
     }
-  ],
-  "ignorePaths": ["compose.yaml"],
-  "dependencyDashboardLabels": ["renovate"]
+  ]
 }
