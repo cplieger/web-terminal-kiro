@@ -146,6 +146,23 @@ jobs:
             npx eslint .
           ) || { echo "Lint TS (eslint)" >> /tmp/_ci_failures; exit 1; }
 
+      - name: Install tsgo
+        run: |
+          # renovate: datasource=npm depName=@typescript/native-preview
+          TSGO_VERSION=7.0.0-dev.20260527.2
+          curl -fsSL \
+            "https://registry.npmjs.org/@typescript/native-preview-linux-x64/-/native-preview-linux-x64-${TSGO_VERSION}.tgz" \
+            | tar -xz -C /tmp
+          echo "/tmp/package/lib" >> "$GITHUB_PATH"
+
+      - name: Typecheck TS (tsgo)
+        continue-on-error: true
+        working-directory: static-src
+        run: |
+          (
+            npm run typecheck && npm run typecheck:tests
+          ) || { echo "Typecheck TS (tsgo)" >> /tmp/_ci_failures; exit 1; }
+
       - name: Format check (prettier)
         continue-on-error: true
         run: |
@@ -217,7 +234,7 @@ jobs:
           ) || { echo "Validate Dockerfile" >> /tmp/_ci_failures; exit 1; }
 
       - name: Scan for secrets
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"

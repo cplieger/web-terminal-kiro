@@ -3,6 +3,12 @@
   position: fixed;
   inset: 0;
   overflow: hidden auto;
+  /* JS owns the scroll position (render.ts: pin-to-bottom when
+     following, manual scrollTop compensation when the user is scrolled
+     up reading history). Disable the browser's own scroll-anchoring so
+     it doesn't fight or double-apply those adjustments when scrollback
+     is inserted above the viewport. */
+  overflow-anchor: none;
   font-family: var(--font-mono);
   font-size: 14px;
   line-height: 17px;
@@ -446,7 +452,7 @@
 @media (pointer: coarse) {
   .key-toolbar {
     position: fixed;
-    top: calc(var(--safe-top) + var(--sp-2));
+    top: calc(var(--safe-top) + var(--sp-2) + var(--vv-top, 0px));
     right: var(--sp-2);
     z-index: 10;
     display: grid;
@@ -540,7 +546,11 @@
   }
 
   .kb-scroll-bottom::after {
+    /* No label on touch. Remove the box entirely (not just its text) so
+       it isn't an empty flex item — combined with the base rule's
+       gap:var(--sp-1) it would shove the lone icon half a gap off-centre. */
     content: "";
+    display: none;
   }
   .kb-scroll-bottom:hover {
     background: transparent;

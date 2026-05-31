@@ -67,9 +67,13 @@ export function init(opts: {
     const onChange = (): void => {
       const inset = Math.max(0, Math.round(window.innerHeight - vv.height));
       termWrap.style.bottom = inset > 0 ? `${inset}px` : "";
-      // Expose keyboard inset as a CSS variable so other fixed elements
-      // (e.g. the notification banner) can position above the keyboard.
-      document.documentElement.style.setProperty("--kb-inset", `${inset}px`);
+      // Expose viewport geometry as CSS vars so fixed chrome stays in view:
+      // --kb-inset lifts the bottom banner above the keyboard; --vv-top lets
+      // the top toolbar counter iOS shifting content up to reveal the
+      // bottom-pinned input (otherwise the toolbar scrolls off the top).
+      const root = document.documentElement.style;
+      root.setProperty("--kb-inset", `${inset}px`);
+      root.setProperty("--vv-top", `${Math.max(0, Math.round(vv.offsetTop))}px`);
       startTransition();
     };
     vv.addEventListener("resize", onChange);
