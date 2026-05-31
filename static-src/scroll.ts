@@ -21,6 +21,10 @@ let scrollEl: HTMLElement | null = null;
 let userScrolledUp = false;
 let userScrollingUntil = 0;
 let suppressUntil = 0;
+// Set right before a programmatic scrollTop write so the listener can
+// ignore exactly the one self-induced 'scroll' event (not a time window,
+// which would also swallow real user scrolls during streaming).
+let selfScroll = false;
 let onUserScrollChange: ((scrolledUp: boolean) => void) | null = null;
 
 function isAtBottom(): boolean {
@@ -40,6 +44,10 @@ export function init(opts: {
   scrollEl.addEventListener(
     "scroll",
     () => {
+      if (selfScroll) {
+        selfScroll = false;
+        return;
+      }
       if (Date.now() < suppressUntil) {
         return;
       }
@@ -94,6 +102,12 @@ export function scrollToBottom(): void {
   // Synchronous scroll — must not be deferred to rAF during burst
   // insertions (e.g. /chat load) because the next batch arrives before
   // the rAF fires, pushing the viewport up again.
+  // Flag the resulting 'scroll' event as self-induced (only when the write
+  // will actually move scrollTop) so the listener doesn't re-arm
+  // userScrollingUntil / userScrolledUp and disengage auto-follow.
+  if (scrollEl.scrollTop !== scrollEl.scrollHeight - scrollEl.clientHeight) {
+    selfScroll = true;
+  }
   scrollEl.scrollTop = scrollEl.scrollHeight;
 }
 
