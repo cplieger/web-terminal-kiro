@@ -22,8 +22,13 @@ interface MockWS {
   closed: boolean;
   listeners: Map<string, ((ev: unknown) => void)[]>;
   signals: Map<string, AbortSignal | undefined>;
-  send: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn>;
+  send: (...args: unknown[]) => unknown;
+  close: (...args: unknown[]) => unknown;
+  addEventListener: (
+    type: string,
+    handler: (ev: unknown) => void,
+    opts?: { signal?: AbortSignal },
+  ) => void;
   // Test helpers:
   fireOpen: () => void;
   fireMessage: (data: ArrayBuffer | Blob | string) => void;
@@ -75,7 +80,7 @@ function makeMockWebSocket(): typeof WebSocket {
           fn({});
         }
       },
-      fireMessage(this: MockWS, data) {
+      fireMessage(this: MockWS, data: ArrayBuffer | Blob | string) {
         for (const fn of this.listeners.get("message") ?? []) {
           fn({ data });
         }
@@ -95,7 +100,7 @@ function makeMockWebSocket(): typeof WebSocket {
   // Stamp a prototype so `instanceof` checks work if any. Not used here
   // but keeps TS happy.
   class MockWebSocket {}
-  ctor.prototype = MockWebSocket.prototype;
+  ctor.prototype = MockWebSocket.prototype as unknown as WebSocket;
   return ctor;
 }
 
