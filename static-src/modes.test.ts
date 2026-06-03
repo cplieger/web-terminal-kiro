@@ -5,8 +5,8 @@
 // DECCKM, and bracketed paste only wraps when ?2004h is on.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { mapKeyboardEvent, bracketTextForPaste } from "./keyboard.js";
-import * as modes from "./modes.js";
+import { keyboard, modes } from "@cplieger/vterm";
+const { mapKeyboardEvent, bracketTextForPaste } = keyboard;
 
 function ev(init: KeyboardEventInit & { key: string }): KeyboardEvent {
   return new KeyboardEvent("keydown", init);

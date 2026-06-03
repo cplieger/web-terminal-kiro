@@ -11,9 +11,8 @@
 // frames are decoded directly from base64-encoded bytes.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import * as render from "./render.js";
-import { decodeWireBinary } from "./wire-binary.js";
-import type { ScreenMessage } from "./types.js";
+import { render, decodeWireBinary } from "@cplieger/vterm";
+import type { ScreenMessage } from "@cplieger/vterm";
 
 // happy-dom doesn't implement Canvas2D. Stub measureText so render
 // can compute cell widths.
@@ -58,6 +57,7 @@ interface Run {
   bg?: number;
   attr?: number;
   uc?: number;
+  u?: string;
 }
 
 function buildScreenFrame(opts: {
@@ -72,6 +72,7 @@ function buildScreenFrame(opts: {
   const enc = new TextEncoder();
   // Pre-encode all run text bytes so we know total length.
   const runBytes = opts.changed.map((r) => r.runs.map((run) => enc.encode(run.text)));
+  const runUriBytes = opts.changed.map((r) => r.runs.map((run) => enc.encode(run.u ?? "")));
   let len = 1 + 8 + 2 + 2 + 2 + 2 + 1 + 1;
   for (let i = 0; i < opts.changed.length; i++) {
     len += 2; // idx
@@ -79,7 +80,9 @@ function buildScreenFrame(opts: {
     for (let j = 0; j < opts.changed[i]!.runs.length; j++) {
       len += 2; // text_len
       len += runBytes[i]![j]!.length;
-      len += 4 + 4 + 2 + 4;
+      len += 4 + 4 + 2 + 4; // fg, bg, attrs, uc
+      len += 2; // uri_len
+      len += runUriBytes[i]![j]!.length;
     }
   }
 
@@ -132,6 +135,13 @@ function buildScreenFrame(opts: {
       off += 2;
       dv.setInt32(off, run.uc ?? -1, true);
       off += 4;
+      const ub = runUriBytes[i]![j]!;
+      dv.setUint16(off, ub.length, true);
+      off += 2;
+      if (ub.length > 0) {
+        u8.set(ub, off);
+        off += ub.length;
+      }
     }
   }
   return buf;

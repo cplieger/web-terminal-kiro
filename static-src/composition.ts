@@ -26,7 +26,8 @@
 // uses the textarea as its anchor; we move the textarea to the cursor
 // for the same reason.
 
-import { bracketTextForPaste, prepareTextForTerminal } from "./keyboard.js";
+import { keyboard } from "@cplieger/vterm";
+const { bracketTextForPaste, prepareTextForTerminal } = keyboard;
 
 // Single-character invisible placeholder used by app.ts to keep the
 // iOS soft keyboard's held-Backspace auto-repeat firing. Composition

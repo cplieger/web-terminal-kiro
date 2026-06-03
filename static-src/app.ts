@@ -1,14 +1,14 @@
 // vibecli client entry point: acquires DOM refs, initializes the render
 // and connection layers, and wires up input + UI controls.
 
-import * as render from "./render.js";
+import { render, keyboard, scroll } from "@cplieger/vterm";
 import * as connection from "./connection.js";
-import * as scroll from "./scroll.js";
 import * as viewport from "./viewport.js";
 import * as composition from "./composition.js";
 import * as status from "./status.js";
 import * as predict from "./predict.js";
-import { mapKeyboardEvent, bracketTextForPaste, prepareTextForTerminal } from "./keyboard.js";
+
+const { mapKeyboardEvent, bracketTextForPaste, prepareTextForTerminal } = keyboard;
 
 // --- DOM refs ---
 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- element guaranteed in index.html
@@ -95,6 +95,10 @@ connection.init({
       predict.onScreenFrame(msg.cursor[0], msg.cursor[1], msg.cursorHidden);
     } else if (msg.type === "scroll") {
       render.handleScroll(msg);
+    } else if (msg.type === "title") {
+      document.title = msg.title;
+    } else if (msg.type === "modes") {
+      render.updateReverseVideo();
     }
   },
   onOpen() {

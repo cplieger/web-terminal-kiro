@@ -11,8 +11,8 @@
 // msg.cursor[1].
 
 import { describe, it, expect, beforeEach } from "vitest";
-import * as render from "./render.js";
-import type { ScreenMessage, WireRun } from "./types.js";
+import { render } from "@cplieger/vterm";
+import type { ScreenMessage, WireRun } from "@cplieger/vterm";
 
 // happy-dom does not implement Canvas2D. measureChar() in render.ts
 // requires `getContext("2d").measureText`; stub a minimal version
