@@ -159,5 +159,3 @@ func WriteError(w http.ResponseWriter, r *http.Request, status int, code, msg st
 		RequestID: RequestIDFromContext(r.Context()),
 	})
 }
-
-
