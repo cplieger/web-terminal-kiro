@@ -9,7 +9,8 @@ import (
 	"vibecli/internal/api"
 	"vibecli/internal/auth"
 	"vibecli/internal/metrics"
-	"vibecli/internal/terminal"
+
+	"github.com/cplieger/vterm/terminal"
 )
 
 type routeDeps struct {
@@ -27,10 +28,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.Handler, err
 	}
 	mux.Handle("/", cacheHeaders(http.FileServer(http.FS(sub))))
 
-	term := terminal.NewHandler(terminal.Options{
-		Command: deps.cmd,
-		WorkDir: deps.workDir,
-	})
+	term := terminal.NewHandler(deps.cmd, terminal.WithWorkDir(deps.workDir))
 	term.RegisterRoutes(mux)
 
 	authH := auth.NewHandler(deps.cliPath, auth.DefaultTimeoutPolicy())
