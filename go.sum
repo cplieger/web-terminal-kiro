@@ -8,5 +8,7 @@ github.com/cplieger/vterm v1.0.5 h1:Y1xg901zRaZHntGpJTt8owkahkc3kOUQ+bfN8eFHyRM=
 github.com/cplieger/vterm v1.0.5/go.mod h1:EGWAJMGcw/SymtElxZdwMgDO4ugiZUhZGauuYv44pE8=
 github.com/cplieger/vterm v1.0.6 h1:L2PaXjdRcoSIezzrPNWg2iIzX02musgRis82MLU5Zsg=
 github.com/cplieger/vterm v1.0.6/go.mod h1:EGWAJMGcw/SymtElxZdwMgDO4ugiZUhZGauuYv44pE8=
+github.com/cplieger/vterm v1.0.7 h1:Q2ctlY/zmIaiKQ8hT7enF+0Y+F3XevAb5kZwqrstjqQ=
+github.com/cplieger/vterm v1.0.7/go.mod h1:EGWAJMGcw/SymtElxZdwMgDO4ugiZUhZGauuYv44pE8=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
