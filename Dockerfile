@@ -11,10 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Go for building the web server.
 # renovate: datasource=golang-version depName=golang
-ARG TARGETOS=linux
-ARG BUILDARCH
 ARG GO_VERSION=1.26.3
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${BUILDARCH}.tar.gz" \
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
     | tar -C /usr/local -xz
 ENV PATH="/usr/local/go/bin:${PATH}"
 
@@ -31,7 +30,7 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # See .github/renovate.json for the followTag rule.
 # renovate: datasource=npm depName=@typescript/native-preview
 ARG TSGO_VERSION=7.0.0-dev.20260527.2
-RUN TSGO_ARCH=$([ "$BUILDARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
+RUN TSGO_ARCH=$([ "$(dpkg --print-architecture)" = "arm64" ] && echo "arm64" || echo "x64") && \
     curl -fsSL \
       "https://registry.npmjs.org/@typescript/native-preview-linux-${TSGO_ARCH}/-/native-preview-linux-${TSGO_ARCH}-${TSGO_VERSION}.tgz" \
     | tar -xz -C /tmp
@@ -108,7 +107,7 @@ RUN set -eu; \
 
 # Build the Go binary with static assets embedded via go:embed.
 # CGO disabled so the binary runs on any glibc.
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /vibecli .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /vibecli .
 
 # --- Final stage: minimal runtime with kiro-cli + git + gh ---
 FROM debian:trixie-slim@sha256:b6e2a152f22a40ff69d92cb397223c906017e1391a73c952b588e51af8883bf8
