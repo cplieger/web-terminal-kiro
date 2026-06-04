@@ -18,11 +18,9 @@
 
 import { wsURL } from "./urls.js";
 import { controlFrame } from "./wire.js";
-import { decodeWireBinary } from "./wire-binary.js";
+import { decodeWireBinary, render, modes } from "@cplieger/vterm";
+import type { ControlMessage, ServerMessage } from "@cplieger/vterm";
 import { INITIAL_DELAY_MS, nextBackoffDelay } from "./reconnect.js";
-import * as modes from "./modes.js";
-import { getScrollbackRowCount } from "./render.js";
-import type { ControlMessage, ServerMessage } from "./types.js";
 
 type ConnState =
   | { status: "disconnected" }
@@ -312,7 +310,7 @@ export function connect(): void {
           // replay. A WS drop that doesn't lose the page keeps the
           // count and avoids duplicating scrollback rows the client
           // still has.
-          scrollbackHave: getScrollbackRowCount(),
+          scrollbackHave: render.getScrollbackRowCount(),
         }),
       );
     },
@@ -396,7 +394,15 @@ export function connect(): void {
       return;
     }
     if (msg.type === "modes") {
-      modes.setModes(msg.bracketedPaste, msg.applicationCursor);
+      modes.setModes(
+        msg.bracketedPaste,
+        msg.applicationCursor,
+        msg.mouseSGR,
+        msg.focusReporting,
+        msg.mouseMode,
+        msg.applicationKeypad,
+        msg.reverseVideo,
+      );
       if (typeof msg.inputAck === "number") {
         applyAck(msg.inputAck);
       }

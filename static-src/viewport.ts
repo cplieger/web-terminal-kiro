@@ -12,7 +12,7 @@
 //   3. After SETTLE_MS of no further events, fire onSettled — the caller
 //      then sends the final size, snaps to bottom if was-at-bottom, etc.
 
-import * as scroll from "./scroll.js";
+import { scroll } from "@cplieger/vterm";
 
 // Time to wait after the last viewport-changing event before declaring
 // the viewport "settled". Long enough to bridge the iOS keyboard slide

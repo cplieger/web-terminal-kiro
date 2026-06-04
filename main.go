@@ -14,7 +14,6 @@ package main
 // generated input is missing). The CSS bundle is concatenated by the
 // Dockerfile at build time; no go:generate step for it.
 //
-//go:generate go run ./cmd/wire-codegen
 //go:generate tsgo --project static-src/tsconfig.json
 
 import (

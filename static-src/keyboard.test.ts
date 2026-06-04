@@ -12,13 +12,9 @@
 //   - Bracketed paste and CR/LF normalisation
 
 import { describe, it, expect, beforeEach } from "vitest";
-import {
-  mapKeyboardEvent,
-  bracketTextForPaste,
-  prepareTextForTerminal,
-  type KeyboardResult,
-} from "./keyboard.js";
-import * as modes from "./modes.js";
+import { keyboard, modes } from "@cplieger/vterm";
+const { mapKeyboardEvent, bracketTextForPaste, prepareTextForTerminal } = keyboard;
+type KeyboardResult = ReturnType<typeof mapKeyboardEvent>;
 
 function ev(init: KeyboardEventInit & { key: string; code?: string }): KeyboardEvent {
   return new KeyboardEvent("keydown", init);
