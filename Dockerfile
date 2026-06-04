@@ -61,11 +61,38 @@ RUN mkdir -p static/vendor/fonts && \
           MonaspiceNeNerdFontMono-Italic.otf \
           MonaspiceNeNerdFontMono-BoldItalic.otf
 
+# Fetch @cplieger/vterm TS source from npm registry. The lib publishes TS
+# only (no precompiled JS) — same pattern as @cplieger/reactive, matching
+# how local TS files in static-src/ are treated. Extracted to
+# static-src/node_modules/@cplieger/vterm/ so tsgo's bundler resolution
+# finds the package + its types relative to static-src/tsconfig.json.
+# renovate: datasource=npm depName=@cplieger/vterm
+ARG CPLIEGER_VTERM_VERSION=1.0.0
+RUN mkdir -p static-src/node_modules/@cplieger/vterm && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/vterm/-/vterm-${CPLIEGER_VTERM_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/vterm --strip-components=1
+
 # Compile client TypeScript. Must run before the binary build because
 # main.go's `//go:embed static` captures static/ at `go build` time.
 # tsconfig.json's outDir is "../static", so tsgo writes static/app.js
-# directly into the embed tree.
+# directly into the embed tree. The lib import (`@cplieger/vterm`) is
+# preserved in the emit as a bare specifier; the browser resolves it
+# via the importmap entry in static/index.html.
 RUN /tmp/package/lib/tsgo --project static-src/tsconfig.json
+
+# Compile @cplieger/vterm's TS source into static/vendor/cplieger-vterm/
+# so the browser can fetch the lib's compiled JS via the importmap entry.
+# The lib's internal imports (./render.js, ./types.js, etc.) are preserved
+# as relative paths and resolve naturally within /vendor/cplieger-vterm/.
+RUN /tmp/package/lib/tsgo \
+    --module ESNext \
+    --target ESNext \
+    --moduleResolution bundler \
+    --outDir static/vendor/cplieger-vterm \
+    --rootDir static-src/node_modules/@cplieger/vterm/src \
+    --skipLibCheck \
+    --strict \
+    static-src/node_modules/@cplieger/vterm/src/*.ts
 
 # Concatenate per-feature CSS splits into the served bundle.
 # Behavior: skip blank lines and #-comments, cat each listed file
