@@ -17,7 +17,7 @@ func FuzzValidRequestID(f *testing.F) {
 				t.Errorf("validRequestID accepted out-of-range length: %d", len(s))
 			}
 			for _, r := range s {
-				if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+				if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_' {
 					t.Errorf("validRequestID accepted invalid rune %q in %q", r, s)
 				}
 			}
