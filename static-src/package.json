@@ -27,6 +27,6 @@
     "vitest": "4.1.7"
   },
   "dependencies": {
-    "@cplieger/vterm": "^1.0.0"
+    "@cplieger/vterm": "1.0.0"
   }
 }
