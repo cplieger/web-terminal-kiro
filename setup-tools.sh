@@ -162,7 +162,8 @@ check_update() {
 
 # Remove a tool's install footprint so the next loop re-downloads it.
 clear_tool() {
-    local section="$1" name="$2" jq_path=".${section}[\"$2\"]"
+    local section="$1" name="$2"
+    local jq_path=".${section}[\"$2\"]"
     case "$section" in
         runtimes) rm -rf "${RUNTIMES:?}/$name" ;;
         binary|custom) rm -f "$BIN/$name" ;;
