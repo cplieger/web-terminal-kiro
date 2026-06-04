@@ -27,5 +27,4 @@ jobs:
     with:
       registries: "ghcr"
       sbom-from: "path"
-      notify-repo: "cplieger/homelab"
     secrets: inherit
