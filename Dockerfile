@@ -123,6 +123,15 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 #   - git + gh: source control from inside the terminal
 #   - openssh-client: gh over ssh, git over ssh
 #   - jq + less: standard kiro-cli diagnostic dependencies
+#   - libasound2: kiro-cli dlopens libasound.so.2 at runtime. It is NOT
+#     declared in kiro-cli's .deb manifest (which only lists GUI deps:
+#     libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0) — it
+#     gets pulled transitively via libwebkit2gtk on the desktop install.
+#     Our headless zip variant bypasses apt entirely, so without this
+#     line kiro-cli aborts on first invocation with
+#     "error while loading shared libraries: libasound.so.2: cannot open
+#     shared object file". Surfaced once kiro-cli >= 2.6 started
+#     exercising the code path.
 #
 # Session persistence is handled by vibecli's own VT screen
 # (internal/vt) — the server keeps an authoritative cell buffer and
@@ -136,6 +145,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     git \
     jq \
     less \
+    libasound2 \
     openssh-client \
     unzip \
     xz-utils \
