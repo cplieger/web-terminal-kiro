@@ -65,7 +65,7 @@ RUN mkdir -p static/vendor/fonts && \
 # static-src/node_modules/@cplieger/vterm/ so tsgo's bundler resolution
 # finds the package + its types relative to static-src/tsconfig.json.
 # renovate: datasource=npm depName=@cplieger/vterm
-ARG CPLIEGER_VTERM_VERSION=1.0.5
+ARG CPLIEGER_VTERM_VERSION=1.0.10
 RUN mkdir -p static-src/node_modules/@cplieger/vterm && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/vterm/-/vterm-${CPLIEGER_VTERM_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/vterm --strip-components=1
