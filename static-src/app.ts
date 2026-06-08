@@ -34,6 +34,64 @@ function send(bytes: string): void {
   }
 }
 
+// --- Sticky Ctrl modifier ---
+// The iOS virtual keyboard has no Ctrl key, so control sequences
+// (Ctrl+C, Ctrl+L = clear screen, Ctrl+X, ...) are otherwise
+// unreachable on touch. The toolbar's Ctrl button arms a one-shot
+// modifier: tap it, then tap a letter on the virtual keyboard and that
+// keystroke is sent as its C0 control byte. Auto-disarms after one
+// printable character.
+let ctrlArmed = false;
+const ctrlBtn = document.getElementById("kb-ctrl");
+
+function setCtrlArmed(on: boolean): void {
+  ctrlArmed = on;
+  ctrlBtn?.classList.toggle("armed", on);
+  ctrlBtn?.setAttribute("aria-pressed", on ? "true" : "false");
+}
+
+// Map one printable character to its Ctrl+<char> C0 control byte,
+// mirroring the Ctrl handling in @cplieger/vterm's keyboard mapper.
+function ctrlByteFor(ch: string): string | null {
+  const code = ch.toLowerCase().charCodeAt(0);
+  if (code >= 97 && code <= 122) {
+    return String.fromCharCode(code - 96); // a–z → 0x01–0x1a
+  }
+  switch (ch) {
+    case " ":
+    case "@":
+      return "\x00";
+    case "[":
+      return "\x1b";
+    case "\\":
+      return "\x1c";
+    case "]":
+      return "\x1d";
+    case "^":
+      return "\x1e";
+    case "_":
+      return "\x1f";
+    case "?":
+      return "\x7f";
+    default:
+      return null;
+  }
+}
+
+// Apply a one-shot armed Ctrl to freshly-typed text: a single printable
+// character becomes its control byte; longer input (paste) just disarms
+// and passes through unchanged.
+function applyStickyCtrl(data: string): string {
+  if (!ctrlArmed) {
+    return data;
+  }
+  setCtrlArmed(false);
+  if (data.length === 1) {
+    return ctrlByteFor(data) ?? data;
+  }
+  return data;
+}
+
 // --- Initialize layers ---
 status.init();
 
@@ -203,16 +261,16 @@ input.addEventListener("input", (e: Event) => {
     // iOS Safari WebKit quirk: spacebar in a contenteditable can
     // deliver U+00A0 (NBSP) instead of U+0020. Normalize so kiro-cli
     // receives an honest space byte.
-    send(ev.data.replace(/\u00A0/g, " "));
+    send(applyStickyCtrl(ev.data.replace(/\u00A0/g, " ")));
   } else {
     // Fallback: anything in the textarea past the placeholder is new
     // content. Covers browsers that don't populate inputType / data
     // (older WebKit).
     const v = input.value;
     if (v.length > INPUT_PLACEHOLDER.length && v.startsWith(INPUT_PLACEHOLDER)) {
-      send(v.slice(INPUT_PLACEHOLDER.length).replace(/\u00A0/g, " "));
+      send(applyStickyCtrl(v.slice(INPUT_PLACEHOLDER.length).replace(/\u00A0/g, " ")));
     } else if (v !== INPUT_PLACEHOLDER && v.length > 0) {
-      send(v.replace(/\u00A0/g, " "));
+      send(applyStickyCtrl(v.replace(/\u00A0/g, " ")));
     }
   }
   resetInputPlaceholder();
@@ -317,7 +375,7 @@ outputEl.addEventListener("beforeinput", (e) => {
     // InputEvent's `data`. kiro-cli/Ink would render NBSP as a visible
     // glyph (or treat it as a non-word char) instead of a normal space,
     // breaking the typing flow. Normalize NBSP→space before sending.
-    send(e.data.replace(/\u00A0/g, " "));
+    send(applyStickyCtrl(e.data.replace(/\u00A0/g, " ")));
   } else if (e.inputType === "insertFromPaste" && e.data) {
     send(bracketTextForPaste(prepareTextForTerminal(e.data)));
   }
@@ -661,15 +719,22 @@ if (keyToolbar) {
     "kb-esc": "\x1b",
     "kb-tab": "\t",
     "kb-enter": "\r",
-    "kb-ctrlc": "\x03",
   };
 
   for (const [id, seq] of Object.entries(keyMap)) {
     document.getElementById(id)?.addEventListener("pointerdown", (e) => {
       e.preventDefault();
+      setCtrlArmed(false);
       send(seq);
     });
   }
+
+  // Sticky Ctrl: tap to arm/disarm. preventDefault keeps focus on the
+  // terminal so the iOS virtual keyboard stays up for the next tap.
+  ctrlBtn?.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    setCtrlArmed(!ctrlArmed);
+  });
 }
 
 // --- Copy feedback toast ---
