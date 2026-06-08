@@ -18,12 +18,16 @@ func TestLineRing(t *testing.T) {
 		{name: "empty", halfCap: 3, perLineCap: 128, lines: nil, want: nil},
 		{name: "under_half_cap", halfCap: 3, perLineCap: 128, lines: []string{"a", "b"}, want: []string{"a", "b"}},
 		{name: "exactly_at_cap", halfCap: 3, perLineCap: 128, lines: []string{"a", "b", "c"}, want: []string{"a", "b", "c"}},
-		{name: "over_cap_rotation", halfCap: 2, perLineCap: 128,
+		{
+			name: "over_cap_rotation", halfCap: 2, perLineCap: 128,
 			lines: []string{"1", "2", "3", "4", "5"},
-			want:  []string{"1", "2", "4", "5"}},
-		{name: "truncation", halfCap: 2, perLineCap: 4,
+			want:  []string{"1", "2", "4", "5"},
+		},
+		{
+			name: "truncation", halfCap: 2, perLineCap: 4,
 			lines: []string{"hello_world", "ab"},
-			want:  []string{"hell", "ab"}},
+			want:  []string{"hell", "ab"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

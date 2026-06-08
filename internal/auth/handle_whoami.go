@@ -11,7 +11,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"vibecli/internal/api"
+	"github.com/cplieger/vibecli/internal/api"
 )
 
 // WhoamiErrorResponse is the typed error envelope for handleWhoami error

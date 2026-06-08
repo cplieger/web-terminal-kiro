@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"vibecli/internal/api"
+	"github.com/cplieger/vibecli/internal/api"
 )
 
 // LogoutResponse is the typed HTTP response for the logout endpoint.

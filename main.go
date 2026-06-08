@@ -29,7 +29,7 @@ import (
 	"syscall"
 	"time"
 
-	"vibecli/internal/api"
+	"github.com/cplieger/vibecli/internal/api"
 )
 
 //go:embed static

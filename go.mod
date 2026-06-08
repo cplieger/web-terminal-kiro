@@ -1,4 +1,4 @@
-module vibecli
+module github.com/cplieger/vibecli
 
 go 1.26.4
 
