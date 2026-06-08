@@ -23,7 +23,7 @@ import (
 	"syscall"
 	"time"
 
-	"vibecli/internal/api"
+	"github.com/cplieger/vibecli/internal/api"
 )
 
 // TimeoutPolicy groups the four subprocess timeout durations. Passed to

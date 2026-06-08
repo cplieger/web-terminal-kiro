@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"vibecli/internal/api"
-	"vibecli/internal/auth"
-	"vibecli/internal/metrics"
+	"github.com/cplieger/vibecli/internal/api"
+	"github.com/cplieger/vibecli/internal/auth"
+	"github.com/cplieger/vibecli/internal/metrics"
 	"github.com/cplieger/vterm/terminal"
 )
 

@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"vibecli/internal/api"
+	"github.com/cplieger/vibecli/internal/api"
 )
 
 const (

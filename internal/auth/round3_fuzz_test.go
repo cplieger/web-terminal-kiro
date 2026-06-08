@@ -12,7 +12,7 @@ func FuzzLineRingBounds(f *testing.F) {
 	f.Add("short", 3, 64)
 	f.Add("", 1, 1)
 	f.Add("a]very-long-line-that-exceeds-typical-caps-by-a-wide-margin-and-keeps-going", 2, 8)
-	f.Fuzz(func(t *testing.T, line string, halfCap int, perLineCap int) {
+	f.Fuzz(func(t *testing.T, line string, halfCap, perLineCap int) {
 		if halfCap < 1 || halfCap > 1000 {
 			return
 		}

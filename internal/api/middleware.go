@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"time"
 
-	"vibecli/internal/metrics"
+	"github.com/cplieger/vibecli/internal/metrics"
 )
 
 // RequestID is the canonical HTTP header carrying the per-request id.
@@ -159,5 +159,3 @@ func WriteError(w http.ResponseWriter, r *http.Request, status int, code, msg st
 		RequestID: RequestIDFromContext(r.Context()),
 	})
 }
-
-

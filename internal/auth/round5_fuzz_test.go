@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"vibecli/internal/api"
+	"github.com/cplieger/vibecli/internal/api"
 )
 
 // FuzzClientIPPortStrip verifies clientIP correctly extracts the host from
