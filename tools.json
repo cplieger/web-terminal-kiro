@@ -38,6 +38,15 @@
       "update": { "method": "github", "repo": "cli/cli" },
       "description": "GitHub CLI for PR creation, repo cloning, and authenticated git operations.",
       "install": "curl -fsSL https://github.com/cli/cli/releases/download/${VERSION}/gh_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}.tar.gz | tar -xz -C ${BIN} --strip-components=2 gh_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}/bin/gh"
+    },
+    "golangci-lint": {
+      "enabled": false,
+      "auto_update": false,
+      "version": "v2.12.2",
+      "update": { "method": "github", "repo": "golangci/golangci-lint" },
+      "requires": ["runtimes.go"],
+      "description": "Go meta-linter + formatter runner. Bundles gofumpt and gci (plus gofmt/goimports) as built-in formatters; `golangci-lint fmt` applies them and `golangci-lint run` enforces them, matching the central .golangci.yaml. Requires runtimes.go. Pinned (auto_update:false) to match CI (go-ci.yaml). ~15 MB.",
+      "install": "curl -fsSL https://github.com/golangci/golangci-lint/releases/download/${VERSION}/golangci-lint-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}.tar.gz | tar -xz -C ${BIN} --strip-components=1 golangci-lint-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}/golangci-lint"
     }
   },
   "custom": {},
