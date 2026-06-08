@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": ["app.ts", "**/*.test.ts", "**/*.property.test.ts"],
+  "entry": ["app.ts", "**/*.test.ts"],
   "project": ["**/*.ts", "!**/*.d.ts", "!node_modules/**"],
   "ignoreDependencies": [
     "eslint",

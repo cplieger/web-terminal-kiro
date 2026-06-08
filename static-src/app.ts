@@ -1,8 +1,7 @@
 // vibecli client entry point: acquires DOM refs, initializes the render
 // and connection layers, and wires up input + UI controls.
 
-import { render, keyboard, scroll } from "@cplieger/vterm";
-import * as connection from "./connection.js";
+import { render, keyboard, scroll, connection } from "@cplieger/vterm";
 import * as viewport from "./viewport.js";
 import * as composition from "./composition.js";
 import * as status from "./status.js";
