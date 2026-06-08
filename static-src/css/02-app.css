@@ -606,6 +606,14 @@
     background: var(--text-active);
   }
 
+  /* Sticky Ctrl, armed: inverted fill so the toggle state reads clearly
+     in the monochrome palette (stays filled while pressed). */
+  .kb-key.armed,
+  .kb-key.armed:active {
+    background: var(--text);
+    color: var(--bg);
+  }
+
   .key-toolbar button svg {
     width: var(--icon);
     height: var(--icon);
