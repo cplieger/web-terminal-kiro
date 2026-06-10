@@ -10,9 +10,9 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
+	m "github.com/cplieger/metrics/v2"
 	"github.com/cplieger/vibecli/internal/metrics"
 )
 
@@ -60,7 +60,7 @@ func RequestLogger(next http.Handler) http.Handler {
 		w.Header().Set(RequestID, id)
 		ctx := context.WithValue(r.Context(), ctxKey{}, id)
 
-		rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		rw := m.NewStatusRecorder(w)
 		start := time.Now()
 		next.ServeHTTP(rw, r.WithContext(ctx))
 		dur := time.Since(start)
@@ -68,31 +68,13 @@ func RequestLogger(next http.Handler) http.Handler {
 		slog.Info("http",
 			"method", r.Method,
 			"path", r.URL.Path,
-			"status", rw.status,
+			"status", rw.Status(),
 			"duration_ms", dur.Milliseconds(),
 			"request_id", id,
 			"remote", r.RemoteAddr,
 		)
-		metrics.HTTPRequests.Inc(r.Method, strconv.Itoa(rw.status))
-		metrics.HTTPDuration.Observe(dur.Seconds())
+		metrics.RecordHTTP(r.Method, rw.Status(), dur)
 	})
-}
-
-// statusRecorder captures the status code so RequestLogger can report
-// it. WriteHeader-not-called means 200 (Go's default).
-type statusRecorder struct {
-	http.ResponseWriter
-
-	status      int
-	wroteHeader bool
-}
-
-func (sr *statusRecorder) WriteHeader(code int) {
-	if !sr.wroteHeader {
-		sr.status = code
-		sr.wroteHeader = true
-	}
-	sr.ResponseWriter.WriteHeader(code)
 }
 
 // requestIDOrNew returns inbound when it is valid, otherwise mints a
