@@ -9,20 +9,22 @@ stream. This guide covers the things the codebase won't tell you at a glance.
 
 - `main.go`, `routes.go` — server entry point and route wiring (both at repo
   root, `package main`). `main.go` embeds the web UI with `//go:embed static`.
-- `internal/api/` — HTTP response helpers (`WriteJSON`, `BadRequest`, `Ok`, …)
-  and the terminal output sanitisers (`StripANSI`, `SanitizeOutput`).
+- `internal/api/` — HTTP response helpers (`WriteJSON`, `BadRequest`, `Ok`, …),
+  the `RequestLogger` middleware (structured slog access logging), and the
+  terminal output sanitisers (`StripANSI`, `SanitizeOutput`).
 - `internal/auth/` — `/api/whoami`, `/api/login`, `/api/logout`; shells out to
   the bundled `kiro-cli` for identity, no persisted state.
-- `internal/metrics/` — Prometheus exposition at `/metrics`, fed by the
-  `api.RequestLogger` middleware.
 - `static-src/` — TypeScript + CSS sources, compiled into `static/`.
 
-vibecli is a thin consumer of two first-party shared libraries: `vterm`
-(`github.com/cplieger/vterm` server-side, `@cplieger/vterm` client-side) is the
-terminal engine, and `metrics` (`github.com/cplieger/metrics/v2`) is the
-Prometheus layer. Most of "what the terminal does" lives in `vterm`, not here.
+vibecli is a thin consumer of one first-party shared library: `vterm`
+(`github.com/cplieger/vterm` server-side, `@cplieger/vterm` client-side), the
+terminal engine. Most of "what the terminal does" lives in `vterm`, not here.
 The Go server and TS client share a binary wire protocol, not code — a
 wire-format change is a `vterm` concern and lands in that repo, not this one.
+
+Observability is slog-only: `RequestLogger` emits a structured access-log line
+per request (method/path/status/duration_ms/request_id/remote). There is no
+Prometheus `/metrics` endpoint.
 
 ## Generated assets (read before building)
 
