@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"time"
 
+	m "github.com/cplieger/metrics/v2"
+
 	"github.com/cplieger/vibecli/internal/metrics"
 )
 
@@ -59,7 +61,7 @@ func RequestLogger(next http.Handler) http.Handler {
 		w.Header().Set(RequestID, id)
 		ctx := context.WithValue(r.Context(), ctxKey{}, id)
 
-		rw := metrics.NewStatusRecorder(w)
+		rw := m.NewStatusRecorder(w)
 		start := time.Now()
 		next.ServeHTTP(rw, r.WithContext(ctx))
 		dur := time.Since(start)
