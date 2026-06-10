@@ -8,7 +8,6 @@ import (
 
 	"github.com/cplieger/vibecli/internal/api"
 	"github.com/cplieger/vibecli/internal/auth"
-	"github.com/cplieger/vibecli/internal/metrics"
 	"github.com/cplieger/vterm/terminal"
 )
 
@@ -40,8 +39,6 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.Handler, err
 		}
 		api.Ok(w)
 	})
-
-	mux.HandleFunc("/metrics", metrics.Handler())
 
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
 		if !deps.ready.Load() {

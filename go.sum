@@ -1,7 +1,5 @@
 github.com/coder/websocket v1.8.14 h1:9L0p0iKiNOibykf283eHkKUHHrpG7f65OE3BhhO7v9g=
 github.com/coder/websocket v1.8.14/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
-github.com/cplieger/metrics/v2 v2.0.0 h1:kkmT8c3ikpW5iDv1MEXvti2Dx4kIHUqd9JHBAHDrZxs=
-github.com/cplieger/metrics/v2 v2.0.0/go.mod h1:92d0LHn9dLuEuw/FcsO1ZHHrMtMcj2kAfuZiHt5ghZQ=
 github.com/cplieger/vterm v1.0.10 h1:fqx/dqB9M3iKVttuJVDNcMZl/8JWegfjov7HIiAAS1s=
 github.com/cplieger/vterm v1.0.10/go.mod h1:EGWAJMGcw/SymtElxZdwMgDO4ugiZUhZGauuYv44pE8=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
