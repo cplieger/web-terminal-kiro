@@ -9,4 +9,7 @@ require (
 	github.com/creack/pty v1.1.24 // indirect
 )
 
-require github.com/cplieger/metrics v1.0.2
+require (
+	github.com/cplieger/metrics v1.0.2
+	github.com/cplieger/metrics/v2 v2.0.0
+)
