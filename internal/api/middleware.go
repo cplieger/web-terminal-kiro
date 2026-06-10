@@ -13,7 +13,6 @@ import (
 	"time"
 
 	m "github.com/cplieger/metrics/v2"
-
 	"github.com/cplieger/vibecli/internal/metrics"
 )
 
