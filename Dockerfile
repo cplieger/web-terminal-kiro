@@ -1,7 +1,7 @@
 # check=error=true
 
 # --- Builder stage: compile Go server + fetch xterm.js vendor files ---
-FROM debian:trixie-slim@sha256:b6e2a152f22a40ff69d92cb397223c906017e1391a73c952b588e51af8883bf8 AS builder
+FROM debian:trixie-slim@sha256:545a1665d9364d3b00d1c892aa8fabc88d3c1f1d673eeeedfa3051010ebd91bb AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -110,7 +110,7 @@ RUN set -eu; \
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /vibecli .
 
 # --- Final stage: minimal runtime with kiro-cli + git + gh ---
-FROM debian:trixie-slim@sha256:b6e2a152f22a40ff69d92cb397223c906017e1391a73c952b588e51af8883bf8
+FROM debian:trixie-slim@sha256:545a1665d9364d3b00d1c892aa8fabc88d3c1f1d673eeeedfa3051010ebd91bb
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
