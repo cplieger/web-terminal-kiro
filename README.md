@@ -4,7 +4,7 @@
 [![GitHub release](https://img.shields.io/github/v/release/cplieger/vibecli)](https://github.com/cplieger/vibecli/releases)
 [![Image Size](https://ghcr-badge.egpl.dev/cplieger/vibecli/size)](https://github.com/cplieger/vibecli/pkgs/container/vibecli)
 ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue)
-![base: Debian](https://img.shields.io/badge/base-Debian_trixie-A81D33?logo=debian)
+![base: Debian](https://img.shields.io/badge/base-Debian-A81D33?logo=debian)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/vibecli/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/vibecli)
 
 A minimal browser terminal for the Kiro CLI — `kiro-cli` in a tab, nothing more.
@@ -40,7 +40,7 @@ services:
 
 ## Security
 
-Network-exposed: put it behind an authenticating reverse proxy — a browser tab here is a shell with filesystem access to `/workspace`. Observability is `slog`-only (structured access log; no metrics endpoint). Debian `trixie-slim` base (a shell + the `kiro-cli` subprocess are required). Images are published with cosign signatures and SBOM attestations.
+Network-exposed: put it behind an authenticating reverse proxy — a browser tab here is a shell with filesystem access to `/workspace`. Observability is `slog`-only (structured access log; no metrics endpoint). Debian base (a shell + the `kiro-cli` subprocess are required). Images are published with cosign signatures and SBOM attestations.
 
 ## License
 
