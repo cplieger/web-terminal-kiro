@@ -1,32 +1,4 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>cplieger/.github"],
-  "packageRules": [
-    {
-      "description": "tsgo / TypeScript 7 native preview. Tracks the latest dist-tag (Microsoft's curated channel with up-to-date Go-stdlib CVE fixes). tsgo emits the browser JS bundle at build time, so every bump needs a rebuild. CLEANUP WHEN TS 7 IS STABLE: drop followTag + ignoreUnstable, restore default release cadence.",
-      "matchPackageNames": ["@typescript/native-preview"],
-      "followTag": "latest",
-      "ignoreUnstable": false
-    }
-  ],
-  "customDatasources": {
-    "kiro-cli": {
-      "defaultRegistryUrlTemplate": "https://desktop-release.q.us-east-1.amazonaws.com/index.json",
-      "format": "json",
-      "transformTemplates": [
-        "{ \"releases\": versions.{ \"version\": version, \"digest\": packages[fileType = 'zip' and targetTriple = 'x86_64-unknown-linux-gnu' and variant = 'headless'][0].sha256 } }"
-      ]
-    }
-  },
-  "customManagers": [
-    {
-      "customType": "regex",
-      "description": "kiro-cli version + sha256 pinned in entrypoint.sh",
-      "managerFilePatterns": ["/entrypoint\\.sh$/"],
-      "matchStrings": [
-        "#\\s*renovate:\\s*datasource=(?<datasource>custom\\.kiro-cli)\\s+depName=(?<depName>[^\\s]+)\\s*\\nKIRO_CLI_VERSION=\"(?<currentValue>[^\"]+)\"\\s*\\nKIRO_CLI_SHA256=\"(?<currentDigest>[^\"]+)\""
-      ],
-      "versioningTemplate": "semver"
-    }
-  ]
+  "extends": ["github>cplieger/.github"]
 }
