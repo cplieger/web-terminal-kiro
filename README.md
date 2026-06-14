@@ -1,13 +1,14 @@
 # vibecli
 
-[![CI](https://github.com/cplieger/vibecli/actions/workflows/ci.yaml/badge.svg)](https://github.com/cplieger/vibecli/actions/workflows/ci.yaml)
-[![GitHub release](https://img.shields.io/github/v/release/cplieger/vibecli)](https://github.com/cplieger/vibecli/releases)
 [![Image Size](https://ghcr-badge.egpl.dev/cplieger/vibecli/size)](https://github.com/cplieger/vibecli/pkgs/container/vibecli)
 ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue)
 ![base: Debian](https://img.shields.io/badge/base-Debian-A81D33?logo=debian)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/vibecli/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/vibecli)
-[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibecli/badges/coverage.json)](https://github.com/cplieger/vibecli/actions/workflows/coverage.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/cplieger/vibecli)](https://goreportcard.com/report/github.com/cplieger/vibecli)
+[![Test coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibecli/badges/coverage.json)](https://github.com/cplieger/vibecli/actions/workflows/coverage.yml)
+[![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibecli/badges/mutation.json)](https://github.com/cplieger/vibecli/issues?q=label%3Agremlins-tracker)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13223/badge)](https://www.bestpractices.dev/projects/13223)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/vibecli/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/vibecli)
+[![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/vibecli/releases)
 
 A minimal browser terminal for the Kiro CLI — `kiro-cli` in a tab, nothing more.
 
