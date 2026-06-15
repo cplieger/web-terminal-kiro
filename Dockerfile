@@ -29,7 +29,7 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # linux-x64 tarball is published in lockstep at the same version string.
 # See .github/renovate.json for the followTag rule.
 # renovate: datasource=npm depName=@typescript/native-preview
-ARG TSGO_VERSION=7.0.0-dev.20260527.2
+ARG TSGO_VERSION=7.0.0-dev.20260615.1
 RUN TSGO_ARCH=$([ "$(dpkg --print-architecture)" = "arm64" ] && echo "arm64" || echo "x64") && \
     curl -fsSL \
       "https://registry.npmjs.org/@typescript/native-preview-linux-${TSGO_ARCH}/-/native-preview-linux-${TSGO_ARCH}-${TSGO_VERSION}.tgz" \
