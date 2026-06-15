@@ -8,7 +8,8 @@ node_modules/
 
 static/style.css
 
-# Kiro skill artifacts (code-review, refactor, steering-maintenance)
+# Kiro skill artifacts (code-review, refactor, steering-maintenance, judgement)
 **/.code-review/
+**/.judgement/
 **/.refactor/
 **/.steering-maintenance/
