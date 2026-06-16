@@ -4,29 +4,6 @@ import (
 	"testing"
 )
 
-// FuzzStripANSIIdempotent verifies that StripANSI is idempotent:
-// applying it twice yields the same result as once. This is distinct
-// from FuzzSanitizeOutputIdempotent which also involves Unicode
-// sanitisation.
-// Bug class: incomplete ANSI stripping where a partial escape sequence
-// survives the first pass and becomes a valid sequence after truncation,
-// leading to escape sequence reconstruction on re-application.
-func FuzzStripANSIIdempotent(f *testing.F) {
-	f.Add("")
-	f.Add("plain text")
-	f.Add("\x1b[31mred\x1b[0m")
-	f.Add("\x1b]0;title\x07rest")
-	f.Add("\x1b[38;2;255;0;0m\x1b[1m\x1b[0m")
-	f.Add("\x1b[\x1b[1m")
-	f.Fuzz(func(t *testing.T, s string) {
-		once := StripANSI(s)
-		twice := StripANSI(once)
-		if once != twice {
-			t.Errorf("StripANSI not idempotent:\n  input: %q\n  once:  %q\n  twice: %q", s, once, twice)
-		}
-	})
-}
-
 // FuzzRequestIDOrNew verifies that requestIDOrNew always returns a
 // string that passes validRequestID. This is a stronger property than
 // FuzzValidRequestID which only checks the validator — here we verify

@@ -65,7 +65,6 @@ func main() {
 		staticFS: staticFS,
 		cmd:      cmd,
 		workDir:  workDir,
-		cliPath:  cliPath,
 		ready:    &ready,
 	})
 	if err != nil {

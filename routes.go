@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 
 	"github.com/cplieger/vibecli/internal/api"
-	"github.com/cplieger/vibecli/internal/auth"
 	"github.com/cplieger/vterm/terminal"
 )
 
@@ -15,7 +14,6 @@ type routeDeps struct {
 	staticFS fs.FS
 	ready    *atomic.Bool
 	workDir  string
-	cliPath  string
 	cmd      []string
 }
 
@@ -28,17 +26,6 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.Handler, err
 
 	term := terminal.NewHandler(deps.cmd, terminal.WithWorkDir(deps.workDir))
 	term.RegisterRoutes(mux)
-
-	authH := auth.NewHandler(deps.cliPath, auth.DefaultTimeoutPolicy())
-	authH.RegisterRoutes(mux)
-
-	mux.HandleFunc("/api/theme", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			api.MethodNotAllowed(w, r)
-			return
-		}
-		api.Ok(w)
-	})
 
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
 		if !deps.ready.Load() {
