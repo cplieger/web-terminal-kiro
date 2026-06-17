@@ -34,7 +34,7 @@
     "gh": {
       "enabled": false,
       "auto_update": true,
-      "version": "v2.94.0",
+      "version": "v2.95.0",
       "update": { "method": "github", "repo": "cli/cli" },
       "description": "GitHub CLI for PR creation, repo cloning, and authenticated git operations.",
       "install": "curl -fsSL https://github.com/cli/cli/releases/download/${VERSION}/gh_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}.tar.gz | tar -xz -C ${BIN} --strip-components=2 gh_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}/bin/gh"
