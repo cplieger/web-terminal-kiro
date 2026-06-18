@@ -21,12 +21,12 @@ The control is "only the operator can reach vibecli."
 
 ## Threats and mitigations
 
-| Threat | Mitigation | Evidence |
-|---|---|---|
-| Unauthorised access to the PTY (i.e. to a shell) | auth middleware on the server; network/auth boundary (LAN gate + reverse proxy) | `internal/api/middleware.go`, deployment |
-| WebSocket hijacking / malformed frames | origin/auth checks on the WS upgrade; hardened wire decoding (shared `vterm` wire protocol) | middleware, vterm decoder tests |
-| Malformed terminal/wire input crashing the server | property + fuzz suite on the PTY/wire surface | fuzz targets (10), weekly fuzz |
-| Stale/empty embedded UI shipped | CI image smoke test starts the container and asserts it serves | image smoke test (CI docker job) |
+| Threat                                            | Mitigation                                                                                  | Evidence                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Unauthorised access to the PTY (i.e. to a shell)  | auth middleware on the server; network/auth boundary (LAN gate + reverse proxy)             | `internal/api/middleware.go`, deployment |
+| WebSocket hijacking / malformed frames            | origin/auth checks on the WS upgrade; hardened wire decoding (shared `vterm` wire protocol) | middleware, vterm decoder tests          |
+| Malformed terminal/wire input crashing the server | property + fuzz suite on the PTY/wire surface                                               | fuzz targets (10), weekly fuzz           |
+| Stale/empty embedded UI shipped                   | CI image smoke test starts the container and asserts it serves                              | image smoke test (CI docker job)         |
 
 ## Residual risks (stated plainly)
 
