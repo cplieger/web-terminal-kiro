@@ -5,6 +5,11 @@ static/wire/
 node_modules/
 .vitest-cache/
 
+# Local `go build` output. The Dockerfile builds to /vibecli in the builder
+# stage (COPY --from=builder /vibecli); a bare `go build` in the repo root
+# drops the same binary here. Never commit it (OSSF Scorecard Binary-Artifacts).
+/vibecli
+
 
 static/style.css
 
