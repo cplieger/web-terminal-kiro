@@ -18,8 +18,8 @@ BIN="$TOOLS/bin/kiro-cli"
 # KIRO_CLI_SHA256 is the sha256 of the x86_64-linux headless zip; on
 # aarch64 the hash is logged but not enforced (Renovate tracks one arch).
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.9.0"
-KIRO_CLI_SHA256="50736b4d318c9cec466b99c8a7014d2fd31705ae36682ea7b922735d29b59491"
+KIRO_CLI_VERSION="2.10.0"
+KIRO_CLI_SHA256="be9d8b6d7c44f93a83ca22466043d98ad058e6ed3c12fffd068f3fb8a60b3b70"
 
 mkdir -p "$TOOLS/bin" "$HOME/.local/bin" "$HOME/.ssh" "$HOME/.kiro" \
     || { printf 'ERROR: failed to create config directories (is /config mounted and writable?)\n' >&2
