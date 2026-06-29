@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/cplieger/vibecli/internal/api"
-	"github.com/cplieger/vterm/terminal"
+	"github.com/cplieger/web-terminal-engine/terminal"
 )
 
 type routeDeps struct {
@@ -24,7 +24,13 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.Handler, err
 	}
 	mux.Handle("/", cacheHeaders(http.FileServer(http.FS(sub))))
 
-	term := terminal.NewHandler(deps.cmd, terminal.WithWorkDir(deps.workDir))
+	// Retain enough scrollback to cover a kiro-cli /chat session restore (which
+	// dumps the whole transcript at once) so it survives a reconnect without a
+	// trim. Matches the client's retained-line cap (vterm store MAX_LINES).
+	term := terminal.NewHandler(deps.cmd,
+		terminal.WithWorkDir(deps.workDir),
+		terminal.WithScrollbackCapacity(5000),
+	)
 	term.RegisterRoutes(mux)
 
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {

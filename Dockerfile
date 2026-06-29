@@ -59,51 +59,64 @@ RUN mkdir -p static/vendor/fonts && \
           MonaspiceNeNerdFontMono-Italic.otf \
           MonaspiceNeNerdFontMono-BoldItalic.otf
 
-# Fetch @cplieger/vterm TS source from npm registry. The lib publishes TS
-# only (no precompiled JS) — same pattern as @cplieger/reactive, matching
-# how local TS files in static-src/ are treated. Extracted to
-# static-src/node_modules/@cplieger/vterm/ so tsgo's bundler resolution
-# finds the package + its types relative to static-src/tsconfig.json.
-# renovate: datasource=npm depName=@cplieger/vterm
-ARG CPLIEGER_VTERM_VERSION=1.1.0
-RUN mkdir -p static-src/node_modules/@cplieger/vterm && \
-    curl -fsSL "https://registry.npmjs.org/@cplieger/vterm/-/vterm-${CPLIEGER_VTERM_VERSION}.tgz" \
-      | tar -xz -C static-src/node_modules/@cplieger/vterm --strip-components=1
+# Fetch the engine + UI TypeScript from the npm registry. Both publish TS
+# source only (no precompiled JS) — same pattern as @cplieger/reactive,
+# matching how local TS files in static-src/ are treated. Extracted side by
+# side under static-src/node_modules/@cplieger so tsgo's bundler resolution
+# finds the engine when compiling the UI's `@cplieger/web-terminal-engine` import.
+# renovate: datasource=npm depName=@cplieger/web-terminal-engine
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=1.2.0
+# renovate: datasource=npm depName=@cplieger/web-terminal-ui
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=1.0.0
+RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/node_modules/@cplieger/web-terminal-ui && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1 && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
 
-# Compile client TypeScript and the @cplieger/vterm lib in a single layer.
+# Compile client TypeScript and the engine + UI libs in a single layer.
 # Must run before the binary build because main.go's `//go:embed static`
 # captures static/ at `go build` time.
 #
 # Step 1: tsgo --project compiles app TS — tsconfig.json's outDir is
 # "../static", so tsgo writes static/app.js directly into the embed tree.
-# The lib import (`@cplieger/vterm`) is preserved in the emit as a bare
-# specifier; the browser resolves it via the importmap entry in
+# The lib import (`@cplieger/web-terminal-ui`) is preserved in the emit as a
+# bare specifier; the browser resolves it via the importmap in
 # static/index.html.
 #
-# Step 2: compile @cplieger/vterm's TS source into static/vendor/cplieger-vterm/
-# so the browser can fetch the lib's compiled JS via the importmap entry.
-# The lib's internal imports (./render.js, ./types.js, etc.) are preserved
-# as relative paths and resolve naturally within /vendor/cplieger-vterm/.
+# Steps 2+3: compile the engine and UI TS source into static/vendor/ so the
+# browser can fetch the compiled JS via the importmap. Internal imports (the
+# UI's bare `@cplieger/web-terminal-engine` and both packages' relative `./*.js`) are
+# preserved and resolve via the importmap + vendored dirs at runtime.
 RUN /tmp/package/lib/tsgo --project static-src/tsconfig.json && \
     /tmp/package/lib/tsgo \
         --module ESNext \
         --target ESNext \
         --moduleResolution bundler \
-        --outDir static/vendor/cplieger-vterm \
-        --rootDir static-src/node_modules/@cplieger/vterm/src \
+        --outDir static/vendor/cplieger-web-terminal-engine \
+        --rootDir static-src/node_modules/@cplieger/web-terminal-engine/src \
         --skipLibCheck \
         --strict \
-        static-src/node_modules/@cplieger/vterm/src/*.ts
+        static-src/node_modules/@cplieger/web-terminal-engine/src/*.ts && \
+    /tmp/package/lib/tsgo \
+        --module ESNext \
+        --target ESNext \
+        --moduleResolution bundler \
+        --outDir static/vendor/cplieger-web-terminal-ui \
+        --rootDir static-src/node_modules/@cplieger/web-terminal-ui/src \
+        --skipLibCheck \
+        --strict \
+        static-src/node_modules/@cplieger/web-terminal-ui/src/*.ts
 
-# Concatenate per-feature CSS splits into the served bundle.
+# Concatenate the UI package's per-feature CSS splits into the served bundle.
 # Behavior: skip blank lines and #-comments, cat each listed file
 # (paths relative to manifest dir) into the output.
 RUN set -eu; \
     : > static/style.css; \
     while IFS= read -r line || [ -n "$line" ]; do \
         case "$line" in ''|\#*) continue ;; esac; \
-        cat "static-src/css/${line}" >> static/style.css; \
-    done < static-src/css/MANIFEST
+        cat "static-src/node_modules/@cplieger/web-terminal-ui/css/${line}" >> static/style.css; \
+    done < static-src/node_modules/@cplieger/web-terminal-ui/css/MANIFEST
 
 # Build the Go binary with static assets embedded via go:embed.
 # CGO disabled so the binary runs on any glibc.

@@ -18,3 +18,9 @@ static/style.css
 **/.judgement/
 **/.refactor/
 **/.steering-maintenance/
+
+# Local rebuild dev loop (scripts/dev-build.sh) — not for CI/release
+go.work
+go.work.sum
+vibecli-dev-bin
+static/vendor/

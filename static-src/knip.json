@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": ["app.ts", "**/*.test.ts"],
+  "entry": ["app.ts"],
   "project": ["**/*.ts", "!**/*.d.ts", "!node_modules/**"],
   "ignoreDependencies": [
     "eslint",
@@ -8,6 +8,8 @@
     "typescript-eslint",
     "@eslint/js",
     "@vitest/coverage-v8",
+    "vitest",
+    "happy-dom",
     "html-validate",
     "stylelint",
     "stylelint-config-standard"
