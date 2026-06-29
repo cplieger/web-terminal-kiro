@@ -1,7 +1,7 @@
 // vibecli client entry point.
 //
 // All terminal behavior now lives in the shared packages: the
-// @cplieger/web-terminal engine (render / scroll / connection / keyboard) and
+// @cplieger/web-terminal-engine engine (render / scroll / connection / keyboard) and
 // the @cplieger/web-terminal-ui reference UI (the textarea input model, mobile
 // key toolbar, context menu, IME, predictive echo, viewport handling). vibecli
 // is a thin kiro-cli integration, so its client is a single mount() call

@@ -12,7 +12,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ENGINE_DIR="${ENGINE_DIR:-../vterm}"
 UI_DIR="${UI_DIR:-../web-terminal-ui}"
-ENGINE_PKG="static-src/node_modules/@cplieger/web-terminal"
+ENGINE_PKG="static-src/node_modules/@cplieger/web-terminal-engine"
 UI_PKG="static-src/node_modules/@cplieger/web-terminal-ui"
 
 echo "[1/6] go.work -> local engine (replace; engine module is unpublished)"
@@ -21,7 +21,7 @@ go 1.26.4
 
 use .
 
-replace github.com/cplieger/web-terminal => ../vterm
+replace github.com/cplieger/web-terminal-engine => ../vterm
 EOF
 
 echo "[2/6] overlay local engine + UI TS into the bundler-resolved packages"
@@ -42,9 +42,9 @@ echo "[3/6] tsgo: app -> static/app.js (resolves @cplieger/web-terminal-ui)"
 tsgo --project static-src/tsconfig.json
 
 echo "[4/6] tsgo: engine + UI libs -> static/vendor/"
-rm -rf static/vendor/cplieger-web-terminal static/vendor/cplieger-web-terminal-ui
+rm -rf static/vendor/cplieger-web-terminal-engine static/vendor/cplieger-web-terminal-ui
 tsgo --module ESNext --target ESNext --moduleResolution bundler \
-  --outDir static/vendor/cplieger-web-terminal \
+  --outDir static/vendor/cplieger-web-terminal-engine \
   --rootDir "$ENGINE_PKG/src" --skipLibCheck --strict "$ENGINE_PKG/src"/*.ts
 tsgo --module ESNext --target ESNext --moduleResolution bundler \
   --outDir static/vendor/cplieger-web-terminal-ui \

@@ -63,14 +63,14 @@ RUN mkdir -p static/vendor/fonts && \
 # source only (no precompiled JS) — same pattern as @cplieger/reactive,
 # matching how local TS files in static-src/ are treated. Extracted side by
 # side under static-src/node_modules/@cplieger so tsgo's bundler resolution
-# finds the engine when compiling the UI's `@cplieger/web-terminal` import.
-# renovate: datasource=npm depName=@cplieger/web-terminal
-ARG CPLIEGER_WEB_TERMINAL_VERSION=0.1.0
+# finds the engine when compiling the UI's `@cplieger/web-terminal-engine` import.
+# renovate: datasource=npm depName=@cplieger/web-terminal-engine
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=0.1.0
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
 ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=0.1.0
-RUN mkdir -p static-src/node_modules/@cplieger/web-terminal static-src/node_modules/@cplieger/web-terminal-ui && \
-    curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal/-/web-terminal-${CPLIEGER_WEB_TERMINAL_VERSION}.tgz" \
-      | tar -xz -C static-src/node_modules/@cplieger/web-terminal --strip-components=1 && \
+RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/node_modules/@cplieger/web-terminal-ui && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1 && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
 
@@ -86,18 +86,18 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal static-src/node_modu
 #
 # Steps 2+3: compile the engine and UI TS source into static/vendor/ so the
 # browser can fetch the compiled JS via the importmap. Internal imports (the
-# UI's bare `@cplieger/web-terminal` and both packages' relative `./*.js`) are
+# UI's bare `@cplieger/web-terminal-engine` and both packages' relative `./*.js`) are
 # preserved and resolve via the importmap + vendored dirs at runtime.
 RUN /tmp/package/lib/tsgo --project static-src/tsconfig.json && \
     /tmp/package/lib/tsgo \
         --module ESNext \
         --target ESNext \
         --moduleResolution bundler \
-        --outDir static/vendor/cplieger-web-terminal \
-        --rootDir static-src/node_modules/@cplieger/web-terminal/src \
+        --outDir static/vendor/cplieger-web-terminal-engine \
+        --rootDir static-src/node_modules/@cplieger/web-terminal-engine/src \
         --skipLibCheck \
         --strict \
-        static-src/node_modules/@cplieger/web-terminal/src/*.ts && \
+        static-src/node_modules/@cplieger/web-terminal-engine/src/*.ts && \
     /tmp/package/lib/tsgo \
         --module ESNext \
         --target ESNext \

@@ -31,7 +31,7 @@ export default defineConfig({
 
     // vibecli's client is now a single mount() call against the shared
     // packages; all terminal unit tests live in @cplieger/web-terminal-ui and
-    // @cplieger/web-terminal. No test files remain here, so don't fail on it.
+    // @cplieger/web-terminal-engine. No test files remain here, so don't fail on it.
     passWithNoTests: true,
 
     // Require explicit imports of describe/it/expect from "vitest".
