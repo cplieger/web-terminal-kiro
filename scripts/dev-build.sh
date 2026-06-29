@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Local dev build of vibecli against the LOCAL (working-tree) engine + UI, for
-# the rebuild/restructure effort (docs in vterm/docs/REBUILD.md +
+# the rebuild/restructure effort (docs in web-terminal-engine/docs/REBUILD.md +
 # RESTRUCTURE.md). Produces ./vibecli-dev-bin with static assets embedded,
-# built from the sibling ../vterm (engine) and ../web-terminal-ui (UI) checkouts
+# built from the sibling ../web-terminal-engine (engine) and ../web-terminal-ui (UI) checkouts
 # instead of the published Go module / npm packages. Deploy with
 # scripts/dev-deploy.sh.
 #
@@ -10,7 +10,7 @@
 # Override the sibling checkouts with ENGINE_DIR=... / UI_DIR=...
 set -euo pipefail
 cd "$(dirname "$0")/.."
-ENGINE_DIR="${ENGINE_DIR:-../vterm}"
+ENGINE_DIR="${ENGINE_DIR:-../web-terminal-engine}"
 UI_DIR="${UI_DIR:-../web-terminal-ui}"
 ENGINE_PKG="static-src/node_modules/@cplieger/web-terminal-engine"
 UI_PKG="static-src/node_modules/@cplieger/web-terminal-ui"
@@ -21,7 +21,7 @@ go 1.26.4
 
 use .
 
-replace github.com/cplieger/web-terminal-engine => ../vterm
+replace github.com/cplieger/web-terminal-engine => ../web-terminal-engine
 EOF
 
 echo "[2/6] overlay local engine + UI TS into the bundler-resolved packages"
