@@ -43,6 +43,20 @@
   content: "\00a0";
 }
 
+/* "earlier output trimmed" marker (vterm renderer inserts .term-trim-marker
+   as the first row when history older than the buffer holds was evicted —
+   client-side cap or a server-reported resume gap). A quiet, centered,
+   non-selectable divider so the user knows scrollback doesn't go further up. */
+.term-trim-marker {
+  color: color-mix(in oklch, var(--text) 45%, transparent);
+  font-size: 0.6875rem;
+  text-align: center;
+  padding: 2px 0;
+  opacity: 0.7;
+  user-select: none;
+  font-family: var(--font-ui);
+}
+
 .term-input {
   /* Keep the input INSIDE the viewport (not at left:-9999px) — iOS
    * Safari is increasingly strict about not opening the virtual

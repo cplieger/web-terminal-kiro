@@ -138,6 +138,7 @@ scroll.init({
 connection.init({
   computeSize: render.computeSize,
   getHaveThrough: render.getHighestIndex,
+  onResumeBounds: render.noteResumeBounds,
   onMessage(msg) {
     if (msg.type === "screen") {
       render.handleScreen(msg);
