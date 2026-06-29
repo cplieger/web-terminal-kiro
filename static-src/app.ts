@@ -137,6 +137,7 @@ scroll.init({
 
 connection.init({
   computeSize: render.computeSize,
+  getHaveThrough: render.getHighestIndex,
   onMessage(msg) {
     if (msg.type === "screen") {
       render.handleScreen(msg);
@@ -518,6 +519,12 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("pageshow", () => {
   connection.reconnectNow();
   focusTerminal();
+});
+// Network came back (cellular↔wifi handoff, tunnel reconnect): re-establish
+// at once rather than waiting out the reconnect backoff. reconnectNow tears
+// down any zombie socket first, and resume-by-index backfills what was missed.
+window.addEventListener("online", () => {
+  connection.reconnectNow();
 });
 
 // --- Scroll-to-bottom (inside toolbar grid) ---
