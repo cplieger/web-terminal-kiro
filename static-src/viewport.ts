@@ -19,9 +19,6 @@ import { scroll } from "@cplieger/vterm";
 // (~250ms) with margin for fonts and reflow.
 const SETTLE_MS = 350;
 
-// How long to suppress the scroll module's autoscroll during a transition.
-const SUPPRESS_MS = 400;
-
 let termWrap: HTMLElement;
 let onSettled: ((wasAtBottom: boolean) => void) | null = null;
 let inTransition = false;
@@ -35,7 +32,6 @@ function startTransition(): void {
     inTransition = true;
     wasAtBottomAtStart = !scroll.isUserScrolledUp();
   }
-  scroll.suppressScroll(SUPPRESS_MS);
 
   if (settleTimer !== null) {
     clearTimeout(settleTimer);
