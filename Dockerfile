@@ -1,12 +1,12 @@
 # check=error=true
 
-# --- Builder stage: compile Go server + fetch xterm.js vendor files ---
+# --- Builder stage: compile Go server + vendor the web-terminal engine/UI TS ---
 FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates curl jq openssl xz-utils && rm -rf /var/lib/apt/lists/*
 
 # Go for building the web server.
