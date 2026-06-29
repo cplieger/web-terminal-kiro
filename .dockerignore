@@ -3,3 +3,11 @@ static/*.js
 static/*.js.map
 static/wire/
 static/*.test.js
+
+
+# Local-dev Go workspace (resolves the unpublished engine via a replace);
+# never used in the image build, which resolves from the module proxy. Leaving
+# it in the build context makes `go build` follow the replace to a path that
+# does not exist in the container.
+go.work
+go.work.sum
