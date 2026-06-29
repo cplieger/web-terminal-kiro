@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/cplieger/vibecli/internal/api"
-	"github.com/cplieger/vterm/terminal"
+	"github.com/cplieger/web-terminal/terminal"
 )
 
 type routeDeps struct {

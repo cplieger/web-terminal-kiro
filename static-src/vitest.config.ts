@@ -26,11 +26,13 @@ export default defineConfig({
     // Exclude compiled output and node_modules
     exclude: ["../static/**", "node_modules/**"],
 
-    // Fail loudly if the include pattern matches nothing.
-    passWithNoTests: false,
-
     // Forbid .only tests unconditionally — not just in CI.
     allowOnly: false,
+
+    // vibecli's client is now a single mount() call against the shared
+    // packages; all terminal unit tests live in @cplieger/web-terminal-ui and
+    // @cplieger/web-terminal. No test files remain here, so don't fail on it.
+    passWithNoTests: true,
 
     // Require explicit imports of describe/it/expect from "vitest".
     globals: false,
@@ -65,11 +67,6 @@ export default defineConfig({
       concurrent: false,
       hooks: "stack",
     },
-
-    // Loaded once per worker before any test file. Configures fast-check
-    // global defaults (numRuns, verbosity, time limits). See file for
-    // tuning rationale.
-    setupFiles: ["./fc-strict-setup.ts"],
 
     // Print stack traces with every console.* call in tests.
     printConsoleTrace: true,
