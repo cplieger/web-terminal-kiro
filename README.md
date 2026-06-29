@@ -16,7 +16,7 @@ A minimal browser terminal for the Kiro CLI — `kiro-cli` in a tab, nothing mor
 
 Vibecli is a single Go binary that serves a static web UI and brokers a PTY for one `kiro-cli` process per session. Unlike its sister app [vibekit](https://github.com/cplieger/vibekit), there is no ACP bridge, no chat protocol, and no chat-history persistence — the browser drives `kiro-cli`'s own TUI directly through the terminal stream, the same as an SSH session. Terminal state lives only in the server's in-memory VT buffer and is replayed to the browser on reconnect.
 
-The terminal engine (VT500 screen buffer + WebSocket PTY handler on the server, renderer/keyboard/mouse/wire-decoder in the browser) is the shared [`@cplieger/vterm`](https://github.com/cplieger/vterm) library; vibecli adds only its own predictive echo, IME handling, and viewport/status UI.
+The terminal engine (VT500 screen buffer + WebSocket PTY handler on the server, renderer/keyboard/mouse/wire-decoder in the browser) is the shared [`@cplieger/web-terminal-engine`](https://github.com/cplieger/web-terminal-engine) library; vibecli adds only its own predictive echo, IME handling, and viewport/status UI.
 
 ## Features
 
