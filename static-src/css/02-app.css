@@ -3,12 +3,13 @@
   position: fixed;
   inset: 0;
   overflow: hidden auto;
-  /* JS owns the scroll position (render.ts: pin-to-bottom when
-     following, manual scrollTop compensation when the user is scrolled
-     up reading history). Disable the browser's own scroll-anchoring so
-     it doesn't fight or double-apply those adjustments when scrollback
-     is inserted above the viewport. */
-  overflow-anchor: none;
+  /* The scroll controller (vterm scroll.ts) is the single owner of
+     scrollTop: it pins to the bottom only while the user is following,
+     and does nothing while they are scrolled up reading. New output
+     always appends at the tail (the absolute-index model never inserts
+     above the viewport), so native scroll anchoring is safe to leave on
+     and keeps the read position steady on the rare insert-above. */
+  overflow-anchor: auto;
   font-family: var(--font-mono);
   font-size: 14px;
   line-height: 17px;
@@ -69,13 +70,14 @@
 
 .term-output {
   position: relative;
-
-  /* Suppress contenteditable visual artifacts */
-  caret-color: transparent;
   outline: none;
-  -webkit-user-modify: read-write-plaintext-only; /* stylelint-disable-line property-no-deprecated -- legacy: required for contenteditable plaintext in WebKit */
 
-  /* Allow text selection on the content (hterm pattern) */
+  /* Display-only surface: native text selection works (the hterm
+     pattern), but it is NOT contenteditable and is never focused — the
+     textarea owns input, the keyboard, and IME. Keeping the editable
+     element off the scroll content is what lets the first touch-drag
+     scroll instead of placing a caret (bug 6), and not re-rendering it
+     as an editable keeps a selection alive across redraws (bug 1). */
   user-select: text;
 }
 

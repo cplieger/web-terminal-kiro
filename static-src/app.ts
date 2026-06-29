@@ -258,9 +258,11 @@ input.addEventListener("input", (e: Event) => {
     // `data` property carries exactly the new content; using it
     // sidesteps having to diff against the placeholder.
     //
-    // iOS Safari WebKit quirk: spacebar in a contenteditable can
-    // deliver U+00A0 (NBSP) instead of U+0020. Normalize so kiro-cli
-    // receives an honest space byte.
+    // iOS Safari can deliver U+00A0 (NBSP) instead of U+0020 for the
+    // spacebar/autocorrect. Normalize so kiro-cli receives an honest
+    // space byte. (Native paste is bracketed in composition.ts's paste
+    // handler before this fires; the insertFromPaste data here is a
+    // fallback for browsers that don't raise a separate paste event.)
     send(applyStickyCtrl(ev.data.replace(/\u00A0/g, " ")));
   } else {
     // Fallback: anything in the textarea past the placeholder is new
@@ -350,40 +352,24 @@ function handleKeydown(ev: KeyboardEvent): void {
       return;
   }
 }
-outputEl.addEventListener("keydown", handleKeydown);
+// The textarea is the single keyboard target (desktop and touch alike);
+// #term-output is display-only and never focused.
 input.addEventListener("keydown", handleKeydown);
 
 // --- Focus strategy ---
-// The terminal output div is contenteditable — it receives keyboard
-// events directly AND allows native text selection. No hidden textarea
-// conflict. The textarea is kept only for iOS virtual keyboard (which
-// needs a real input element to trigger). On touch tap we focus the
-// textarea; on all other interactions the output div handles input.
+// One element, one job. #term-output is display + native selection only
+// and is NEVER focused; the textarea owns the keyboard, the local typing
+// buffer, and IME. Because the editable element is never the scroll
+// content, the first touch-drag scrolls instead of placing a caret (bug
+// 6) and a tap on a sparse screen still lands on the full-viewport scroll
+// surface (bug 7); because the display is not re-rendered as editable, a
+// selection survives a redraw (bug 1). Typed text, paste, and IME all
+// arrive through the textarea's own input / paste / composition listeners
+// (the latter two live in composition.ts).
 
-// Prevent contenteditable from actually modifying the DOM, but
-// capture the typed text and send it to the terminal.
-outputEl.addEventListener("beforeinput", (e) => {
-  if (e.inputType.startsWith("insertComposition")) {
-    return;
-  }
-  e.preventDefault();
-
-  // Handle typed text (not delete/backspace/enter — those are handled by keydown).
-  if (e.inputType === "insertText" && e.data) {
-    // iOS Safari + WebKit contenteditable quirk: the spacebar sometimes
-    // delivers U+00A0 (non-breaking space) instead of U+0020 in the
-    // InputEvent's `data`. kiro-cli/Ink would render NBSP as a visible
-    // glyph (or treat it as a non-word char) instead of a normal space,
-    // breaking the typing flow. Normalize NBSP→space before sending.
-    send(applyStickyCtrl(e.data.replace(/\u00A0/g, " ")));
-  } else if (e.inputType === "insertFromPaste" && e.data) {
-    send(bracketTextForPaste(prepareTextForTerminal(e.data)));
-  }
-});
-
-// Focus the output div on page load and after visibility changes.
+// Focus the textarea on page load and after visibility changes.
 function focusTerminal(): void {
-  outputEl.focus({ preventScroll: true });
+  input.focus({ preventScroll: true });
 }
 
 // Touch tap: focus the hidden textarea to trigger iOS keyboard.
@@ -449,9 +435,14 @@ termWrap.addEventListener("click", (e) => {
     // builds without PointerEvent support) still get a focus hook.
     return;
   }
-  // Mouse/trackpad: focus the contenteditable for keyboard input.
-  // Selection is preserved because we're focusing the same element
-  // the selection lives in.
+  // Mouse/trackpad: a plain click focuses the textarea so the user can
+  // type. Never steal focus mid-selection though — a drag-select ends
+  // with a click, and grabbing focus would collapse the selection the
+  // user just made and still wants to copy.
+  const sel = window.getSelection();
+  if (sel && sel.toString().length > 0) {
+    return;
+  }
   focusTerminal();
 });
 
@@ -612,9 +603,18 @@ function showCtxMenu(x: number, y: number): void {
     return;
   }
 
-  ctxMenu.style.left = `${x}px`;
-  ctxMenu.style.top = `${y}px`;
+  // Make it visible (so it has measurable dimensions) then clamp it
+  // inside the viewport, so it never opens off-screen near the right or
+  // bottom edge — the off-screen-callout half of bug 1. position:fixed
+  // means x/y are already viewport coordinates. Setting left/top after
+  // adding the class is flash-free: it is all one synchronous task, so
+  // the browser paints only the clamped position.
   ctxMenu.classList.add("visible");
+  const margin = 8;
+  const left = Math.max(margin, Math.min(x, window.innerWidth - ctxMenu.offsetWidth - margin));
+  const top = Math.max(margin, Math.min(y, window.innerHeight - ctxMenu.offsetHeight - margin));
+  ctxMenu.style.left = `${left}px`;
+  ctxMenu.style.top = `${top}px`;
 }
 
 termWrap.addEventListener("contextmenu", (e: MouseEvent) => {
