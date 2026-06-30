@@ -27,6 +27,6 @@
   },
   "dependencies": {
     "@cplieger/web-terminal-engine": "1.3.0",
-    "@cplieger/web-terminal-ui": "1.0.1"
+    "@cplieger/web-terminal-ui": "2.0.0"
   }
 }
