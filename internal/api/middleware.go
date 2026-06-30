@@ -1,6 +1,9 @@
-// Package api: request logging middleware, typed error envelope, and
-// JSON body-decode helper. Lives in this file so all "HTTP plumbing"
-// helpers stay grouped; http.go owns response writers and sanitisation.
+// This file holds the request-logging middleware (RequestLogger), the
+// request-id minting and validation (requestIDOrNew, validRequestID), and
+// the typed error envelope (APIError, WriteError). http.go owns the JSON
+// response writers (WriteJSON, WriteJSONStatus, Ok) and the named error
+// helpers (BadRequest, Conflict, MethodNotAllowed); the package doc lives
+// in http.go.
 
 package api
 
@@ -104,8 +107,10 @@ func requestIDOrNew(inbound string) string {
 	if _, err := rand.Read(b[:]); err != nil {
 		// rand.Read on Linux uses getrandom(2) and effectively cannot
 		// fail; if it does, fall back to a timestamp-based id so we
-		// still set a value rather than crashing the request.
-		return time.Now().UTC().Format("20060102T150405.000000000")
+		// still set a value rather than crashing the request. The
+		// layout omits the '.'/fractional part so the result satisfies
+		// validRequestID ([a-zA-Z0-9_-] only), like the hex path.
+		return time.Now().UTC().Format("20060102T150405")
 	}
 	return hex.EncodeToString(b[:])
 }

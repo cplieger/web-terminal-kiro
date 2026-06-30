@@ -53,15 +53,22 @@ tsgo --module ESNext --target ESNext --moduleResolution bundler \
 echo "[5/6] fonts (Monaspace Nerd Font, cached) + CSS bundle (from UI package)"
 FONT_CACHE="${HOME}/.cache/vibecli-fonts"
 FONT_VER="v3.4.0"
+# Keep in lockstep with NERDFONT_SHA256 in the Dockerfile (Monaspace.tar.xz, this tag).
+FONT_SHA256="5fdb97828e1a23fd28ea5ed0e7d15cdebb77ef079aaa48b93f1526764b40ef8c"
 mkdir -p "$FONT_CACHE" static/vendor/fonts
 if [ ! -f "$FONT_CACHE/MonaspiceNeNerdFontMono-Regular.otf" ]; then
   echo "  downloading Monaspace ${FONT_VER}..."
-  curl -fsSL "https://github.com/ryanoasis/nerd-fonts/releases/download/${FONT_VER}/Monaspace.tar.xz" \
-    | tar -xJ -C "$FONT_CACHE" \
-      MonaspiceNeNerdFontMono-Regular.otf \
-      MonaspiceNeNerdFontMono-Bold.otf \
-      MonaspiceNeNerdFontMono-Italic.otf \
-      MonaspiceNeNerdFontMono-BoldItalic.otf
+  mona_tmp="$(mktemp)"
+  curl --proto '=https' --tlsv1.2 -fsSL \
+    "https://github.com/ryanoasis/nerd-fonts/releases/download/${FONT_VER}/Monaspace.tar.xz" \
+    -o "$mona_tmp"
+  printf '%s  %s\n' "$FONT_SHA256" "$mona_tmp" | sha256sum -c -
+  tar -xJ -C "$FONT_CACHE" -f "$mona_tmp" \
+    MonaspiceNeNerdFontMono-Regular.otf \
+    MonaspiceNeNerdFontMono-Bold.otf \
+    MonaspiceNeNerdFontMono-Italic.otf \
+    MonaspiceNeNerdFontMono-BoldItalic.otf
+  rm -f "$mona_tmp"
 fi
 cp "$FONT_CACHE"/MonaspiceNeNerdFontMono-*.otf static/vendor/fonts/
 

@@ -9,18 +9,18 @@ stream. This guide covers the things the codebase won't tell you at a glance.
 
 - `main.go`, `routes.go` — server entry point and route wiring (both at repo
   root, `package main`). `main.go` embeds the web UI with `//go:embed static`.
-- `internal/api/` — HTTP response helpers (`WriteJSON`, `BadRequest`, `Ok`, …),
-  the `RequestLogger` middleware (structured slog access logging), and the
-  terminal output sanitisers (`StripANSI`, `SanitizeOutput`).
-- `internal/auth/` — `/api/whoami`, `/api/login`, `/api/logout`; shells out to
-  the bundled `kiro-cli` for identity, no persisted state.
+- `internal/api/` — HTTP response helpers (`WriteJSON`, `WriteJSONStatus`,
+  `BadRequest`, `Ok`, …) and the `RequestLogger` middleware (structured slog
+  access logging).
 - `static-src/` — TypeScript + CSS sources, compiled into `static/`.
 
-vibecli is a thin consumer of one first-party shared library: `vterm`
-(`github.com/cplieger/vterm` server-side, `@cplieger/vterm` client-side), the
-terminal engine. Most of "what the terminal does" lives in `vterm`, not here.
-The Go server and TS client share a binary wire protocol, not code — a
-wire-format change is a `vterm` concern and lands in that repo, not this one.
+vibecli is a thin consumer of the first-party web-terminal libraries: the
+terminal engine `web-terminal-engine` (`github.com/cplieger/web-terminal-engine`
+server-side, `@cplieger/web-terminal-engine` client-side) and the reference UI
+`@cplieger/web-terminal-ui`. Most of "what the terminal does" lives in those
+repos, not here. The Go server and TS client share a binary wire protocol, not
+code — a wire-format change is a `web-terminal-engine` concern and lands in that
+repo, not this one.
 
 Observability is slog-only: `RequestLogger` emits a structured access-log line
 per request (method/path/status/duration_ms/request_id/remote). There is no
@@ -38,12 +38,20 @@ go generate ./...   # runs: tsgo --project static-src/tsconfig.json -> static/ap
 ```
 
 `go generate` needs `tsgo` (the TypeScript-native preview compiler) on `PATH`.
-The CSS bundle has no `go generate` step: the Dockerfile concatenates the files
-listed in `static-src/css/MANIFEST` into `static/style.css` at image-build
-time. For local styling, concatenate them in manifest order yourself, e.g.:
+vibecli ships no local CSS: the bundle is assembled from the vendored
+`@cplieger/web-terminal-ui` package. At image-build time the Dockerfile
+concatenates the files listed in that package's `css/MANIFEST` into
+`static/style.css`. For a local `go run .`, install the package first
+(`cd static-src && npm install`), then reproduce the bundle from the repo
+root in MANIFEST order:
 
 ```sh
-( cd static-src/css && cat 00-tokens.css 01-reset.css 02-app.css ) > static/style.css
+UI=static-src/node_modules/@cplieger/web-terminal-ui/css
+: > static/style.css
+while IFS= read -r f; do
+  case "$f" in ''|\#*) continue ;; esac   # skip blanks + comments
+  cat "$UI/$f" >> static/style.css
+done < "$UI/MANIFEST"
 ```
 
 ## Local dev setup
@@ -100,13 +108,12 @@ assert at least once (`expect.requireAssertions`) and `.only` is forbidden.
   error bodies (`http.Error` with a JSON string, `w.Write([]byte(...))`). Use
   `WriteJSON`, `WriteJSONStatus`, `Ok`, `BadRequest`, `Conflict`,
   `MethodNotAllowed`.
-- **Sanitise subprocess output.** Anything captured from `kiro-cli` that is
-  echoed to clients or logs goes through `api.SanitizeOutput` first — it strips
-  ANSI escapes and hidden Unicode used for prompt injection.
-- **Client-local vs library code.** Only vibecli-specific UI lives in
-  `static-src/` (`predict.ts`, `composition.ts`, `viewport.ts`, `status.ts`,
-  `app.ts`). The render / keyboard / scroll / connection layers are imported
-  from `@cplieger/vterm`; don't reimplement them here.
+- **Client-local vs library code.** `static-src/app.ts` is the only client
+  source vibecli owns — a single `mount(root)` call. The input model,
+  IME/composition, predictive echo, viewport, mobile key toolbar, and status
+  banner, plus the render / keyboard / scroll / connection layers, all live in
+  `@cplieger/web-terminal-ui` (built on `@cplieger/web-terminal-engine`);
+  don't reimplement them here.
 - **CI workflows are synced, not editable.** Files under `.github/workflows/`
   carry a "Synced from cplieger/ci — DO NOT EDIT" header; the pipeline is
   centralised in `cplieger/ci`. Change behaviour there, not here.
@@ -114,6 +121,12 @@ assert at least once (`expect.requireAssertions`) and `.only` is forbidden.
   `KIRO_CLI_SHA256` (Renovate-managed). Don't switch to `latest/` URLs, bake
   the binary into the image, or re-enable in-binary auto-update — each breaks
   the pinned-sha / image-tag reproducibility story.
+- **The image runs as root by design.** OpenSSH resolves `~` from the passwd
+  entry, not `$HOME`, and the Dockerfile wires that entry for root
+  (`/config/home`). Don't add a `user:` line to `compose.yaml` or the README
+  run example — a non-root UID has no passwd entry, so `git`/`gh` over SSH
+  fail with `No user exists for uid …`. Files under `/config` and `/workspace`
+  are root-owned on the host as a result.
 
 ## Commits and PRs
 

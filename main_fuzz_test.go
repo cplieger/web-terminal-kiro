@@ -30,3 +30,34 @@ func FuzzEnvOrPartition(f *testing.F) {
 		}
 	})
 }
+
+// TestEnvOr_emptyEnvFallsBackToDefault pins envOr with hardcoded expectations:
+// a set, non-empty variable wins; an unset variable falls back; and a variable
+// set to the EMPTY STRING is treated as unset and also falls back. That
+// empty-string-as-unset case is the deliberate behavior FuzzEnvOrPartition
+// never reaches (it never sets a variable to "", and the fuzzer cannot drive
+// the process environment) and which its os.Getenv-mirroring oracle does not
+// pin as a contract.
+func TestEnvOr_emptyEnvFallsBackToDefault(t *testing.T) {
+	const key = "VIBECLI_ENVOR_TEST_KEY"
+	cases := []struct {
+		name  string
+		value string
+		set   bool
+		want  string
+	}{
+		{name: "set and non-empty returns the value", value: "chosen", set: true, want: "chosen"},
+		{name: "unset returns the fallback", set: false, want: "fallback"},
+		{name: "set to empty string is treated as unset", value: "", set: true, want: "fallback"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.set {
+				t.Setenv(key, tc.value)
+			}
+			if got := envOr(key, "fallback"); got != tc.want {
+				t.Errorf("envOr(%q, %q) = %q, want %q", key, "fallback", got, tc.want)
+			}
+		})
+	}
+}

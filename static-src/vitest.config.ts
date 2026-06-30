@@ -4,7 +4,7 @@
 // test file to get window/document/localStorage/etc. No browser binary
 // needed — happy-dom is a pure JS DOM implementation running in Node.
 // Run: vitest --run (single pass) or vitest (watch mode)
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
@@ -23,15 +23,20 @@ export default defineConfig({
     // Test files co-located with source, named *.test.ts
     include: ["**/*.test.ts"],
 
-    // Exclude compiled output and node_modules
-    exclude: ["../static/**", "node_modules/**"],
+    // Exclude compiled output, plus Vitest's defaults (node_modules at
+    // any depth, .git). Spreading configDefaults.exclude avoids narrowing
+    // the built-in "**/node_modules/**" to a top-level-only glob.
+    // "**/.code-review/**" keeps stray *.test.ts scratch (e.g. files written under
+    // .code-review/tmp by tooling) from being collected and failing the run.
+    exclude: [...configDefaults.exclude, "../static/**", "**/.code-review/**"],
 
     // Forbid .only tests unconditionally — not just in CI.
     allowOnly: false,
 
-    // vibecli's client is now a single mount() call against the shared
-    // packages; all terminal unit tests live in @cplieger/web-terminal-ui and
-    // @cplieger/web-terminal-engine. No test files remain here, so don't fail on it.
+    // app.test.ts covers vibecli's thin bootstrap (the mount() wiring); the terminal
+    // logic itself is tested in @cplieger/web-terminal-ui and @cplieger/web-terminal-engine.
+    // passWithNoTests stays as a safety net so moving the bootstrap test into the
+    // packages later won't hard-fail the suite here.
     passWithNoTests: true,
 
     // Require explicit imports of describe/it/expect from "vitest".
@@ -78,7 +83,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["*.ts"],
-      exclude: ["*.test.ts", "*.d.ts", "fc-strict-setup.ts"],
+      exclude: ["*.test.ts", "*.d.ts"],
       reportOnFailure: true,
       reporter: ["text", "text-summary", "lcov"],
       thresholds: {
