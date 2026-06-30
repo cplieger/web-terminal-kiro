@@ -94,7 +94,7 @@ RUN mkdir -p static/vendor/fonts && \
 # side under static-src/node_modules/@cplieger so tsgo's bundler resolution
 # finds the engine when compiling the UI's `@cplieger/web-terminal-engine` import.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=1.3.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=1.3.2
 # sha256 of the published npm tarball (cross-checked against the integrity
 # field in static-src/package-lock.json). Update alongside the version.
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=ccb938613852dfc5da04db6c35cd6ef48fe9e314e1c875bc38bd1ab5301dd640
