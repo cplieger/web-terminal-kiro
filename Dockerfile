@@ -99,7 +99,7 @@ ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=1.3.0
 # field in static-src/package-lock.json). Update alongside the version.
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=ccb938613852dfc5da04db6c35cd6ef48fe9e314e1c875bc38bd1ab5301dd640
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=2.0.0
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=2.1.0
 ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=fb32f5e2435705f105baad59c87d581a7baae9808ffe8d4fc76580d29b18ea09
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/node_modules/@cplieger/web-terminal-ui && \
     curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/engine.tgz "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" && \
