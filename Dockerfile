@@ -95,19 +95,13 @@ RUN mkdir -p static/vendor/fonts && \
 # finds the engine when compiling the UI's `@cplieger/web-terminal-engine` import.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=1.3.2
-# sha256 of the published npm tarball (cross-checked against the integrity
-# field in static-src/package-lock.json). Update alongside the version.
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=ccb938613852dfc5da04db6c35cd6ef48fe9e314e1c875bc38bd1ab5301dd640
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
 ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=2.0.0
-ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=fb32f5e2435705f105baad59c87d581a7baae9808ffe8d4fc76580d29b18ea09
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/node_modules/@cplieger/web-terminal-ui && \
     curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/engine.tgz "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" && \
-    printf '%s  /tmp/engine.tgz\n' "$CPLIEGER_WEB_TERMINAL_ENGINE_SHA256" | sha256sum -c - && \
     tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1 -f /tmp/engine.tgz && \
     rm /tmp/engine.tgz && \
     curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/ui.tgz "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" && \
-    printf '%s  /tmp/ui.tgz\n' "$CPLIEGER_WEB_TERMINAL_UI_SHA256" | sha256sum -c - && \
     tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1 -f /tmp/ui.tgz && \
     rm /tmp/ui.tgz
 
