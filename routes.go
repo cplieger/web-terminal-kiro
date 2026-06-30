@@ -31,7 +31,12 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.Handler, err
 		terminal.WithWorkDir(deps.workDir),
 		terminal.WithScrollbackCapacity(5000),
 	)
-	term.RegisterRoutes(mux)
+	// Mount only /ws (term.ServeHTTP delegates to the WebSocket handler). We
+	// deliberately do NOT call term.RegisterRoutes, which would also expose the
+	// engine's /debug/raw (last 16 KB of raw PTY bytes) and /debug/screen (full
+	// VT buffer) on this unauthenticated network surface. Same posture as
+	// web-terminal-server (main.go: mux.Handle("/ws", term)).
+	mux.Handle("/ws", term)
 
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
 		if !deps.ready.Load() {
