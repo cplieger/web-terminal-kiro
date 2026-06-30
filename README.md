@@ -1,6 +1,6 @@
 # vibecli
 
-[![Image Size](https://ghcr-badge.egpl.dev/cplieger/vibecli/size)](https://github.com/cplieger/vibecli/pkgs/container/vibecli)
+[![Image Size](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibecli/badges/size.json)](https://github.com/cplieger/vibecli/pkgs/container/vibecli)
 ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue)
 ![base: Debian](https://img.shields.io/badge/base-Debian-A81D33?logo=debian)
 [![Go Report Card](https://goreportcard.com/badge/github.com/cplieger/vibecli)](https://goreportcard.com/report/github.com/cplieger/vibecli)
