@@ -31,6 +31,7 @@ The terminal engine (VT500 screen buffer + WebSocket PTY handler on the server, 
 services:
   vibecli:
     image: ghcr.io/cplieger/vibecli:latest
+    user: "1000:1000"  # match your host user
     ports:
       - "9848:9848"
     volumes:
@@ -38,6 +39,15 @@ services:
       - ./workspace:/workspace  # your repos
     restart: unless-stopped
 ```
+
+Before the first start, create and own the config directory, since the container runs as `user: "1000:1000"`. The entrypoint does not `chown` it, so a root-owned host directory makes first boot fail with `failed to create config directories`:
+
+```bash
+mkdir -p /opt/appdata/vibecli
+chown -R 1000:1000 /opt/appdata/vibecli
+```
+
+To skip managing host ownership, run as root instead with `user: "0:0"` (less secure).
 
 `kiro-cli` is downloaded and pinned on first boot (it is not redistributed in the image, per the AWS Customer Agreement). Open `http://localhost:9848`, authenticate `kiro-cli`, and you have a terminal.
 

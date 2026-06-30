@@ -1,9 +1,10 @@
+# Example compose for vibecli. See the README for all configuration options and hardening.
 services:
   vibecli:
     image: ghcr.io/cplieger/vibecli:latest
     container_name: vibecli
     restart: unless-stopped
-    user: "1000:1000" # match your host user
+    user: "1000:1000"  # match your host user
 
     environment:
       TZ: "Europe/Paris"
