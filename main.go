@@ -28,13 +28,12 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-
-	"github.com/cplieger/vibecli/internal/api"
-
 	// Embed the IANA tz database so TZ (default Europe/Paris) is honored regardless
 	// of the base image's zoneinfo; without it, on a base that ships no
 	// /usr/share/zoneinfo, time.Local silently falls back to UTC.
 	_ "time/tzdata"
+
+	"github.com/cplieger/vibecli/internal/api"
 )
 
 //go:embed static
