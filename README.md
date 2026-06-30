@@ -16,7 +16,7 @@ A minimal browser terminal for the Kiro CLI — `kiro-cli` in a tab, nothing mor
 
 Vibecli is a single Go binary that serves a static web UI and brokers a PTY for one `kiro-cli` process per session. Unlike its sister app [vibekit](https://github.com/cplieger/vibekit), there is no ACP bridge, no chat protocol, and no chat-history persistence — the browser drives `kiro-cli`'s own TUI directly through the terminal stream, the same as an SSH session. Terminal state lives only in the server's in-memory VT buffer and is replayed to the browser on reconnect.
 
-The terminal engine (VT500 screen buffer + WebSocket PTY handler on the server, renderer/keyboard/mouse/wire-decoder in the browser) is the shared [`@cplieger/web-terminal-engine`](https://github.com/cplieger/web-terminal-engine) library; vibecli adds only its own predictive echo, IME handling, and viewport/status UI.
+The terminal engine (VT500 screen buffer + WebSocket PTY handler on the server, renderer/keyboard/mouse/wire-decoder in the browser) is the shared [`@cplieger/web-terminal-engine`](https://github.com/cplieger/web-terminal-engine) library, and the touch-first browser UI built on it — predictive echo, IME handling, viewport, status banner, and the mobile key toolbar — is the [`@cplieger/web-terminal-ui`](https://github.com/cplieger/web-terminal-ui) reference UI. vibecli is the thinnest possible consumer: `static-src/app.ts` is a single `mount()` call, with almost nothing terminal-related held locally.
 
 ## Features
 
@@ -31,23 +31,15 @@ The terminal engine (VT500 screen buffer + WebSocket PTY handler on the server, 
 services:
   vibecli:
     image: ghcr.io/cplieger/vibecli:latest
-    user: "1000:1000"  # match your host user
     ports:
       - "9848:9848"
     volumes:
-      - ./config:/config        # kiro-cli auth/state, tools
-      - ./workspace:/workspace  # your repos
+      - "/opt/appdata/vibecli:/config"
+      - "/opt/appdata/vibecli/workspace:/workspace"  # your repos
     restart: unless-stopped
 ```
 
-Before the first start, create and own the config directory, since the container runs as `user: "1000:1000"`. The entrypoint does not `chown` it, so a root-owned host directory makes first boot fail with `failed to create config directories`:
-
-```bash
-mkdir -p /opt/appdata/vibecli
-chown -R 1000:1000 /opt/appdata/vibecli
-```
-
-To skip managing host ownership, run as root instead with `user: "0:0"` (less secure).
+The container runs as **root** by design — the image gives root a home on the persistent volume (`/config/home`), and OpenSSH resolves `~` from that passwd entry (not `$HOME`), so `kiro-cli`, `git`, and `gh` work over SSH. Running as a non-root UID (`user: "1000:1000"`) has no passwd entry and breaks `git`/`gh` over SSH with `No user exists for uid 1000`. The entrypoint creates `/config` and `/workspace` on first boot, so there's no host-side setup; files written there are root-owned on the host — `chown` them to your user if you need to reach the checkouts from outside the container.
 
 `kiro-cli` is downloaded and pinned on first boot (it is not redistributed in the image, per the AWS Customer Agreement). Open `http://localhost:9848`, authenticate `kiro-cli`, and you have a terminal.
 

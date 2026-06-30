@@ -7,14 +7,26 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
-    ca-certificates curl jq openssl xz-utils && rm -rf /var/lib/apt/lists/*
+    ca-certificates curl xz-utils && rm -rf /var/lib/apt/lists/*
 
 # Go for building the web server.
 # renovate: datasource=golang-version depName=golang
 ARG GO_VERSION=1.26.4
+# sha256 of the official go.dev linux tarball, per arch (CI builds amd64 and
+# arm64 natively). Update both alongside GO_VERSION; values come from
+# https://go.dev/dl/?mode=json (the .sha256 sidecar 302-redirects to HTML).
+ARG GO_SHA256_AMD64=1153d3d50e0ac764b447adfe05c2bcf08e889d42a02e0fe0259bd47f6733ad7f
+ARG GO_SHA256_ARM64=ef758ae7c6cf9267c9c0ef080b8965f453d89ab2d25d9eb22de4405925238768
 RUN ARCH=$(dpkg --print-architecture) && \
-    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
-    | tar -C /usr/local -xz
+    case "$ARCH" in \
+      amd64) GO_SHA256="$GO_SHA256_AMD64" ;; \
+      arm64) GO_SHA256="$GO_SHA256_ARM64" ;; \
+      *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" && \
+    printf '%s  /tmp/go.tar.gz\n' "$GO_SHA256" | sha256sum -c - && \
+    tar -C /usr/local -xzf /tmp/go.tar.gz && \
+    rm /tmp/go.tar.gz
 ENV PATH="/usr/local/go/bin:${PATH}"
 
 # tsgo (TypeScript 7 native preview) for compiling the browser client.
@@ -30,10 +42,20 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # See .github/renovate.json for the followTag rule.
 # renovate: datasource=npm depName=@typescript/native-preview
 ARG TSGO_VERSION=7.0.0-dev.20260615.1
+# sha256 of the platform-specific tsgo tarball, per arch. Update both alongside
+# TSGO_VERSION (the linux-x64 and linux-arm64 packages publish in lockstep).
+ARG TSGO_SHA256_X64=214b2ff1bae02f902b2ddc90f9599ad7991e6f333ccb97046489170cd5865d1e
+ARG TSGO_SHA256_ARM64=373161c691fcf7af07936daecbc065ce5343c4a15c47d87e879f86de921b4d1a
 RUN TSGO_ARCH=$([ "$(dpkg --print-architecture)" = "arm64" ] && echo "arm64" || echo "x64") && \
-    curl -fsSL \
-      "https://registry.npmjs.org/@typescript/native-preview-linux-${TSGO_ARCH}/-/native-preview-linux-${TSGO_ARCH}-${TSGO_VERSION}.tgz" \
-    | tar -xz -C /tmp
+    case "$TSGO_ARCH" in \
+      x64) TSGO_SHA256="$TSGO_SHA256_X64" ;; \
+      arm64) TSGO_SHA256="$TSGO_SHA256_ARM64" ;; \
+    esac && \
+    curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/tsgo.tgz \
+      "https://registry.npmjs.org/@typescript/native-preview-linux-${TSGO_ARCH}/-/native-preview-linux-${TSGO_ARCH}-${TSGO_VERSION}.tgz" && \
+    printf '%s  /tmp/tsgo.tgz\n' "$TSGO_SHA256" | sha256sum -c - && \
+    tar -xz -C /tmp -f /tmp/tsgo.tgz && \
+    rm /tmp/tsgo.tgz
 
 # Nerd Font. kiro-cli's diff UI uses nerd-font private-use-area
 # glyphs (line markers, file-type icons). System monospace fonts
@@ -44,6 +66,10 @@ RUN TSGO_ARCH=$([ "$(dpkg --print-architecture)" = "arm64" ] && echo "arm64" || 
 # much and ships gzipped over the wire (~900 KB to the browser).
 # renovate: datasource=github-releases depName=ryanoasis/nerd-fonts
 ARG NERDFONT_VERSION=v3.4.0
+# sha256 of Monaspace.tar.xz for this tag. GitHub release assets are MUTABLE (a
+# retag can swap the bytes under a fixed tag), so this gate is the real
+# integrity anchor here. Update alongside NERDFONT_VERSION.
+ARG NERDFONT_SHA256=5fdb97828e1a23fd28ea5ed0e7d15cdebb77ef079aaa48b93f1526764b40ef8c
 
 WORKDIR /build
 COPY go.mod go.sum ./
@@ -52,12 +78,15 @@ COPY . ./
 
 # Fetch Nerd Font for the monospace terminal display.
 RUN mkdir -p static/vendor/fonts && \
-    curl -fsSL "https://github.com/ryanoasis/nerd-fonts/releases/download/${NERDFONT_VERSION}/Monaspace.tar.xz" \
-      | tar -xJ -C static/vendor/fonts \
-          MonaspiceNeNerdFontMono-Regular.otf \
-          MonaspiceNeNerdFontMono-Bold.otf \
-          MonaspiceNeNerdFontMono-Italic.otf \
-          MonaspiceNeNerdFontMono-BoldItalic.otf
+    curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/mona.tar.xz \
+      "https://github.com/ryanoasis/nerd-fonts/releases/download/${NERDFONT_VERSION}/Monaspace.tar.xz" && \
+    printf '%s  /tmp/mona.tar.xz\n' "$NERDFONT_SHA256" | sha256sum -c - && \
+    tar -xJ -C static/vendor/fonts -f /tmp/mona.tar.xz \
+        MonaspiceNeNerdFontMono-Regular.otf \
+        MonaspiceNeNerdFontMono-Bold.otf \
+        MonaspiceNeNerdFontMono-Italic.otf \
+        MonaspiceNeNerdFontMono-BoldItalic.otf && \
+    rm /tmp/mona.tar.xz
 
 # Fetch the engine + UI TypeScript from the npm registry. Both publish TS
 # source only (no precompiled JS) — same pattern as @cplieger/reactive,
@@ -66,13 +95,21 @@ RUN mkdir -p static/vendor/fonts && \
 # finds the engine when compiling the UI's `@cplieger/web-terminal-engine` import.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=1.3.0
+# sha256 of the published npm tarball (cross-checked against the integrity
+# field in static-src/package-lock.json). Update alongside the version.
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=ccb938613852dfc5da04db6c35cd6ef48fe9e314e1c875bc38bd1ab5301dd640
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
 ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=2.0.0
+ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=fb32f5e2435705f105baad59c87d581a7baae9808ffe8d4fc76580d29b18ea09
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/node_modules/@cplieger/web-terminal-ui && \
-    curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
-      | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1 && \
-    curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
-      | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
+    curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/engine.tgz "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" && \
+    printf '%s  /tmp/engine.tgz\n' "$CPLIEGER_WEB_TERMINAL_ENGINE_SHA256" | sha256sum -c - && \
+    tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1 -f /tmp/engine.tgz && \
+    rm /tmp/engine.tgz && \
+    curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/ui.tgz "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" && \
+    printf '%s  /tmp/ui.tgz\n' "$CPLIEGER_WEB_TERMINAL_UI_SHA256" | sha256sum -c - && \
+    tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1 -f /tmp/ui.tgz && \
+    rm /tmp/ui.tgz
 
 # Compile client TypeScript and the engine + UI libs in a single layer.
 # Must run before the binary build because main.go's `//go:embed static`
@@ -200,7 +237,7 @@ COPY tools.json /opt/vibecli/tools.json
 WORKDIR /workspace
 EXPOSE 9848
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=30s \
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=180s \
     CMD curl -sf http://127.0.0.1:9848/api/health || exit 1
 
 ENTRYPOINT ["/opt/vibecli/entrypoint.sh"]

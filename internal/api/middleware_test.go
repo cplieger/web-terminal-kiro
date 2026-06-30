@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,5 +129,116 @@ func TestRequestLogger_skipsWebSocketPath(t *testing.T) {
 	}
 	if respHeader != "" {
 		t.Errorf("response %s = %q, want \"\" (header not set on /ws)", RequestID, respHeader)
+	}
+}
+
+// TestStatusRecorder_capturesFirstStatusOnly pins the access-log status
+// recorder: it records the first explicit WriteHeader code (which the access
+// log reports) and forwards it once to the client; a second WriteHeader is
+// suppressed so a late, spurious call cannot rewrite the logged status. The
+// recorder's own status field is asserted directly because httptest's recorder
+// has its own first-write guard, so checking only the forwarded code would not
+// catch a regression in statusRecorder's guard.
+func TestStatusRecorder_capturesFirstStatusOnly(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sr := &statusRecorder{ResponseWriter: rec, status: http.StatusOK}
+
+	sr.WriteHeader(http.StatusNotFound)
+	if sr.status != http.StatusNotFound {
+		t.Errorf("recorded status after first WriteHeader = %d, want %d", sr.status, http.StatusNotFound)
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("forwarded status after first WriteHeader = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	sr.WriteHeader(http.StatusInternalServerError)
+	if sr.status != http.StatusNotFound {
+		t.Errorf("recorded status after second WriteHeader = %d, want it pinned at %d", sr.status, http.StatusNotFound)
+	}
+}
+
+// TestValidRequestID_rejectsInvalidCharacters pins the charset half of the
+// header-injection defense: a same-length id containing any byte outside
+// [a-zA-Z0-9_-] is rejected. The length-boundary test covers only length and
+// FuzzValidRequestID asserts only the accept direction, so without this a
+// mutant that widened the accepted set (spaces, dots, control bytes) would go
+// uncaught by the deterministic suite. All inputs are 1..64 chars to isolate
+// the charset check from the length check; every expectation is false.
+func TestValidRequestID_rejectsInvalidCharacters(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{name: "space", in: "abc def"},
+		{name: "dot", in: "abc.def"},
+		{name: "slash", in: "abc/def"},
+		{name: "newline", in: "abc\ndef"},
+		{name: "carriage return", in: "abc\rdef"},
+		{name: "tab", in: "abc\tdef"},
+		{name: "null byte", in: "abc\x00def"},
+		{name: "bracket", in: "abc]def"},
+		{name: "colon", in: "abc:def"},
+		{name: "non-ASCII letter", in: "abcédef"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if validRequestID(tc.in) {
+				t.Errorf("validRequestID(%q) = true, want false", tc.in)
+			}
+		})
+	}
+}
+
+// TestRequestLogger_emitsAccessLogWithResponseStatus pins vibecli's sole
+// request-observability output: the slog access-log line. vibecli is
+// slog-only (no /metrics), so this line is the only per-request signal an
+// operator or a Loki/Alloy dashboard receives, and its field set
+// (level/msg/method/path/status/request_id) is the documented contract. The
+// test captures slog output, drives a request whose inner handler writes 404,
+// and asserts the emitted "http" record carries that status -- proving the
+// access log reports statusRecorder's captured code rather than a constant --
+// at level INFO, with the method, path, and a minted valid request id. It runs
+// serially (no t.Parallel) because it swaps the process-global slog.Default(),
+// restored via t.Cleanup.
+func TestRequestLogger_emitsAccessLogWithResponseStatus(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/thing", http.NoBody)
+	RequestLogger(inner).ServeHTTP(httptest.NewRecorder(), req)
+
+	var logged struct {
+		Level     string `json:"level"`
+		Msg       string `json:"msg"`
+		Method    string `json:"method"`
+		Path      string `json:"path"`
+		Status    int    `json:"status"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &logged); err != nil {
+		t.Fatalf("decode access-log line %q: %v", buf.String(), err)
+	}
+	if logged.Msg != "http" {
+		t.Errorf("access-log msg = %q, want %q", logged.Msg, "http")
+	}
+	if logged.Level != "INFO" {
+		t.Errorf("access-log level = %q, want INFO (a downgrade hides the line in production)", logged.Level)
+	}
+	if logged.Method != http.MethodPost {
+		t.Errorf("access-log method = %q, want %q", logged.Method, http.MethodPost)
+	}
+	if logged.Path != "/api/thing" {
+		t.Errorf("access-log path = %q, want %q", logged.Path, "/api/thing")
+	}
+	if logged.Status != http.StatusNotFound {
+		t.Errorf("access-log status = %d, want %d (the line must report statusRecorder's code)", logged.Status, http.StatusNotFound)
+	}
+	if !validRequestID(logged.RequestID) {
+		t.Errorf("access-log request_id = %q, want a minted valid id", logged.RequestID)
 	}
 }

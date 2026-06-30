@@ -22,6 +22,11 @@ RUNTIMES="$TOOLS/runtimes"
 GOBIN="$TOOLS/go/bin"
 MANIFEST="/config/tools.json"
 
+# Cap each install so a half-open socket can't hang the blocking
+# foreground boot forever (the server only execs after setup-tools
+# returns). 600s is generous for the ~190 MB Go runtime on a slow link.
+INSTALL_TIMEOUT="${INSTALL_TIMEOUT:-600}"
+
 export GOROOT="$RUNTIMES/go"
 export GOPATH="$TOOLS/go"
 export GOBIN
@@ -123,7 +128,7 @@ remove_shims() {
 # Check upstream for a newer version and rewrite the manifest. Returns 0 if
 # changed. Honors auto_update:false. Methods: github, gomod, url.
 check_update() {
-    local jq_path="$1" name="$2" current="$3" method="$4" latest=""
+    local jq_path="$1" current="$2" method="$3" latest=""
     entry_auto_update "$jq_path" || return 1
     case "$method" in manual|null) return 1 ;; esac
     # Skip pure-hex commit pins (not comparable); everything else is a tag.
@@ -163,7 +168,7 @@ check_update() {
 # Remove a tool's install footprint so the next loop re-downloads it.
 clear_tool() {
     local section="$1" name="$2"
-    local jq_path=".${section}[\"$2\"]"
+    local jq_path=".${section}[\"$name\"]"
     case "$section" in
         runtimes) rm -rf "${RUNTIMES:?}/$name" ;;
         binary|custom) rm -f "$BIN/$name" ;;
@@ -193,7 +198,7 @@ run_install() {
     local jq_path="$1" version="$2" install_cmd
     install_cmd=$(jq -r "${jq_path}.install" "$MANIFEST")
     [ "$install_cmd" = "null" ] || [ -z "$install_cmd" ] && { printf "    error: no install command\n"; return 1; }
-    eval "$(expand "$install_cmd" "$version")"
+    timeout "$INSTALL_TIMEOUT" bash -uo pipefail -c "$(expand "$install_cmd" "$version")"
 }
 
 # --- Sections (order matters: runtimes before lsp which may require them) ---
@@ -206,7 +211,7 @@ if section_empty runtimes; then printf "  (none configured)\n"; else
         method=$(jq -r "${jq_path}.update.method // \"manual\"" "$MANIFEST")
         printf "  %s (%s):\n" "$name" "$version"
         entry_enabled "$jq_path" || { printf "    disabled\n"; continue; }
-        if check_update "$jq_path" "$name" "$version" "$method"; then
+        if check_update "$jq_path" "$version" "$method"; then
             clear_tool runtimes "$name"; version=$(jq -r "${jq_path}.version" "$MANIFEST")
         fi
         probe=$(jq -r "${jq_path}.probe // \"\"" "$MANIFEST")
@@ -226,7 +231,7 @@ if section_empty binary; then printf "  (none configured)\n"; else
         method=$(jq -r "${jq_path}.update.method // \"manual\"" "$MANIFEST")
         printf "  %s (%s):\n" "$name" "$version"
         entry_enabled "$jq_path" || { printf "    disabled\n"; continue; }
-        if check_update "$jq_path" "$name" "$version" "$method"; then
+        if check_update "$jq_path" "$version" "$method"; then
             clear_tool binary "$name"; version=$(jq -r "${jq_path}.version" "$MANIFEST")
         fi
         if ! has_bin "$name"; then
@@ -246,7 +251,7 @@ if section_empty custom; then printf "  (none configured)\n"; else
         printf "  %s (%s):\n" "$name" "$version"
         entry_enabled "$jq_path" || { printf "    disabled\n"; continue; }
         requires_satisfied "$jq_path" || continue
-        if check_update "$jq_path" "$name" "$version" "$method"; then
+        if check_update "$jq_path" "$version" "$method"; then
             clear_tool custom "$name"; version=$(jq -r "${jq_path}.version" "$MANIFEST")
         fi
         if ! has_bin "$name"; then
@@ -267,7 +272,7 @@ if section_empty lsp; then printf "  (none configured)\n"; else
         printf "  %s (%s, via %s):\n" "$name" "$version" "$install_method"
         entry_enabled "$jq_path" || { printf "    disabled\n"; continue; }
         requires_satisfied "$jq_path" || continue
-        if check_update "$jq_path" "$name" "$version" "$method"; then
+        if check_update "$jq_path" "$version" "$method"; then
             clear_tool lsp "$name"; version=$(jq -r "${jq_path}.version" "$MANIFEST")
         fi
         primary=$(jq -r "${jq_path}.primary // \"$name\"" "$MANIFEST")
@@ -279,7 +284,7 @@ if section_empty lsp; then printf "  (none configured)\n"; else
             go)
                 if ! command -v go >/dev/null 2>&1; then printf "    skipped: go not available\n"; continue; fi
                 pkg=$(jq -r "${jq_path}.package" "$MANIFEST"); pkg="${pkg//\$\{VERSION\}/$version}"
-                go install "$pkg" || { printf "    error: go install failed\n"; FAILURES=$((FAILURES + 1)); } ;;
+                timeout "$INSTALL_TIMEOUT" go install "$pkg" || { printf "    error: go install failed\n"; FAILURES=$((FAILURES + 1)); } ;;
             *) printf "    error: unknown install method '%s'\n" "$install_method" ;;
         esac
         write_shims "$jq_path"
@@ -296,10 +301,24 @@ if section_empty apt; then printf "  (none configured)\n"; else
         else printf "  %s: installed\n" "$name"; fi
     done
     if [ -n "$apt_list" ]; then
-        printf "  installing:%s\n" "$apt_list"
-        # shellcheck disable=SC2086
-        apt-get update -qq && apt-get install -y -qq --no-install-recommends $apt_list 2>&1 | tail -3
-        rm -rf /var/lib/apt/lists/*
+        if [ "$(id -u)" -ne 0 ]; then
+            printf '  WARNING: apt packages require root (set user: "0:0"); skipping:%s\n' "$apt_list"
+            FAILURES=$((FAILURES + 1))
+        else
+            printf "  installing:%s\n" "$apt_list"
+            apt_log=$(mktemp)
+            # shellcheck disable=SC2086
+            if apt-get -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 update -qq \
+               && apt-get -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 install -y -qq --no-install-recommends $apt_list > "$apt_log" 2>&1; then
+                tail -3 "$apt_log"
+            else
+                tail -3 "$apt_log"
+                printf "  error: apt install failed:%s\n" "$apt_list"
+                FAILURES=$((FAILURES + 1))
+            fi
+            rm -f "$apt_log"
+            rm -rf /var/lib/apt/lists/*
+        fi
     fi
 fi
 

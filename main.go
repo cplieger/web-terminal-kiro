@@ -1,7 +1,8 @@
 // Package main is vibecli — a browser terminal wrapped around kiro-cli.
 // Each /ws connection exec's `kiro-cli chat` directly in a PTY. Server-side
-// state lives in vibecli's own VT screen (internal/vt): on reconnect, the
-// current cell snapshot is replayed to the client. No external multiplexer.
+// state lives in the web-terminal-engine VT screen buffer (its vt package):
+// on reconnect, the current cell snapshot is replayed to the client. No
+// external multiplexer.
 package main
 
 // Build inputs for `go:embed static`. The Dockerfile invokes the same
@@ -9,10 +10,9 @@ package main
 // same `static/` tree so `go run .` and `go build .` work without the
 // container.
 //
-// Order matters: wire-codegen first (TS sources reference its output),
-// then tsgo for the JS bundle (last because it fails fast if the
-// generated input is missing). The CSS bundle is concatenated by the
-// Dockerfile at build time; no go:generate step for it.
+// The single step runs tsgo to build the JS bundle from static-src.
+// The CSS bundle is concatenated by the Dockerfile at build time;
+// no go:generate step for it.
 //
 //go:generate tsgo --project static-src/tsconfig.json
 
@@ -50,6 +50,18 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	addr := envOr("KWEB_ADDR", ":9848")
+	if host, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
+		// Warn for any bind reachable beyond loopback: the wildcard forms
+		// (empty host in ":9848", 0.0.0.0, ::) AND any specific routable IP
+		// (LAN/public) are equally exposed. Only an explicit loopback bind
+		// (127.0.0.0/8, ::1, or the "localhost" name) is safe to skip.
+		ip := net.ParseIP(host)
+		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			slog.Warn("serving an UNAUTHENTICATED kiro-cli shell on a non-loopback address; front it with an authenticating reverse proxy",
+				"addr", addr,
+				"hint", "any client that can reach this port gets a kiro-cli PTY with filesystem access to /workspace and the /config home (auth tokens, ssh keys, gitconfig)")
+		}
+	}
 	cliPath := envOr("KIRO_CLI_PATH", "kiro-cli")
 	workDir := envOr("KWEB_WORK_DIR", "/workspace")
 
@@ -80,19 +92,19 @@ func main() {
 		Addr:              addr,
 		Handler:           http.NewCrossOriginProtection().Handler(api.RequestLogger(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", srv.Addr)
+	if err != nil {
+		slog.Error("listen failed", "addr", srv.Addr, "error", err)
+		os.Exit(1)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", srv.Addr)
-	if err != nil {
-		slog.Error("listen failed", "addr", srv.Addr, "error", err)
-		stop()
-		return
-	}
 
 	go func() {
 		slog.Info("vibecli listening",

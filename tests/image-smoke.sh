@@ -5,13 +5,19 @@
 # Starts the assembled image and waits for the container's own HEALTHCHECK
 # (HTTP GET /api/health on :9848) to report "healthy" — proving the web
 # terminal server binds, the embedded UI is present, and the health endpoint
-# serves. vibecli installs kiro-cli on first boot, so the timeout exceeds the
-# image's 30s healthcheck start-period with margin for the download.
+# serves. vibecli's first boot is blocking: entrypoint.sh downloads and
+# verifies kiro-cli and runs setup-tools.sh in the foreground before the
+# server binds, so /api/health stays down until that finishes. The image's
+# HEALTHCHECK start-period (180s) holds off counting failed probes until then;
+# once it elapses, failed probes count and the container flips to "unhealthy"
+# after retries x interval. This test fails on the first "unhealthy" reading,
+# so TIMEOUT must cover the start-period plus a couple of probe intervals (not
+# merely the download) or a slow-but-OK cold boot is failed prematurely.
 set -eu
 
 IMG="${1:?usage: image-smoke.sh <image-ref>}"
 NAME="smoke-vibecli-$$"
-TIMEOUT=150
+TIMEOUT=240
 
 # shellcheck disable=SC2329  # invoked indirectly via trap
 cleanup() {

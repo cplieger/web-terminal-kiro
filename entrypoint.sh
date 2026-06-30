@@ -55,7 +55,9 @@ install_kiro_cli() {
     tmpdir=$(mktemp -d) || return 1
     zip="$tmpdir/kirocli.zip"
 
-    if ! curl --proto '=https' --tlsv1.2 -fsSL "$zip_url" -o "$zip"; then
+    if ! curl --proto '=https' --tlsv1.2 -fsSL \
+            --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 \
+            "$zip_url" -o "$zip"; then
         printf 'ERROR: failed to download kiro-cli zip from %s\n' "$zip_url" >&2
         rm -rf "$tmpdir"
         return 1
@@ -177,8 +179,10 @@ fi
 if [ -s /config/tools.json ]; then
     SETUP_LOG="/tmp/setup-tools.log"
     printf 'Running setup-tools.sh (log: %s)\n' "$SETUP_LOG"
-    bash /opt/vibecli/setup-tools.sh 2>&1 | tee "$SETUP_LOG" \
-        || printf 'WARNING: setup-tools.sh reported failures; check %s\n' "$SETUP_LOG"
+    bash /opt/vibecli/setup-tools.sh 2>&1 | tee "$SETUP_LOG"
+    if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+        printf 'WARNING: setup-tools.sh reported failures; check %s\n' "$SETUP_LOG" >&2
+    fi
 fi
 
 # Hardcode dark theme. kiro-cli's "default" diff preset resolves

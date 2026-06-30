@@ -7,14 +7,6 @@ import (
 	"net/http"
 )
 
-// MaxJSONBody is the maximum size for JSON request bodies (1 MiB).
-const MaxJSONBody = 1024 * 1024
-
-// LimitBody wraps r.Body with MaxBytesReader to prevent oversized requests.
-func LimitBody(w http.ResponseWriter, r *http.Request, maxBytes int64) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-}
-
 // --- JSON response writers ---
 
 func jsonHeaders(w http.ResponseWriter) {

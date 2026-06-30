@@ -4,7 +4,6 @@ services:
     image: ghcr.io/cplieger/vibecli:latest
     container_name: vibecli
     restart: unless-stopped
-    user: "1000:1000"  # match your host user
 
     environment:
       TZ: "Europe/Paris"
@@ -14,3 +13,4 @@ services:
 
     volumes:
       - "/opt/appdata/vibecli:/config"
+      - "/opt/appdata/vibecli/workspace:/workspace"  # your repos
