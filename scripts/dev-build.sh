@@ -51,9 +51,10 @@ tsgo --module ESNext --target ESNext --moduleResolution bundler \
   --rootDir "$ENGINE_PKG/src" --skipLibCheck --strict "$ENGINE_PKG/src"/*.ts
 # Compile the whole nested UI src tree (index.ts + presets.ts + kernel/ +
 # features/); find collects every .ts (the overlay already excluded tests).
+mapfile -t ui_ts < <(find "$UI_PKG/src" -name '*.ts')
 tsgo --module ESNext --target ESNext --moduleResolution bundler \
   --outDir static/vendor/cplieger-web-terminal-ui \
-  --rootDir "$UI_PKG/src" --skipLibCheck --strict $(find "$UI_PKG/src" -name '*.ts')
+  --rootDir "$UI_PKG/src" --skipLibCheck --strict "${ui_ts[@]}"
 
 echo "[5/6] fonts (Monaspace Nerd Font, cached) + CSS bundle (from UI package)"
 FONT_CACHE="${HOME}/.cache/vibecli-fonts"

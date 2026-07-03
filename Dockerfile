@@ -119,7 +119,8 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/no
 # browser can fetch the compiled JS via the importmap. Internal imports (the
 # UI's bare `@cplieger/web-terminal-engine` and both packages' relative `./*.js`) are
 # preserved and resolve via the importmap + vendored dirs at runtime.
-RUN /tmp/package/lib/tsgo --project static-src/tsconfig.json && \
+RUN mapfile -t ui_ts < <(find static-src/node_modules/@cplieger/web-terminal-ui/src -name '*.ts') && \
+    /tmp/package/lib/tsgo --project static-src/tsconfig.json && \
     /tmp/package/lib/tsgo \
         --module ESNext \
         --target ESNext \
@@ -137,7 +138,7 @@ RUN /tmp/package/lib/tsgo --project static-src/tsconfig.json && \
         --rootDir static-src/node_modules/@cplieger/web-terminal-ui/src \
         --skipLibCheck \
         --strict \
-        $(find static-src/node_modules/@cplieger/web-terminal-ui/src -name '*.ts')
+        "${ui_ts[@]}"
 
 # Concatenate the UI package's per-feature CSS splits into the served bundle.
 # Behavior: skip blank lines and #-comments, cat each listed file
