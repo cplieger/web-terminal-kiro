@@ -21,7 +21,7 @@ go 1.26.4
 
 use .
 
-replace github.com/cplieger/web-terminal-engine => ../web-terminal-engine
+replace github.com/cplieger/web-terminal-engine/v2 => ../web-terminal-engine
 EOF
 
 echo "[2/6] overlay local engine + UI TS into the bundler-resolved packages"

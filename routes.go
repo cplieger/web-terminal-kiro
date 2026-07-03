@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibecli/internal/api"
-	"github.com/cplieger/web-terminal-engine/terminal"
+	"github.com/cplieger/web-terminal-engine/v2/terminal"
 )
 
 type routeDeps struct {
