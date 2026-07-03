@@ -2,7 +2,7 @@
 
 Vibecli is **pre-1.0** (currently `v0.x`) — a minimal browser terminal wrapping
 a single kiro-cli PTY. This document supersedes the
-[default fleet roadmap](https://github.com/cplieger/.github/blob/main/ROADMAP.md)
+[default shared roadmap](https://github.com/cplieger/.github/blob/main/ROADMAP.md)
 for this repository.
 
 ## Current focus
