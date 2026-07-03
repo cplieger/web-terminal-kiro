@@ -35,17 +35,19 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	}
 	mux.Handle("/", cacheHeaders(etags, http.FileServer(http.FS(sub))))
 
-	// classifier maps kiro-cli's OSC 9 notification text to a refined session
-	// status for the tab activity dots: kiro-cli emits "Response complete" at the
-	// end of an agent turn and "Permission required" when a tool call is blocked
-	// on approval (confirmed against the pinned 2.11.0 build). Any other message
-	// is ignored, leaving the session on its activity-derived working/idle state.
-	// This mapping is the only kiro-cli-specific coupling; the engine stays
-	// generic (a plain shell server sets no classifier).
+	// classifier maps kiro-cli's OSC 9 notification text to a latched session
+	// status for the tab activity dots: "Response complete" at the end of an
+	// agent turn latches the done (green) state, and "Permission required" when a
+	// tool call is blocked on approval latches the needs-input (amber) state
+	// (confirmed against the pinned 2.11.0 build). A new working phase (the OSC
+	// 9;4 progress signal, enabled by the factory's TERM_PROGRAM) clears the
+	// latch. Any other message is ignored. This mapping is the only
+	// kiro-cli-specific coupling; the engine stays generic (a plain shell server
+	// sets no classifier and derives working/idle from output activity).
 	classifier := func(msg string) (string, bool) {
 		switch msg {
 		case "Response complete":
-			return terminal.StatusIdle, true
+			return terminal.StatusDone, true
 		case "Permission required":
 			return terminal.StatusInput, true
 		default:
@@ -62,11 +64,20 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	// classifier) even though no browser tab claims focus (design 7.2);
 	// web-terminal-server deliberately does NOT use this, since a generic
 	// shell/editor wants real focus reporting.
+	//
+	// WithEnv sets TERM_PROGRAM=WezTerm so kiro-cli enables its ConEmu OSC 9;4
+	// progress reporting, which it gates on a terminal allowlist
+	// (iTerm.app/WezTerm/Windows Terminal). That progress signal is what drives
+	// the tab's pulsing purple "working" dot from real agent activity, instead of
+	// raw output activity (which also fires while the user types at the prompt).
+	// WezTerm additionally unlocks kiro-cli's synchronized output (DEC 2026, less
+	// flicker) and OSC 8 hyperlinks, both of which the engine renders.
 	factory := func(id string) *terminal.Handler {
 		return terminal.NewHandler(deps.cmd,
 			terminal.WithWorkDir(deps.workDir),
 			terminal.WithScrollbackCapacity(5000),
 			terminal.WithKeepUnfocused(),
+			terminal.WithEnv([]string{"TERM_PROGRAM=WezTerm"}),
 			terminal.WithLogger(slog.Default().With("session", id)),
 		)
 	}

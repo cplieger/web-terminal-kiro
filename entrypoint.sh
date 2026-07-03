@@ -177,6 +177,11 @@ if [ -x "$BIN" ]; then
     # focus-gated notifier keeps firing even with no focused browser tab.
     "$BIN" settings chat.enableNotifications true > /dev/null 2>&1 || true
     "$BIN" settings chat.notificationMethod osc9 > /dev/null 2>&1 || true
+    # Emit a dynamic terminal title (OSC 0): "kiro: <first message | cwd>". This
+    # is what gives each tab a real, distinct label instead of a generic one; the
+    # engine captures the title and the tabs UI shows it (numbered fallback +
+    # de-dup for still-untitled tabs).
+    "$BIN" settings chat.terminalTitle true > /dev/null 2>&1 || true
 fi
 
 # Install/update tools from /config/tools.json, FOREGROUND (blocking) so LSPs
