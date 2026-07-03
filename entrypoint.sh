@@ -177,11 +177,14 @@ if [ -x "$BIN" ]; then
     # focus-gated notifier keeps firing even with no focused browser tab.
     "$BIN" settings chat.enableNotifications true > /dev/null 2>&1 || true
     "$BIN" settings chat.notificationMethod osc9 > /dev/null 2>&1 || true
-    # Emit a dynamic terminal title (OSC 0): "kiro: <first message | cwd>". This
-    # is what gives each tab a real, distinct label instead of a generic one; the
-    # engine captures the title and the tabs UI shows it (numbered fallback +
-    # de-dup for still-untitled tabs).
-    "$BIN" settings chat.terminalTitle true > /dev/null 2>&1 || true
+    # Explicitly disable kiro-cli's dynamic terminal title. Its OSC 0 title only
+    # reflects the cwd for a live session (it reloads its session title just on a
+    # session-id change, not per turn), so it would make every tab read
+    # "kiro: /workspace". Set false (not merely unset) so a container that
+    # previously persisted it true gets it turned off on restart. The
+    # web-terminal-ui tabs feature instead derives each tab's title from the
+    # user's first submitted line.
+    "$BIN" settings chat.terminalTitle false > /dev/null 2>&1 || true
 fi
 
 # Install/update tools from /config/tools.json, FOREGROUND (blocking) so LSPs
