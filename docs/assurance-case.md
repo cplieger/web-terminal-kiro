@@ -1,6 +1,6 @@
 # Security assurance case — vibecli
 
-This extends the fleet-wide
+This extends the shared
 [default assurance case](https://github.com/cplieger/.github/blob/main/assurance-case.md)
 with the threat model specific to `vibecli`. Read that first. vibecli is
 **pre-1.0**; the [roadmap](../ROADMAP.md) lists the work in progress.
@@ -14,8 +14,9 @@ the security model is about reaching it, not about sandboxing what it can do.
 
 ## Security model
 
-vibecli is a **trusted-operator tool behind a network/auth boundary**. In the
-homelab it is reachable only on the internal network (behind the reverse proxy).
+vibecli is a **trusted-operator tool behind a network/auth boundary**. In a
+self-hosted deployment it is reachable only on the internal network (behind the
+reverse proxy).
 A reachable, authenticated session is, by design, a shell — that is the product.
 The control is "only the operator can reach vibecli."
 
