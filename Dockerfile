@@ -137,7 +137,7 @@ RUN /tmp/package/lib/tsgo --project static-src/tsconfig.json && \
         --rootDir static-src/node_modules/@cplieger/web-terminal-ui/src \
         --skipLibCheck \
         --strict \
-        static-src/node_modules/@cplieger/web-terminal-ui/src/*.ts
+        $(find static-src/node_modules/@cplieger/web-terminal-ui/src -name '*.ts')
 
 # Concatenate the UI package's per-feature CSS splits into the served bundle.
 # Behavior: skip blank lines and #-comments, cat each listed file

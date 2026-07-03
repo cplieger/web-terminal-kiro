@@ -96,8 +96,8 @@
     </style>
   </head>
   <body>
-    <!-- mount() (in /app.js) builds the entire terminal UI inside this root
-     element; the loading overlay is a sibling so mount never clears it. -->
+    <!-- createTerminal() (in /app.js) builds the entire terminal UI inside this
+     root element; the loading overlay is a sibling so it is never cleared. -->
     <div id="terminal"></div>
     <div id="loading" role="status" aria-live="polite">
       <div class="spin" aria-hidden="true"></div>
@@ -113,7 +113,8 @@
       {
         "imports": {
           "@cplieger/web-terminal-engine": "/vendor/cplieger-web-terminal-engine/index.js",
-          "@cplieger/web-terminal-ui": "/vendor/cplieger-web-terminal-ui/index.js"
+          "@cplieger/web-terminal-ui": "/vendor/cplieger-web-terminal-ui/index.js",
+          "@cplieger/web-terminal-ui/presets": "/vendor/cplieger-web-terminal-ui/presets.js"
         }
       }
     </script>
