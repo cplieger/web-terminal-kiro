@@ -1,34 +1,43 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mountMock } = vi.hoisted(() => ({ mountMock: vi.fn() }));
-vi.mock("@cplieger/web-terminal-ui", () => ({ mount: mountMock }));
+// app.ts imports createTerminal from the UI package and presetTabbed from its
+// /presets subpath; mock both. presetTabbed returns a sentinel the assertions
+// match against, so we verify app.ts passes the tabbed preset through.
+const { createTerminalMock, presetTabbedMock } = vi.hoisted(() => ({
+  createTerminalMock: vi.fn(),
+  presetTabbedMock: vi.fn(() => ["preset-features"]),
+}));
+vi.mock("@cplieger/web-terminal-ui", () => ({ createTerminal: createTerminalMock }));
+vi.mock("@cplieger/web-terminal-ui/presets", () => ({ presetTabbed: presetTabbedMock }));
 
 describe("vibecli bootstrap (app.ts)", () => {
   beforeEach(() => {
-    // resetModules so each dynamic import re-runs app.ts top-level code;
-    // clearMocks (vitest.config) clears mountMock call history between tests.
+    // resetModules so each dynamic import re-runs app.ts top-level code; clear
+    // the mocks' call history between tests (their implementations persist).
     vi.resetModules();
+    createTerminalMock.mockClear();
+    presetTabbedMock.mockClear();
     document.body.replaceChildren();
   });
 
   it("throws a clear error when the #terminal root element is missing", async () => {
     await expect(import("./app.js")).rejects.toThrow("vibecli: missing #terminal root element");
-    expect(mountMock).not.toHaveBeenCalled();
+    expect(createTerminalMock).not.toHaveBeenCalled();
   });
 
-  it("mounts into #terminal with empty options when #loading is absent", async () => {
+  it("builds the terminal with the tabbed preset and no extra options when #loading is absent", async () => {
     const root = document.createElement("div");
     root.id = "terminal";
     document.body.appendChild(root);
 
     await import("./app.js");
 
-    expect(mountMock).toHaveBeenCalledTimes(1);
-    expect(mountMock).toHaveBeenCalledWith(root, {});
+    expect(createTerminalMock).toHaveBeenCalledTimes(1);
+    expect(createTerminalMock).toHaveBeenCalledWith(root, { features: ["preset-features"] });
   });
 
-  it("passes the #loading element to mount when it is present", async () => {
+  it("passes the #loading element to createTerminal when it is present", async () => {
     const root = document.createElement("div");
     root.id = "terminal";
     document.body.appendChild(root);
@@ -38,8 +47,11 @@ describe("vibecli bootstrap (app.ts)", () => {
 
     await import("./app.js");
 
-    expect(mountMock).toHaveBeenCalledTimes(1);
-    expect(mountMock).toHaveBeenCalledWith(root, { loading });
+    expect(createTerminalMock).toHaveBeenCalledTimes(1);
+    expect(createTerminalMock).toHaveBeenCalledWith(root, {
+      features: ["preset-features"],
+      loading,
+    });
   });
 
   it("surfaces an alert on the #loading overlay when #terminal is missing but #loading exists", async () => {
@@ -51,10 +63,10 @@ describe("vibecli bootstrap (app.ts)", () => {
 
     expect(overlay.getAttribute("role")).toBe("alert");
     expect(overlay.textContent).toContain("vibecli failed to start");
-    expect(mountMock).not.toHaveBeenCalled();
+    expect(createTerminalMock).not.toHaveBeenCalled();
   });
 
-  it("reveals the #loading overlay with an error message and rethrows when mount throws", async () => {
+  it("reveals the #loading overlay with an error message and rethrows when createTerminal throws", async () => {
     const root = document.createElement("div");
     root.id = "terminal";
     document.body.appendChild(root);
@@ -62,26 +74,26 @@ describe("vibecli bootstrap (app.ts)", () => {
     loading.id = "loading";
     loading.classList.add("fade");
     document.body.appendChild(loading);
-    mountMock.mockImplementationOnce(() => {
-      throw new Error("mount boom");
+    createTerminalMock.mockImplementationOnce(() => {
+      throw new Error("kernel boom");
     });
 
-    await expect(import("./app.js")).rejects.toThrow("mount boom");
+    await expect(import("./app.js")).rejects.toThrow("kernel boom");
 
     expect(loading.classList.contains("fade")).toBe(false);
     expect(loading.getAttribute("role")).toBe("alert");
     expect(loading.textContent).toContain("Failed to start the terminal");
   });
 
-  it("rethrows the original error without touching the DOM when mount throws and #loading is absent", async () => {
+  it("rethrows the original error without touching the DOM when createTerminal throws and #loading is absent", async () => {
     const root = document.createElement("div");
     root.id = "terminal";
     document.body.appendChild(root);
-    mountMock.mockImplementationOnce(() => {
-      throw new Error("mount boom no overlay");
+    createTerminalMock.mockImplementationOnce(() => {
+      throw new Error("kernel boom no overlay");
     });
 
-    await expect(import("./app.js")).rejects.toThrow("mount boom no overlay");
-    expect(mountMock).toHaveBeenCalledTimes(1);
+    await expect(import("./app.js")).rejects.toThrow("kernel boom no overlay");
+    expect(createTerminalMock).toHaveBeenCalledTimes(1);
   });
 });

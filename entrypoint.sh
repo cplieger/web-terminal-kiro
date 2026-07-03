@@ -169,6 +169,14 @@ fi
 if [ -x "$BIN" ]; then
     "$BIN" settings telemetry.enabled false > /dev/null 2>&1 || true
     "$BIN" settings "app.disableAutoupdates" "true" > /dev/null 2>&1 || true
+    # Enable kiro-cli's OSC 9 desktop-notification escape so vibecli's tab
+    # activity monitor can classify turn-end ("Response complete") and
+    # tool-approval ("Permission required") into per-tab status dots. osc9 emits
+    # the notification inline in the PTY stream (the only method that reaches a
+    # browser terminal); the server holds each session "unfocused" so kiro-cli's
+    # focus-gated notifier keeps firing even with no focused browser tab.
+    "$BIN" settings chat.enableNotifications true > /dev/null 2>&1 || true
+    "$BIN" settings chat.notificationMethod osc9 > /dev/null 2>&1 || true
 fi
 
 # Install/update tools from /config/tools.json, FOREGROUND (blocking) so LSPs

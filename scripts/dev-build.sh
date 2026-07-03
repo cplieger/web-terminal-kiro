@@ -33,10 +33,13 @@ for f in "$ENGINE_DIR"/web/src/*.ts; do
   cp "$f" "$ENGINE_PKG/src/"
 done
 cp "$UI_DIR/package.json" "$UI_PKG/package.json"
-for f in "$UI_DIR"/src/*.ts; do
-  case "$f" in *.test.ts | *fc-strict-setup*) continue ;; esac
-  cp "$f" "$UI_PKG/src/"
-done
+# The UI ships a nested src tree (src/kernel/, src/features/) since v3, so copy
+# recursively, preserving subdirectories and excluding tests.
+(cd "$UI_DIR/src" && find . -name '*.ts' ! -name '*.test.ts' ! -name 'fc-strict-setup.ts' -print0) |
+  while IFS= read -r -d '' f; do
+    mkdir -p "$UI_PKG/src/$(dirname "$f")"
+    cp "$UI_DIR/src/$f" "$UI_PKG/src/$f"
+  done
 
 echo "[3/6] tsgo: app -> static/app.js (resolves @cplieger/web-terminal-ui)"
 tsgo --project static-src/tsconfig.json
@@ -46,9 +49,11 @@ rm -rf static/vendor/cplieger-web-terminal-engine static/vendor/cplieger-web-ter
 tsgo --module ESNext --target ESNext --moduleResolution bundler \
   --outDir static/vendor/cplieger-web-terminal-engine \
   --rootDir "$ENGINE_PKG/src" --skipLibCheck --strict "$ENGINE_PKG/src"/*.ts
+# Compile the whole nested UI src tree (index.ts + presets.ts + kernel/ +
+# features/); find collects every .ts (the overlay already excluded tests).
 tsgo --module ESNext --target ESNext --moduleResolution bundler \
   --outDir static/vendor/cplieger-web-terminal-ui \
-  --rootDir "$UI_PKG/src" --skipLibCheck --strict "$UI_PKG/src"/*.ts
+  --rootDir "$UI_PKG/src" --skipLibCheck --strict $(find "$UI_PKG/src" -name '*.ts')
 
 echo "[5/6] fonts (Monaspace Nerd Font, cached) + CSS bundle (from UI package)"
 FONT_CACHE="${HOME}/.cache/vibecli-fonts"

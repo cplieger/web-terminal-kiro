@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
+	"time"
+
+	"github.com/cplieger/vibecli/internal/api"
 )
 
 // TestDebugRoutesNotExposed pins the security posture of registerRoutes: the
@@ -23,9 +28,11 @@ func TestDebugRoutesNotExposed(t *testing.T) {
 		workDir:  "",
 		cmd:      []string{"/bin/cat"},
 	}
-	if _, err := registerRoutes(mux, deps); err != nil {
+	mgr, err := registerRoutes(mux, deps)
+	if err != nil {
 		t.Fatalf("registerRoutes: %v", err)
 	}
+	t.Cleanup(mgr.Shutdown)
 
 	// /ws must be registered as its own pattern.
 	if _, pat := mux.Handler(httptest.NewRequest(http.MethodGet, "/ws", http.NoBody)); pat != "/ws" {
@@ -54,9 +61,11 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 		workDir:  "",
 		cmd:      []string{"/bin/cat"},
 	}
-	if _, err := registerRoutes(mux, deps); err != nil {
+	mgr, err := registerRoutes(mux, deps)
+	if err != nil {
 		t.Fatalf("registerRoutes: %v", err)
 	}
+	t.Cleanup(mgr.Shutdown)
 
 	get := func() *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -133,9 +142,11 @@ func TestStaticETagRevalidation(t *testing.T) {
 		workDir:  "",
 		cmd:      []string{"/bin/cat"},
 	}
-	if _, err := registerRoutes(mux, deps); err != nil {
+	mgr, err := registerRoutes(mux, deps)
+	if err != nil {
 		t.Fatalf("registerRoutes: %v", err)
 	}
+	t.Cleanup(mgr.Shutdown)
 
 	// First load: the response carries a quoted content-hash ETag.
 	rec := httptest.NewRecorder()
@@ -213,5 +224,99 @@ func TestBuildETags_isContentAddressedSHA256(t *testing.T) {
 	}
 	if _, ok := etags["."]; ok {
 		t.Error(`root "." got an ETag entry; buildETags must skip directories`)
+	}
+}
+
+// TestSSEStreamsThroughRequestLogger is the regression guard for the tab status
+// stream behind vibecli's own middleware. RequestLogger wraps most requests in
+// statusRecorder (which implements neither Flush nor Unwrap); if the SSE path
+// were wrapped, the engine's flush probe would fail and the stream would 500. It
+// is instead bypassed like /ws, so it gets the raw ResponseWriter. This drives
+// /api/sessions/events through the full CrossOriginProtection + RequestLogger
+// chain and asserts the stream opens (200 + text/event-stream) and flushes an
+// event.
+func TestSSEStreamsThroughRequestLogger(t *testing.T) {
+	mux := http.NewServeMux()
+	var ready atomic.Bool
+	ready.Store(true)
+	deps := &routeDeps{
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+		ready:    &ready,
+		workDir:  "",
+		cmd:      []string{"/bin/cat"},
+	}
+	mgr, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
+	id, err := mgr.Create()
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	handler := http.NewCrossOriginProtection().Handler(api.RequestLogger(mux))
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/sessions/events", http.NoBody)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/sessions/events: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (SSE must bypass the status recorder, not 500)", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
+	}
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		if line := sc.Text(); strings.HasPrefix(line, "data:") && strings.Contains(line, id) {
+			return // the initial-sync event flushed through the middleware
+		}
+	}
+	t.Fatalf("SSE stream delivered no data through RequestLogger (scan err: %v)", sc.Err())
+}
+
+// TestCreateRateLimit pins the create throttle: a burst of POST /api/sessions is
+// allowed, then further creates are 429'd, while GET (list) is never limited. It
+// exercises createRateLimit directly with a stub so it does not fork real
+// kiro-cli processes.
+func TestCreateRateLimit(t *testing.T) {
+	var restHit atomic.Bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		restHit.Store(true)
+		w.WriteHeader(http.StatusOK)
+	})
+	h := createRateLimit(next)
+	post := func() int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
+		return rec.Code
+	}
+
+	allowed := 0
+	for range int(createBurst) {
+		if post() == http.StatusOK {
+			allowed++
+		}
+	}
+	if allowed != int(createBurst) {
+		t.Errorf("allowed %d creates in the burst, want %d", allowed, int(createBurst))
+	}
+	if code := post(); code != http.StatusTooManyRequests {
+		t.Errorf("create past the burst = %d, want 429", code)
+	}
+
+	// GET (list) is never rate-limited, even after the create burst is spent.
+	restHit.Store(false)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", http.NoBody))
+	if !restHit.Load() {
+		t.Error("GET /api/sessions was blocked by the create rate limiter")
 	}
 }

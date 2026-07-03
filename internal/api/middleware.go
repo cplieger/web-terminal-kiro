@@ -48,10 +48,14 @@ func RequestIDFromContext(ctx context.Context) string {
 // on the response so callers can correlate without server logs.
 func RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /ws is a long-lived upgrade; logging at request-time would
-		// just mark "session opened" without latency. The terminal
-		// package logs its own lifecycle.
-		if r.URL.Path == "/ws" {
+		// /ws and the session status SSE (/api/sessions/events) are long-lived
+		// streams: logging them at request time would record only "opened" with a
+		// meaningless duration, and — critically for the SSE — wrapping the
+		// ResponseWriter in statusRecorder (which implements neither Flush nor
+		// Unwrap) would fail the engine's flush probe and 500 the stream. The
+		// terminal package logs its own lifecycle. Pass the raw ResponseWriter
+		// straight through for both.
+		if r.URL.Path == "/ws" || r.URL.Path == "/api/sessions/events" {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -20,11 +20,13 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -44,6 +46,20 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envInt parses key as an integer >= minVal, returning def when the var is unset.
+// It errors on a non-integer or an out-of-range value.
+func envInt(key string, def, minVal int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < minVal {
+		return 0, fmt.Errorf("%s must be an integer >= %d, got %q", key, minVal, v)
+	}
+	return n, nil
 }
 
 func main() {
@@ -72,16 +88,26 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Cap concurrent kiro-cli chat sessions (browser tabs). Each is a full
+	// kiro-cli process, so the default is deliberately modest; raise it with
+	// KWEB_MAX_SESSIONS for a beefier host.
+	maxSessions, err := envInt("KWEB_MAX_SESSIONS", 6, 1)
+	if err != nil {
+		slog.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+
 	cmd := []string{cliPath, "chat"}
 
 	mux := http.NewServeMux()
 	var ready atomic.Bool
 
-	term, err := registerRoutes(mux, &routeDeps{
-		staticFS: staticFS,
-		cmd:      cmd,
-		workDir:  workDir,
-		ready:    &ready,
+	mgr, err := registerRoutes(mux, &routeDeps{
+		staticFS:    staticFS,
+		cmd:         cmd,
+		workDir:     workDir,
+		ready:       &ready,
+		maxSessions: maxSessions,
 	})
 	if err != nil {
 		slog.Error("route registration failed", "error", err)
@@ -109,7 +135,7 @@ func main() {
 	go func() {
 		slog.Info("vibecli listening",
 			"addr", addr, "cli_path", cliPath,
-			"work_dir", workDir)
+			"work_dir", workDir, "max_sessions", maxSessions)
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("http server exited", "error", err)
 			stop()
@@ -125,5 +151,5 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Warn("server shutdown returned error", "error", err)
 	}
-	term.Shutdown()
+	mgr.Shutdown()
 }
