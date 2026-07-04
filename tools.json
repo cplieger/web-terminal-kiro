@@ -12,6 +12,14 @@
     "([\"section.name\"] deps), 'shims' (wrapper names kiro-cli probes for).",
     "Sections: runtimes, binary, custom, lsp, apt.",
     "",
+    "Optional integrity check (per entry): add a 'url' (artifact to fetch) and a",
+    "per-arch 'sha256' ({\"amd64\":..,\"arm64\":..}); setup-tools.sh downloads to a",
+    "temp file, verifies the digest, then the 'install' command extracts from",
+    "${ARTIFACT} instead of re-fetching. Omit them and install runs as-is,",
+    "unverified (a missing checksum never fails). golangci-lint is an example.",
+    "Pin the entry too (auto_update:false): a sha256 matches ONE artifact, so",
+    "letting auto_update bump the version would break the digest match.",
+    "",
     "LSPs use the shim pattern to stay small: tsgo (TS) and pyrefly (Python)",
     "are single standalone binaries with NO Node runtime, shimmed as",
     "typescript-language-server / pyright. gopls (Go) additionally needs",
@@ -45,8 +53,13 @@
       "version": "v2.12.2",
       "update": { "method": "github", "repo": "golangci/golangci-lint" },
       "requires": ["runtimes.go"],
-      "description": "Go meta-linter + formatter runner. Bundles gofumpt and gci (plus gofmt/goimports) as built-in formatters; `golangci-lint fmt` applies them and `golangci-lint run` enforces them, matching the central .golangci.yaml. Requires runtimes.go. Pinned (auto_update:false) to match CI (go-ci.yaml). ~15 MB.",
-      "install": "curl -fsSL https://github.com/golangci/golangci-lint/releases/download/${VERSION}/golangci-lint-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}.tar.gz | tar -xz -C ${BIN} --strip-components=1 golangci-lint-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}/golangci-lint"
+      "description": "Go meta-linter + formatter runner. Bundles gofumpt and gci (plus gofmt/goimports) as built-in formatters; `golangci-lint fmt` applies them and `golangci-lint run` enforces them, matching the central .golangci.yaml. Requires runtimes.go. Pinned (auto_update:false) to match CI (go-ci.yaml). ~15 MB. Worked example of the optional integrity check: 'url'+'sha256' make setup-tools.sh fetch to a temp file, verify the digest, then extract from ${ARTIFACT}.",
+      "url": "https://github.com/golangci/golangci-lint/releases/download/${VERSION}/golangci-lint-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}.tar.gz",
+      "sha256": {
+        "amd64": "8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553",
+        "arm64": "44cd40a8c76c86755375adfeea52cfd3533cb43d7bd647771e0ae065e166df3a"
+      },
+      "install": "tar -xzf ${ARTIFACT} -C ${BIN} --strip-components=1 golangci-lint-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}/golangci-lint"
     }
   },
   "custom": {},

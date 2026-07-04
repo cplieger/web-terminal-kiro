@@ -40,6 +40,10 @@ The container runs as **root** by design so `kiro-cli`, `git`, and `gh` work ove
 
 `kiro-cli` is downloaded and pinned on first boot (it is not redistributed in the image, per the AWS Customer Agreement). Open `http://localhost:9848`, authenticate `kiro-cli`, and you have a terminal.
 
+## Tools
+
+The image ships `kiro-cli`, `git`, and base utilities only. Optional developer tools (language servers for Go/Python/TypeScript, the GitHub CLI, `golangci-lint`) are opt-in per host: there's no management UI, so you enable them by editing `/config/tools.json`, setting `"enabled": true` on the entries you want, and restarting the container. They install into `/config/tools/` and persist across restarts.
+
 ## Security
 
 Network-exposed: put it behind an authenticating reverse proxy — a browser tab here is a shell with filesystem access to `/workspace`. Observability is `slog`-only (structured access log; no metrics endpoint). Debian base (a shell + the `kiro-cli` subprocess are required). Images are published with cosign signatures and SBOM attestations.
