@@ -154,7 +154,7 @@ RUN set -eu; \
 # CGO disabled so the binary runs on any glibc.
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /vibecli .
 
-# --- Final stage: minimal runtime with kiro-cli + git + gh ---
+# --- Final stage: minimal runtime with kiro-cli + git ---
 FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -165,8 +165,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # image); everything else is stable utility surface vibecli or the
 # interactive user needs:
 #   - ca-certificates + curl + unzip: kiro-cli installer + HTTPS trust
-#   - git + gh: source control from inside the terminal
-#   - openssh-client: gh over ssh, git over ssh
+#   - git: source control from inside the terminal (gh is NOT baked; it
+#     is opt-in via /config/tools.json)
+#   - openssh-client: git over ssh (and gh over ssh once gh is enabled)
 #   - jq + less: standard kiro-cli diagnostic dependencies
 #   - libasound2: kiro-cli dlopens libasound.so.2 at runtime. It is NOT
 #     declared in kiro-cli's .deb manifest (which only lists GUI deps:

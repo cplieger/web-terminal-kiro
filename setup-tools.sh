@@ -16,11 +16,11 @@
 # Sections (install order): runtimes, binary, custom, lsp, apt.
 set -uo pipefail
 
-TOOLS="/config/tools"
+TOOLS="${TOOLS:-/config/tools}"
 BIN="$TOOLS/bin"
 RUNTIMES="$TOOLS/runtimes"
 GOBIN="$TOOLS/go/bin"
-MANIFEST="/config/tools.json"
+MANIFEST="${MANIFEST:-/config/tools.json}"
 
 # Cap each install so a half-open socket can't hang the blocking
 # foreground boot forever (the server only execs after setup-tools
@@ -81,6 +81,7 @@ expand() {
     cmd="${cmd//\$\{RUNTIMES\}/$RUNTIMES}"
     cmd="${cmd//\$\{GOBIN\}/$GOBIN}"
     cmd="${cmd//\$\{HOME\}/$HOME}"
+    cmd="${cmd//\$\{ARTIFACT\}/${ARTIFACT:-}}"
     cmd="${cmd//\$\{ARCH_X64_OR_ARM64\}/$ARCH_X64_OR_ARM64}"
     cmd="${cmd//\$\{ARCH_AMD64_OR_ARM64\}/$ARCH_AMD64_OR_ARM64}"
     cmd="${cmd//\$\{ARCH_X86_64_OR_AARCH64\}/$ARCH_X86_64_OR_AARCH64}"
@@ -194,11 +195,34 @@ requires_satisfied() {
     return 0
 }
 
+# Optional download-then-verify. If the entry provides a "url" (the artifact to
+# fetch) AND a per-arch "sha256" ({"amd64":..,"arm64":..}), the artifact is
+# downloaded to a temp file, its sha256 is checked, and the install command
+# extracts from ${ARTIFACT} (the verified file) instead of re-fetching. Entries
+# without BOTH fields install exactly as before (their install command does its
+# own curl|tar). Verification is opt-in per entry: a missing checksum never fails.
 run_install() {
-    local jq_path="$1" version="$2" install_cmd
+    local jq_path="$1" version="$2" install_cmd url sha256 ARTIFACT="" rc actual
     install_cmd=$(jq -r "${jq_path}.install" "$MANIFEST")
     [ "$install_cmd" = "null" ] || [ -z "$install_cmd" ] && { printf "    error: no install command\n"; return 1; }
+    url=$(jq -r "${jq_path}.url // empty" "$MANIFEST")
+    sha256=$(jq -r --arg a "$ARCH_AMD64_OR_ARM64" "${jq_path}.sha256[\$a] // empty" "$MANIFEST")
+    if [ -n "$url" ] && [ -n "$sha256" ]; then
+        ARTIFACT=$(mktemp)
+        if ! curl -fsSL --connect-timeout 20 --max-time "$INSTALL_TIMEOUT" -o "$ARTIFACT" "$(expand "$url" "$version")"; then
+            printf "    error: download failed\n"; rm -f "$ARTIFACT"; return 1
+        fi
+        actual=$(sha256sum "$ARTIFACT" | awk '{print $1}')
+        if [ "$actual" != "$sha256" ]; then
+            printf "    error: sha256 mismatch (want %s, got %s)\n" "$sha256" "$actual"
+            rm -f "$ARTIFACT"; return 1
+        fi
+        printf "    sha256 verified\n"
+    fi
     timeout "$INSTALL_TIMEOUT" bash -uo pipefail -c "$(expand "$install_cmd" "$version")"
+    rc=$?
+    [ -n "$ARTIFACT" ] && rm -f "$ARTIFACT"
+    return "$rc"
 }
 
 # --- Sections (order matters: runtimes before lsp which may require them) ---
