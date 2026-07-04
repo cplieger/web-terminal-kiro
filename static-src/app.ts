@@ -4,10 +4,13 @@
 // @cplieger/web-terminal-engine engine (render / scroll / connection / keyboard)
 // and the @cplieger/web-terminal-ui reference UI (the modular kernel plus opt-in
 // features). vibecli is the thinnest possible consumer: createTerminal builds the
-// whole terminal UI inside the #terminal root element with the full reference
-// feature set (presetTabbed: tabs + activity monitor + touch toolbar + context
-// menu + clipboard + scroll-to-bottom + predictive echo + connection banner +
-// animations). Each browser tab drives its own independent kiro-cli chat session
+// whole terminal UI inside the #terminal root element with the agent-shell
+// feature set (presetAgentTabbed: tabs + activity monitor + touch toolbar +
+// context menu + clipboard + scroll-to-bottom + predictive echo + connection
+// banner + animations). vibecli is an agent shell, so it wants the activity
+// monitor (per-tab working/done/needs-input dots); a generic terminal would use
+// the plain presetTabbed, which is label-only. Each browser tab drives its own
+// independent kiro-cli chat session
 // over the shared server; kiro-cli's TUI is rendered verbatim through the raw PTY
 // stream.
 //
@@ -17,7 +20,7 @@
 // first frame renders.
 
 import { createTerminal } from "@cplieger/web-terminal-ui";
-import { presetTabbed } from "@cplieger/web-terminal-ui/presets";
+import { presetAgentTabbed } from "@cplieger/web-terminal-ui/presets";
 
 const root = document.getElementById("terminal");
 if (!root) {
@@ -35,7 +38,19 @@ if (!root) {
 }
 const loading = document.getElementById("loading");
 try {
-  createTerminal(root, { features: presetTabbed(), ...(loading ? { loading } : {}) });
+  createTerminal(root, {
+    features: presetAgentTabbed(),
+    // vibecli's purple theme (the consumer "settings"; the UI library ships the
+    // neutral defaults). Recolors hovered/active tabs and the accent icons (the
+    // mobile "+", the toggled keyboard button).
+    theme: {
+      "--accent": "hsl(263.1683 100% 80%)",
+      "--tab-hover-bg": "hsl(263.1683 100% 80% / 16%)",
+      "--tab-active-bg": "hsl(263.1683 100% 80% / 32%)",
+      "--tab-active-fg": "#fff",
+    },
+    ...(loading ? { loading } : {}),
+  });
 } catch (e) {
   if (loading) {
     loading.classList.remove("fade");
