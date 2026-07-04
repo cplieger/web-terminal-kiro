@@ -179,11 +179,12 @@ if [ -x "$BIN" ]; then
     "$BIN" settings chat.notificationMethod osc9 > /dev/null 2>&1 || true
     # Explicitly disable kiro-cli's dynamic terminal title. Its OSC 0 title only
     # reflects the cwd for a live session (it reloads its session title just on a
-    # session-id change, not per turn), so it would make every tab read
-    # "kiro: /workspace". Set false (not merely unset) so a container that
-    # previously persisted it true gets it turned off on restart. The
-    # web-terminal-ui tabs feature instead derives each tab's title from the
-    # user's first submitted line.
+    # session-id change, not per turn). The web-terminal-ui tabs feature PREFERS
+    # the process OSC title over its own fallback, so leaving this on would make
+    # every tab read "kiro: ~/workspace" instead of something useful. Set false
+    # (not merely unset) so a container that previously persisted it true gets it
+    # turned off on restart. With it off, the tabs feature titles each tab from
+    # the user's last submitted line instead.
     "$BIN" settings chat.terminalTitle false > /dev/null 2>&1 || true
 fi
 
