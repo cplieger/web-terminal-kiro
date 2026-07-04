@@ -50,11 +50,11 @@ func RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// /ws and the session status SSE (/api/sessions/events) are long-lived
 		// streams: logging them at request time would record only "opened" with a
-		// meaningless duration, and — critically for the SSE — wrapping the
-		// ResponseWriter in statusRecorder (which implements neither Flush nor
-		// Unwrap) would fail the engine's flush probe and 500 the stream. The
-		// terminal package logs its own lifecycle. Pass the raw ResponseWriter
-		// straight through for both.
+		// meaningless duration. The terminal package logs its own lifecycle, so
+		// skip access logging for both. (statusRecorder now implements Unwrap, so
+		// wrapping these would no longer break the engine's ResponseController
+		// flush probe — the skip is a deliberate no-useful-latency choice, not a
+		// safety necessity.)
 		if r.URL.Path == "/ws" || r.URL.Path == "/api/sessions/events" {
 			next.ServeHTTP(w, r)
 			return
@@ -97,6 +97,14 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	s.wroteHeader = true
 	s.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap returns the wrapped ResponseWriter so http.ResponseController can
+// reach the underlying Flusher/Hijacker through this middleware. The
+// web-terminal-engine SSE/terminal handlers flush via http.NewResponseController,
+// which walks the Unwrap chain, so a wrapped stream still finds its flusher.
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
 }
 
 // requestIDOrNew returns inbound when it is valid, otherwise mints a
