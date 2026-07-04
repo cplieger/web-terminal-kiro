@@ -64,19 +64,18 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	// web-terminal-server deliberately does NOT use this, since a generic
 	// shell/editor wants real focus reporting.
 	//
-	// WithEnv sets TERM_PROGRAM=WezTerm so kiro-cli enables its ConEmu OSC 9;4
-	// progress reporting, which it gates on a terminal allowlist
-	// (iTerm.app/WezTerm/Windows Terminal). That progress signal is what drives
-	// the tab's pulsing purple "working" dot from real agent activity, instead of
-	// raw output activity (which also fires while the user types at the prompt).
-	// WezTerm additionally unlocks kiro-cli's synchronized output (DEC 2026, less
-	// flicker) and OSC 8 hyperlinks, both of which the engine renders.
+	// No TERM_PROGRAM override here: the engine now advertises TERM_PROGRAM=
+	// iTerm.app (>= 3.6.6), which puts kiro-cli in its OSC 9;4 progress allowlist
+	// (driving the tab's "working" dot) and enables DEC 2026 synchronized output.
+	// That is the same identity web-terminal-server gets, so vibecli inherits it
+	// from the engine rather than pinning its own (it formerly set WezTerm; both
+	// unlock kiro-cli, and iTerm.app additionally covers other agents like Claude
+	// Code). Anything the engine can't render (inline images) is consumed silently.
 	factory := func(id string) *terminal.Handler {
 		return terminal.NewHandler(deps.cmd,
 			terminal.WithWorkDir(deps.workDir),
 			terminal.WithScrollbackCapacity(5000),
 			terminal.WithKeepUnfocused(),
-			terminal.WithEnv([]string{"TERM_PROGRAM=WezTerm"}),
 			terminal.WithLogger(slog.Default().With("session", id)),
 		)
 	}
