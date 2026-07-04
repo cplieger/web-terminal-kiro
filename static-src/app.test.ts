@@ -1,15 +1,25 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// app.ts imports createTerminal from the UI package and presetTabbed from its
-// /presets subpath; mock both. presetTabbed returns a sentinel the assertions
-// match against, so we verify app.ts passes the tabbed preset through.
-const { createTerminalMock, presetTabbedMock } = vi.hoisted(() => ({
+// app.ts imports createTerminal from the UI package and presetAgentTabbed from
+// its /presets subpath; mock both. presetAgentTabbed returns a sentinel the
+// assertions match against, so we verify app.ts passes the agent preset through.
+const { createTerminalMock, presetAgentTabbedMock } = vi.hoisted(() => ({
   createTerminalMock: vi.fn(),
-  presetTabbedMock: vi.fn(() => ["preset-features"]),
+  presetAgentTabbedMock: vi.fn(() => ["preset-features"]),
 }));
 vi.mock("@cplieger/web-terminal-ui", () => ({ createTerminal: createTerminalMock }));
-vi.mock("@cplieger/web-terminal-ui/presets", () => ({ presetTabbed: presetTabbedMock }));
+vi.mock("@cplieger/web-terminal-ui/presets", () => ({
+  presetAgentTabbed: presetAgentTabbedMock,
+}));
+
+// vibecli's purple theme, passed through createTerminal (matches app.ts).
+const THEME = {
+  "--accent": "hsl(263.1683 100% 80%)",
+  "--tab-hover-bg": "hsl(263.1683 100% 80% / 16%)",
+  "--tab-active-bg": "hsl(263.1683 100% 80% / 32%)",
+  "--tab-active-fg": "#fff",
+};
 
 describe("vibecli bootstrap (app.ts)", () => {
   beforeEach(() => {
@@ -17,7 +27,7 @@ describe("vibecli bootstrap (app.ts)", () => {
     // the mocks' call history between tests (their implementations persist).
     vi.resetModules();
     createTerminalMock.mockClear();
-    presetTabbedMock.mockClear();
+    presetAgentTabbedMock.mockClear();
     document.body.replaceChildren();
   });
 
@@ -26,7 +36,7 @@ describe("vibecli bootstrap (app.ts)", () => {
     expect(createTerminalMock).not.toHaveBeenCalled();
   });
 
-  it("builds the terminal with the tabbed preset and no extra options when #loading is absent", async () => {
+  it("builds the terminal with the agent preset and theme when #loading is absent", async () => {
     const root = document.createElement("div");
     root.id = "terminal";
     document.body.appendChild(root);
@@ -34,7 +44,10 @@ describe("vibecli bootstrap (app.ts)", () => {
     await import("./app.js");
 
     expect(createTerminalMock).toHaveBeenCalledTimes(1);
-    expect(createTerminalMock).toHaveBeenCalledWith(root, { features: ["preset-features"] });
+    expect(createTerminalMock).toHaveBeenCalledWith(root, {
+      features: ["preset-features"],
+      theme: THEME,
+    });
   });
 
   it("passes the #loading element to createTerminal when it is present", async () => {
@@ -50,6 +63,7 @@ describe("vibecli bootstrap (app.ts)", () => {
     expect(createTerminalMock).toHaveBeenCalledTimes(1);
     expect(createTerminalMock).toHaveBeenCalledWith(root, {
       features: ["preset-features"],
+      theme: THEME,
       loading,
     });
   });

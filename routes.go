@@ -17,11 +17,10 @@ import (
 )
 
 type routeDeps struct {
-	staticFS    fs.FS
-	ready       *atomic.Bool
-	workDir     string
-	cmd         []string
-	maxSessions int
+	staticFS fs.FS
+	ready    *atomic.Bool
+	workDir  string
+	cmd      []string
 }
 
 func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManager, error) {
@@ -84,7 +83,6 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 
 	mgr := terminal.NewSessionManager(factory,
 		terminal.WithManagerLogger(slog.Default()),
-		terminal.WithMaxSessions(deps.maxSessions),
 		terminal.WithStatusClassifier(classifier),
 	)
 
@@ -95,10 +93,10 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	mux.Handle("/ws", mgr.WebSocketHandler())
 
 	// Session REST API. createRateLimit gates POST /api/sessions so a caller
-	// cannot fork kiro-cli processes without bound (WithMaxSessions caps
-	// concurrency, the limiter bounds churn); a kiro-cli chat is heavy, so this
-	// matters more here than for a plain shell. Mounted at the exact path and the
-	// subtree so /api/sessions and /api/sessions/{id} both route.
+	// cannot fork kiro-cli processes without bound (the limiter bounds create
+	// churn); a kiro-cli chat is heavy, so this matters more here than for a
+	// plain shell. Mounted at the exact path and the subtree so /api/sessions and
+	// /api/sessions/{id} both route.
 	limitedREST := createRateLimit(mgr.RESTHandler())
 	mux.Handle("/api/sessions", limitedREST)
 	mux.Handle("/api/sessions/", limitedREST)
