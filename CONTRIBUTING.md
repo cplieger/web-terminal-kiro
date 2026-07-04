@@ -1,7 +1,8 @@
 # Contributing to vibecli
 
 vibecli is a single Go binary that serves a static web UI and brokers one
-`kiro-cli chat` PTY per WebSocket connection. There is no chat-history store
+`kiro-cli chat` PTY per session (each browser tab is a session with its own
+`/ws?session=` connection), via `terminal.NewSessionManager`. There is no chat-history store
 and no ACP layer — the browser drives kiro-cli's own TUI through a terminal
 stream. This guide covers the things the codebase won't tell you at a glance.
 
@@ -15,7 +16,7 @@ stream. This guide covers the things the codebase won't tell you at a glance.
 - `static-src/` — TypeScript + CSS sources, compiled into `static/`.
 
 vibecli is a thin consumer of the first-party web-terminal libraries: the
-terminal engine `web-terminal-engine` (`github.com/cplieger/web-terminal-engine`
+terminal engine `web-terminal-engine` (`github.com/cplieger/web-terminal-engine/v2`
 server-side, `@cplieger/web-terminal-engine` client-side) and the reference UI
 `@cplieger/web-terminal-ui`. Most of "what the terminal does" lives in those
 repos, not here. The Go server and TS client share a binary wire protocol, not
@@ -109,7 +110,7 @@ assert at least once (`expect.requireAssertions`) and `.only` is forbidden.
   `WriteJSON`, `WriteJSONStatus`, `Ok`, `BadRequest`, `Conflict`,
   `MethodNotAllowed`.
 - **Client-local vs library code.** `static-src/app.ts` is the only client
-  source vibecli owns — a single `mount(root)` call. The input model,
+  source vibecli owns — a single `createTerminal(root, { features: presetAgentTabbed(), theme })` call (the theme is vibecli's purple token set; `presetAgentTabbed` pulls in tabs, the activity monitor, touch toolbar, context menu, clipboard, scroll-to-bottom, predictive echo, connection banner, and animations). The input model,
   IME/composition, predictive echo, viewport, mobile key toolbar, and status
   banner, plus the render / keyboard / scroll / connection layers, all live in
   `@cplieger/web-terminal-ui` (built on `@cplieger/web-terminal-engine`);
