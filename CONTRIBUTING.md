@@ -69,6 +69,13 @@ missing); `KWEB_ADDR` defaults to `:9848` and `KIRO_CLI_PATH` defaults to
 `kiro-cli`. The terminal only works if a real `kiro-cli` binary is reachable —
 in production `entrypoint.sh` downloads a Renovate-pinned version on first boot.
 
+`/api/health` reports readiness. Under a bare `go run` it reflects only that the
+HTTP listener is up: the kiro-cli readiness gate is env-gated on
+`KIRO_CLI_READY_MARKER`, which is left unset locally. In the image the entrypoint
+writes that marker only after verifying `kiro-cli --version` matches the pin, so
+`/api/health` returns `503 {"reason":"kiro-cli unavailable"}` until kiro-cli is
+installed and runnable (the container healthcheck reflects that).
+
 Frontend tooling lives in `static-src/`; run npm commands from there:
 
 ```sh
