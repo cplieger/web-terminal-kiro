@@ -242,3 +242,219 @@ func TestRequestLogger_emitsAccessLogWithResponseStatus(t *testing.T) {
 		t.Errorf("access-log request_id = %q, want a minted valid id", logged.RequestID)
 	}
 }
+
+// TestStatusRecorder_UnwrapReachesFlusher pins the documented streaming-flush
+// contract: http.NewResponseController must reach the underlying Flusher
+// through statusRecorder.Unwrap. statusRecorder embeds the http.ResponseWriter
+// interface, whose method set has no Flush, so Flush is not promoted onto the
+// wrapper; without Unwrap the controller cannot find a flusher and returns
+// http.ErrNotSupported. A regression that dropped Unwrap would silently break
+// flushing on any streaming handler wrapped by RequestLogger.
+func TestStatusRecorder_UnwrapReachesFlusher(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sr := &statusRecorder{ResponseWriter: rec, status: http.StatusOK}
+
+	if err := http.NewResponseController(sr).Flush(); err != nil {
+		t.Fatalf("Flush through statusRecorder = %v, want nil (Unwrap must expose the recorder's Flusher)", err)
+	}
+	if !rec.Flushed {
+		t.Error("recorder was not flushed; Flush did not reach the underlying ResponseWriter")
+	}
+}
+
+// TestRequestLogger_failedStreamOpenLogsWarn pins the failed-open branch cycle
+// 1 added: when a long-lived stream path (/ws or /api/sessions/events) returns
+// an error status before the engine takes over, RequestLogger emits a single
+// WARN "http" access line carrying method/path/status/remote. It is vibecli's
+// only signal for such a failure (slog-only, no /metrics), so it must fire; the
+// line deliberately omits request_id and duration_ms (the no-id-on-/ws
+// contract), which this test also pins. Serial: swaps the process-global
+// slog.Default(), restored via t.Cleanup.
+func TestRequestLogger_failedStreamOpenLogsWarn(t *testing.T) {
+	for _, path := range []string{"/ws", "/api/sessions/events"} {
+		t.Run(path, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+			})
+			req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+			rec := httptest.NewRecorder()
+			RequestLogger(inner).ServeHTTP(rec, req)
+
+			var logged struct {
+				Level  string `json:"level"`
+				Msg    string `json:"msg"`
+				Method string `json:"method"`
+				Path   string `json:"path"`
+				Status int    `json:"status"`
+			}
+			if err := json.Unmarshal(buf.Bytes(), &logged); err != nil {
+				t.Fatalf("decode warn line %q: %v", buf.String(), err)
+			}
+			if logged.Level != "WARN" {
+				t.Errorf("level = %q, want WARN (failed stream open must warn)", logged.Level)
+			}
+			if logged.Msg != "http" {
+				t.Errorf("msg = %q, want %q", logged.Msg, "http")
+			}
+			if logged.Method != http.MethodGet {
+				t.Errorf("method = %q, want %q", logged.Method, http.MethodGet)
+			}
+			if logged.Path != path {
+				t.Errorf("path = %q, want %q", logged.Path, path)
+			}
+			if logged.Status != http.StatusServiceUnavailable {
+				t.Errorf("status = %d, want %d", logged.Status, http.StatusServiceUnavailable)
+			}
+			if strings.Contains(buf.String(), `"request_id"`) {
+				t.Errorf("failed stream open leaked request_id (breaks no-id-on-/ws contract): %s", buf.String())
+			}
+			if strings.Contains(buf.String(), `"duration_ms"`) {
+				t.Errorf("failed stream open emitted duration_ms (branch omits it): %s", buf.String())
+			}
+			if got := rec.Header().Get(RequestID); got != "" {
+				t.Errorf("response %s = %q, want empty on a stream path", RequestID, got)
+			}
+		})
+	}
+}
+
+// TestRequestLogger_successfulStreamOpenEmitsNoLog pins the deliberate skip: a
+// successful open (status < 400) of a long-lived stream path emits NO access
+// line, because a per-connection line at open time would carry a meaningless
+// duration. Together with TestRequestLogger_failedStreamOpenLogsWarn this pins
+// both arms of the status guard, so a mutant that dropped the ">= 400" check
+// (always logging) is caught here. Serial: swaps slog.Default(), restored via
+// t.Cleanup.
+func TestRequestLogger_successfulStreamOpenEmitsNoLog(t *testing.T) {
+	for _, path := range []string{"/ws", "/api/sessions/events"} {
+		t.Run(path, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			inner := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {})
+			req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+			rec := httptest.NewRecorder()
+			RequestLogger(inner).ServeHTTP(rec, req)
+
+			if buf.Len() != 0 {
+				t.Errorf("successful stream open emitted a log line, want none: %s", buf.String())
+			}
+			if got := rec.Header().Get(RequestID); got != "" {
+				t.Errorf("response %s = %q, want empty on a stream path", RequestID, got)
+			}
+		})
+	}
+}
+
+// TestRequestLogger_accessLogDefaultsTo200AndCarriesRemoteAndDuration pins two
+// parts of the documented access-log contract (method/path/status/duration_ms/
+// request_id/remote) that the status test does not. When the inner handler
+// writes a body without an explicit WriteHeader, Go sends an implicit 200 on the
+// underlying writer, so statusRecorder keeps its initial http.StatusOK and the
+// access line must report 200 -- this guards the status: http.StatusOK
+// initialiser on the normal path (a mutant zeroing it is caught here but not by
+// the WriteHeader(404) status test). It also pins remote (deterministic under
+// httptest: 192.0.2.1:1234) and duration_ms, decoded through a pointer so
+// presence is asserted independent of its time-dependent value. Serial: swaps
+// the process-global slog.Default(), restored via t.Cleanup.
+func TestRequestLogger_accessLogDefaultsTo200AndCarriesRemoteAndDuration(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("body"))
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/thing", http.NoBody)
+	RequestLogger(inner).ServeHTTP(httptest.NewRecorder(), req)
+
+	var logged struct {
+		Status     int    `json:"status"`
+		Remote     string `json:"remote"`
+		DurationMs *int64 `json:"duration_ms"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &logged); err != nil {
+		t.Fatalf("decode access-log line %q: %v", buf.String(), err)
+	}
+	if logged.Status != http.StatusOK {
+		t.Errorf("access-log status = %d, want 200 (statusRecorder default when the handler omits WriteHeader)", logged.Status)
+	}
+	if logged.Remote != "192.0.2.1:1234" {
+		t.Errorf("access-log remote = %q, want the request RemoteAddr (documented field)", logged.Remote)
+	}
+	if logged.DurationMs == nil {
+		t.Errorf("access-log line omitted duration_ms (documented field): %s", buf.String())
+	}
+}
+
+// TestRequestLogger_emitsAccessLogWhenHandlerPanics pins the deferred-emission
+// guarantee: when a downstream handler panics, RequestLogger still emits the
+// "http" access line (vibecli's only per-request signal -- slog-only, no
+// /metrics), AND the panic still propagates unchanged to net/http's conn-level
+// handler because RequestLogger adds no recover(). Without the deferred
+// emission a panic would unwind straight past the log call and the failing
+// request would be invisible to any Loki query keyed on the msg="http"
+// contract -- precisely on the failure that matters most. The test recovers the
+// propagated panic itself (so the suite does not crash), asserts the recovered
+// value is the handler's original one (proving RequestLogger did not swallow or
+// alter it), then asserts the captured line carries msg="http", the
+// method/path, and a minted valid request id. Serial: swaps the process-global
+// slog.Default(), restored via t.Cleanup.
+func TestRequestLogger_emitsAccessLogWhenHandlerPanics(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	const panicMsg = "boom from handler"
+	inner := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		panic(panicMsg)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/panics", http.NoBody)
+
+	// Drive the request inside a recover so the propagated panic does not
+	// crash the test binary; capture what unwound so we can assert it is
+	// unchanged.
+	propagated := func() (recovered any) {
+		defer func() { recovered = recover() }()
+		RequestLogger(inner).ServeHTTP(httptest.NewRecorder(), req)
+		return nil
+	}()
+
+	if propagated == nil {
+		t.Fatal("panic did not propagate through RequestLogger; it must not recover()")
+	}
+	if got, ok := propagated.(string); !ok || got != panicMsg {
+		t.Errorf("propagated panic = %v, want the handler's original value %q unchanged", propagated, panicMsg)
+	}
+
+	var logged struct {
+		Msg       string `json:"msg"`
+		Method    string `json:"method"`
+		Path      string `json:"path"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &logged); err != nil {
+		t.Fatalf("decode access-log line %q: %v", buf.String(), err)
+	}
+	if logged.Msg != "http" {
+		t.Errorf("access-log msg = %q, want %q (the line must be emitted despite the panic)", logged.Msg, "http")
+	}
+	if logged.Method != http.MethodGet {
+		t.Errorf("access-log method = %q, want %q", logged.Method, http.MethodGet)
+	}
+	if logged.Path != "/api/panics" {
+		t.Errorf("access-log path = %q, want %q", logged.Path, "/api/panics")
+	}
+	if !validRequestID(logged.RequestID) {
+		t.Errorf("access-log request_id = %q, want a minted valid id", logged.RequestID)
+	}
+}

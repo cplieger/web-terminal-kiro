@@ -5,6 +5,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibecli/internal/api"
+	"github.com/cplieger/web-terminal-engine/v2/terminal"
 )
 
 // TestDebugRoutesNotExposed pins the security posture of registerRoutes: the
@@ -80,6 +83,60 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 	ready.Store(true)
 	if rec := get(); rec.Code != http.StatusOK {
 		t.Errorf("after ready: status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+// TestHealthEndpoint_reflectsKiroCliReadiness pins the kiro-cli readiness gate
+// added for the deferred readiness-decoupled-from-kiro-cli finding. When the
+// server is handed a marker path (as entrypoint.sh does via
+// KIRO_CLI_READY_MARKER), /api/health returns 503 while the marker is absent (a
+// failed/incomplete kiro-cli install) and 200 once it exists — reflecting
+// vibecli's core dependency with a cheap Stat, never launching kiro-cli. An
+// empty marker path skips the gate, so out-of-container runs (tests, bare
+// `go run`) keep pure-listener readiness.
+func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), ".kiro-cli-ready")
+
+	newMux := func(markerPath string) *http.ServeMux {
+		mux := http.NewServeMux()
+		var ready atomic.Bool
+		ready.Store(true)
+		deps := &routeDeps{
+			staticFS:        fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+			ready:           &ready,
+			workDir:         "",
+			cmd:             []string{"/bin/cat"},
+			kiroReadyMarker: markerPath,
+		}
+		mgr, err := registerRoutes(mux, deps)
+		if err != nil {
+			t.Fatalf("registerRoutes: %v", err)
+		}
+		t.Cleanup(mgr.Shutdown)
+		return mux
+	}
+	status := func(mux *http.ServeMux) int {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+		return rec.Code
+	}
+
+	// Marker path set but file absent -> kiro-cli unavailable -> 503.
+	if code := status(newMux(marker)); code != http.StatusServiceUnavailable {
+		t.Errorf("marker absent: status = %d, want %d", code, http.StatusServiceUnavailable)
+	}
+
+	// Marker present -> ready -> 200.
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	if code := status(newMux(marker)); code != http.StatusOK {
+		t.Errorf("marker present: status = %d, want %d", code, http.StatusOK)
+	}
+
+	// Empty marker path -> gate disabled -> 200 even with no file on disk.
+	if code := status(newMux("")); code != http.StatusOK {
+		t.Errorf("marker gate disabled: status = %d, want %d", code, http.StatusOK)
 	}
 }
 
@@ -228,10 +285,10 @@ func TestBuildETags_isContentAddressedSHA256(t *testing.T) {
 }
 
 // TestSSEStreamsThroughRequestLogger is the regression guard for the tab status
-// stream behind vibecli's own middleware. RequestLogger wraps most requests in
-// statusRecorder (which implements neither Flush nor Unwrap); if the SSE path
-// were wrapped, the engine's flush probe would fail and the stream would 500. It
-// is instead bypassed like /ws, so it gets the raw ResponseWriter. This drives
+// stream behind vibecli's own middleware. RequestLogger wraps /ws and this SSE
+// path in a statusRecorder (to record a failed open); statusRecorder implements
+// Unwrap, so http.NewResponseController walks the Unwrap chain to the real Flusher
+// and the stream still flushes rather than 500ing. This drives
 // /api/sessions/events through the full CrossOriginProtection + RequestLogger
 // chain and asserts the stream opens (200 + text/event-stream) and flushes an
 // event.
@@ -255,7 +312,7 @@ func TestSSEStreamsThroughRequestLogger(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	handler := http.NewCrossOriginProtection().Handler(api.RequestLogger(mux))
+	handler := api.RequestLogger(http.NewCrossOriginProtection().Handler(mux))
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
@@ -318,5 +375,229 @@ func TestCreateRateLimit(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", http.NoBody))
 	if !restHit.Load() {
 		t.Error("GET /api/sessions was blocked by the create rate limiter")
+	}
+}
+
+// TestWSRejectsCrossOrigin pins the WebSocket CSWSH guard. /ws is mounted via
+// mgr.WebSocketHandler() with no WithAcceptOptions, so the engine relies on
+// coder/websocket's secure-by-default same-origin check (nil AcceptOptions ->
+// authenticateOrigin). http.NewCrossOriginProtection lets the GET upgrade
+// through, so this same-origin check is the ONLY thing standing between a
+// malicious page in the victim's browser and a kiro-cli PTY on localhost.
+// Unlike /debug (TestDebugRoutesNotExposed) this posture had no regression
+// guard: a future WithAcceptOptions{InsecureSkipVerify:true} would silently
+// re-open cross-site WebSocket hijacking. This test fails if that happens.
+func TestWSRejectsCrossOrigin(t *testing.T) {
+	mux := http.NewServeMux()
+	var ready atomic.Bool
+	ready.Store(true)
+	deps := &routeDeps{
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+		ready:    &ready,
+		workDir:  "",
+		cmd:      []string{"/bin/cat"},
+	}
+	mgr, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
+	// A valid session id is required: WebSocketHandler returns 404 for an unknown
+	// id BEFORE the upgrade, so the same-origin (CSWSH) guard only runs for an
+	// existing session. Create one so the cross-origin handshake reaches
+	// websocket.Accept (nil AcceptOptions) and is rejected with 403.
+	id, err := mgr.Create()
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	handler := api.RequestLogger(http.NewCrossOriginProtection().Handler(mux))
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/ws?session="+id, http.NoBody)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Origin", "http://evil.example")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("cross-origin /ws handshake: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("cross-origin /ws handshake = %d, want 403 (CSWSH must be blocked; do not set InsecureSkipVerify)", resp.StatusCode)
+	}
+}
+
+// TestWSAcceptsSameOrigin is the positive companion to TestWSRejectsCrossOrigin:
+// a same-origin /ws handshake for a valid session must complete the upgrade
+// (101 Switching Protocols). The cross-origin 403 test alone cannot distinguish
+// "correctly rejects a foreign Origin" from "rejects every upgrade" -- a handler
+// that 403'd unconditionally would still pass the negative test. This pins that
+// the 403 is specifically the same-origin (CSWSH) check, not a blanket refusal.
+func TestWSAcceptsSameOrigin(t *testing.T) {
+	mux := http.NewServeMux()
+	var ready atomic.Bool
+	ready.Store(true)
+	deps := &routeDeps{
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+		ready:    &ready,
+		workDir:  "",
+		cmd:      []string{"/bin/cat"},
+	}
+	mgr, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
+	id, err := mgr.Create()
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	handler := api.RequestLogger(http.NewCrossOriginProtection().Handler(mux))
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/ws?session="+id, http.NoBody)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Origin", srv.URL) // same origin as the test server
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("same-origin /ws handshake: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Errorf("same-origin /ws handshake = %d, want 101 (the CSWSH guard must ACCEPT a same-origin upgrade, else the cross-origin 403 test cannot tell the origin check from a blanket rejection)", resp.StatusCode)
+	}
+}
+
+// TestClassifyStatus pins the kiro-cli OSC 9 -> latched-status mapping that
+// drives the tab activity dots. It was an inline closure with no test, so a
+// typo or an upstream wording drift in the magic strings would silently break
+// the dots. The switch is case-sensitive, so a case mismatch must NOT latch.
+func TestClassifyStatus(t *testing.T) {
+	cases := []struct {
+		name      string
+		msg       string
+		want      string
+		wantLatch bool
+	}{
+		{name: "response complete latches done", msg: "Response complete", want: terminal.StatusDone, wantLatch: true},
+		{name: "permission required latches input", msg: "Permission required", want: terminal.StatusInput, wantLatch: true},
+		{name: "unknown message is ignored", msg: "Working on it", want: "", wantLatch: false},
+		{name: "empty message is ignored", msg: "", want: "", wantLatch: false},
+		{name: "case mismatch is ignored", msg: "response complete", want: "", wantLatch: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, latch := classifyStatus(tc.msg)
+			if got != tc.want || latch != tc.wantLatch {
+				t.Errorf("classifyStatus(%q) = (%q, %v), want (%q, %v)", tc.msg, got, latch, tc.want, tc.wantLatch)
+			}
+		})
+	}
+}
+
+// TestTokenBucketAllowLocked drives the clock-injectable core of the create
+// rate limiter with a synthetic clock so refill, cap, and recovery are
+// deterministic (allow() itself reads the real clock). TestCreateRateLimit only
+// fires a same-instant burst, so it never exercises recovery-over-time or the
+// refill cap (`if b.tokens > createBurst`); this pins both. The cap is
+// DoS-relevant -- without it an idle client banks unbounded tokens and defeats
+// the burst limit.
+func TestTokenBucketAllowLocked(t *testing.T) {
+	base := time.Unix(0, 0)
+	b := &tokenBucket{}
+
+	// First call seeds a full burst, then consumes one token; the rest of the
+	// burst drains at the same instant (no time elapses, so no refill).
+	for i := range int(createBurst) {
+		if !b.allowLocked(base) {
+			t.Fatalf("burst token %d should be allowed (seeded full burst)", i)
+		}
+	}
+	// Burst spent at the same instant: the next same-instant call is denied.
+	if b.allowLocked(base) {
+		t.Fatal("call past the burst at the same instant should be denied")
+	}
+
+	// After createRefillPerSec seconds exactly one token has refilled, so a
+	// single call is allowed again (recovery over time) and the one after it is
+	// denied.
+	after := base.Add(time.Duration(float64(time.Second) / createRefillPerSec))
+	if !b.allowLocked(after) {
+		t.Fatal("a token should have refilled after createRefillPerSec seconds")
+	}
+	if b.allowLocked(after) {
+		t.Fatal("only one token refills per createRefillPerSec seconds; the second same-instant call must be denied")
+	}
+
+	// An idle client cannot bank unbounded tokens: after a long gap the pool is
+	// capped at createBurst, so exactly createBurst same-instant calls succeed
+	// and the next is denied. This kills the uncovered refill-cap mutant.
+	far := after.Add(time.Hour)
+	allowed := 0
+	for range int(createBurst) + 1 {
+		if b.allowLocked(far) {
+			allowed++
+		}
+	}
+	if allowed != int(createBurst) {
+		t.Errorf("idle refill allowed %d calls, want %d (pool must cap at createBurst)", allowed, int(createBurst))
+	}
+}
+
+// TestHealthEndpoint_reasonDistinguishesUnreadyCause pins the reason body of
+// the two 503 paths, which TestHealthEndpoint_reflectsReadiness and
+// TestHealthEndpoint_reflectsKiroCliReadiness leave unchecked: both assert only
+// the status code, so the startup 503 and the kiro-cli-unavailable 503 are
+// indistinguishable in the suite. The reason is the operator-facing diagnostic
+// (documented as surfacing to docker ps / the monitoring probe), so a
+// regression that emitted the wrong reason on the wrong branch -- or the same
+// reason for both -- would lose the "wait for startup" vs "alert: kiro-cli
+// broken" signal with no failing test. This pins each 503 branch to its reason.
+func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
+	newMux := func(ready bool, markerPath string) *http.ServeMux {
+		mux := http.NewServeMux()
+		var r atomic.Bool
+		r.Store(ready)
+		deps := &routeDeps{
+			staticFS:        fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+			ready:           &r,
+			workDir:         "",
+			cmd:             []string{"/bin/cat"},
+			kiroReadyMarker: markerPath,
+		}
+		mgr, err := registerRoutes(mux, deps)
+		if err != nil {
+			t.Fatalf("registerRoutes: %v", err)
+		}
+		t.Cleanup(mgr.Shutdown)
+		return mux
+	}
+	body := func(mux *http.ServeMux) (int, string) {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+		return rec.Code, rec.Body.String()
+	}
+
+	// Not-ready (startup/shutdown): the ready gate short-circuits before the
+	// marker check, so 503 with the startup reason regardless of the marker.
+	code, b := body(newMux(false, filepath.Join(t.TempDir(), ".absent")))
+	if code != http.StatusServiceUnavailable || !strings.Contains(b, "starting up or shutting down") {
+		t.Errorf("not-ready: (status %d, body %q), want 503 with reason %q", code, b, "starting up or shutting down")
+	}
+
+	// Ready but kiro-cli marker absent: 503 with the kiro-cli reason, which must
+	// differ from the startup reason so a probe can tell the two causes apart.
+	code, b = body(newMux(true, filepath.Join(t.TempDir(), ".absent")))
+	if code != http.StatusServiceUnavailable || !strings.Contains(b, "kiro-cli unavailable") {
+		t.Errorf("kiro-cli-absent: (status %d, body %q), want 503 with reason %q", code, b, "kiro-cli unavailable")
 	}
 }

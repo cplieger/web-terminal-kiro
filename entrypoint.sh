@@ -10,6 +10,13 @@ set -u
 TOOLS="/config/tools"
 BIN="$TOOLS/bin/kiro-cli"
 
+# Parse the version kiro-cli reports (last field of `--version`). Centralized
+# so the three call sites (install verify, drift check, readiness marker)
+# share one parse if kiro-cli ever reworks its --version output.
+kiro_cli_version() {
+    "$1" --version 2>/dev/null | awk '{print $NF}'
+}
+
 # kiro-cli is pinned via Renovate against the public install manifest at
 # https://desktop-release.q.us-east-1.amazonaws.com/index.json. Bumping
 # either literal triggers a reinstall on next container start (see the
@@ -17,6 +24,14 @@ BIN="$TOOLS/bin/kiro-cli"
 # so what runs always matches the version baked into the image tag.
 # KIRO_CLI_SHA256 is the sha256 of the x86_64-linux headless zip; on
 # aarch64 the hash is logged but not enforced (Renovate tracks one arch).
+# COUPLING (re-verify on every bump): routes.go's status classifier matches
+# kiro-cli's EXACT OSC 9 notification strings "Response complete" (turn end ->
+# done dot) and "Permission required" (tool approval -> needs-input dot),
+# verified against this version. A bump that reworded either string silently
+# stops the per-tab status dots from latching (no error; only a Debug log in
+# routes.go). The feature also depends on the chat.enableNotifications +
+# chat.notificationMethod=osc9 settings set below and web-terminal-engine's
+# WithKeepUnfocused() in routes.go -- keep all four in lockstep.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
 KIRO_CLI_VERSION="2.11.1"
 KIRO_CLI_SHA256="d4ed41eeca673c8345fb50e6065e84f4d595cb447f8677878df206097366d6ab"
@@ -55,7 +70,7 @@ install_kiro_cli() {
     tmpdir=$(mktemp -d) || return 1
     zip="$tmpdir/kirocli.zip"
 
-    if ! curl --proto '=https' --tlsv1.2 -fsSL \
+    if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
             --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 \
             "$zip_url" -o "$zip"; then
         printf 'ERROR: failed to download kiro-cli zip from %s\n' "$zip_url" >&2
@@ -116,7 +131,7 @@ install_kiro_cli() {
         return 1
     fi
     local installed
-    installed=$("$HOME/.local/bin/kiro-cli" --version 2>/dev/null | awk '{print $NF}')
+    installed=$(kiro_cli_version "$HOME/.local/bin/kiro-cli")
     if [ "$installed" != "$KIRO_CLI_VERSION" ]; then
         printf 'ERROR: installed binary reports version %s, wanted %s (install.sh rc=%d)\n' \
             "${installed:-unknown}" "$KIRO_CLI_VERSION" "$install_rc" >&2
@@ -144,7 +159,7 @@ needs_kiro_cli_install() {
         return 0
     fi
     local current
-    current=$("$BIN" --version 2>/dev/null | awk '{print $NF}')
+    current=$(kiro_cli_version "$BIN")
     if [ "$current" != "$KIRO_CLI_VERSION" ]; then
         printf 'kiro-cli version drift: installed=%s pinned=%s; reinstalling\n' \
             "${current:-unknown}" "$KIRO_CLI_VERSION"
@@ -155,8 +170,7 @@ needs_kiro_cli_install() {
 
 if needs_kiro_cli_install; then
     if ! install_kiro_cli; then
-        printf 'WARNING: kiro-cli install failed; web UI will still start\n' >&2
-        printf '         but the terminal will error until kiro-cli is present.\n' >&2
+        printf 'level=warn msg="kiro-cli install failed; web UI starts but the terminal errors until kiro-cli is present" component=entrypoint\n' >&2
     fi
 fi
 
@@ -188,6 +202,26 @@ if [ -x "$BIN" ]; then
     "$BIN" settings chat.terminalTitle false > /dev/null 2>&1 || true
 fi
 
+# Readiness marker consumed by the Go server's /api/health (main.go reads
+# KIRO_CLI_READY_MARKER; routes.go Stats it). kiro-cli is vibecli's core
+# dependency, yet the HTTP listener comes up even when the first-boot install
+# failed (degraded-not-dead start, per the install WARNING above). Record here
+# whether a runnable, correctly-versioned binary is present so the health signal
+# reflects the core dependency. Verified ONCE at boot via --version (do NOT
+# relaunch kiro-cli per health probe — spawning a heavy PTY process every probe
+# would be an anti-pattern). This is a READINESS signal: under
+# `restart: unless-stopped` nothing restarts on the resulting unhealthy state,
+# so a broken kiro-cli shows as `unhealthy` in `docker ps` + the monitoring
+# probe with no restart loop. If ever run under Swarm/k8s, wire /api/health to a
+# readinessProbe, not a livenessProbe, to keep it loop-free.
+KIRO_CLI_READY_MARKER="$TOOLS/.kiro-cli-ready"
+export KIRO_CLI_READY_MARKER
+if [ -x "$BIN" ] && [ "$(kiro_cli_version "$BIN")" = "$KIRO_CLI_VERSION" ]; then
+    touch "$KIRO_CLI_READY_MARKER"
+else
+    rm -f "$KIRO_CLI_READY_MARKER"
+fi
+
 # Install/update tools from /config/tools.json, FOREGROUND (blocking) so LSPs
 # and other tools are on PATH before the server can spawn kiro-cli — kiro-cli
 # scans PATH for language servers at code-intelligence init, and a non-blocking
@@ -198,7 +232,7 @@ if [ -s /config/tools.json ]; then
     printf 'Running setup-tools.sh (log: %s)\n' "$SETUP_LOG"
     bash /opt/vibecli/setup-tools.sh 2>&1 | tee "$SETUP_LOG"
     if [ "${PIPESTATUS[0]}" -ne 0 ]; then
-        printf 'WARNING: setup-tools.sh reported failures; check %s\n' "$SETUP_LOG" >&2
+        printf 'level=warn msg="setup-tools.sh reported failures" log=%s component=entrypoint\n' "$SETUP_LOG" >&2
     fi
 fi
 

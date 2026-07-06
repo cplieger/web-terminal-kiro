@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -241,5 +243,39 @@ func TestAllJSONWriters_setNosniffHeader(t *testing.T) {
 				t.Errorf("%s: X-Content-Type-Options = %q, want %q", wr.name, got, "nosniff")
 			}
 		})
+	}
+}
+
+// TestWriteJSONStatus_logsWarnOnEncodeFailure pins the documented WriteJSONStatus
+// contract ("Encode failures after the status has been committed are logged at
+// Warn"). The existing panic-safety test enters this branch but asserts nothing
+// about the log, so a mutant dropping the slog.Warn would survive. A channel
+// cannot be JSON-encoded, so Encode fails after the 200 status is committed and
+// the helper must emit a WARN line carrying the committed code. Serial: swaps the
+// process-global slog.Default(), restored via t.Cleanup.
+func TestWriteJSONStatus_logsWarnOnEncodeFailure(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	WriteJSONStatus(httptest.NewRecorder(), http.StatusOK, make(chan int))
+
+	var logged struct {
+		Level string `json:"level"`
+		Msg   string `json:"msg"`
+		Code  int    `json:"code"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &logged); err != nil {
+		t.Fatalf("decode warn line %q: %v", buf.String(), err)
+	}
+	if logged.Level != "WARN" {
+		t.Errorf("level = %q, want WARN (encode-failure is a documented Warn contract)", logged.Level)
+	}
+	if !strings.Contains(logged.Msg, "encode failed") {
+		t.Errorf("msg = %q, want it to describe the encode failure", logged.Msg)
+	}
+	if logged.Code != http.StatusOK {
+		t.Errorf("logged code = %d, want the committed status %d", logged.Code, http.StatusOK)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 	"sync"
@@ -20,7 +21,13 @@ type routeDeps struct {
 	staticFS fs.FS
 	ready    *atomic.Bool
 	workDir  string
-	cmd      []string
+	// kiroReadyMarker, when non-empty, is a file the entrypoint touches only
+	// after verifying a runnable, correctly-versioned kiro-cli is installed
+	// (see entrypoint.sh). /api/health Stats it to reflect vibecli's core
+	// dependency. Empty (e.g. `go run`/tests outside the container) skips the
+	// gate, preserving pure-listener readiness semantics.
+	kiroReadyMarker string
+	cmd             []string
 }
 
 func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManager, error) {
@@ -33,26 +40,6 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 		return nil, err
 	}
 	mux.Handle("/", cacheHeaders(etags, http.FileServer(http.FS(sub))))
-
-	// classifier maps kiro-cli's OSC 9 notification text to a latched session
-	// status for the tab activity dots: "Response complete" at the end of an
-	// agent turn latches the done (green) state, and "Permission required" when a
-	// tool call is blocked on approval latches the needs-input (amber) state
-	// (confirmed against the pinned 2.11.0 build). A new working phase (the OSC
-	// 9;4 progress signal, enabled by the factory's TERM_PROGRAM) clears the
-	// latch. Any other message is ignored. This mapping is the only
-	// kiro-cli-specific coupling; the engine stays generic (a plain shell server
-	// sets no classifier and derives working/idle from output activity).
-	classifier := func(msg string) (string, bool) {
-		switch msg {
-		case "Response complete":
-			return terminal.StatusDone, true
-		case "Permission required":
-			return terminal.StatusInput, true
-		default:
-			return "", false
-		}
-	}
 
 	// factory builds one kiro-cli chat session per tab: an independent PTY-backed
 	// process (deps.cmd = kiro-cli chat) with its own VT screen and scrollback, so
@@ -82,7 +69,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 
 	mgr := terminal.NewSessionManager(factory,
 		terminal.WithManagerLogger(slog.Default()),
-		terminal.WithStatusClassifier(classifier),
+		terminal.WithStatusClassifier(classifyStatus),
 	)
 
 	// Mount only /ws (the session WebSocket, dispatched on ?session=<id>). As with
@@ -104,17 +91,64 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	mux.Handle("/api/sessions/events", mgr.EventsHandler())
 
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
-		if !deps.ready.Load() {
+		unready := func(reason string) {
 			api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
 				"status": "unready",
-				"reason": "starting up or shutting down",
+				"reason": reason,
 			})
+		}
+		if !deps.ready.Load() {
+			unready("starting up or shutting down")
 			return
+		}
+		// kiro-cli readiness (env-gated via kiroReadyMarker). vibecli's core job
+		// is spawning kiro-cli chat PTYs, but the HTTP listener comes up even when
+		// the first-boot install failed (degraded-not-dead start). Reflect the
+		// entrypoint's boot-time verdict here so a broken kiro-cli surfaces as
+		// unready to `docker ps` and the monitoring probe. A cheap Stat keeps this
+		// spawn-free: kiro-cli was verified once at boot via --version, never
+		// relaunched per probe (a per-probe spawn of a heavy PTY process would be
+		// an anti-pattern). This is a READINESS signal, not liveness — under
+		// `restart: unless-stopped` nothing restarts on the resulting unhealthy
+		// state, so there is no restart loop; if ever run under Swarm/k8s, wire
+		// this to a readinessProbe, not a livenessProbe.
+		if deps.kiroReadyMarker != "" {
+			if _, err := os.Stat(deps.kiroReadyMarker); err != nil {
+				unready("kiro-cli unavailable")
+				return
+			}
 		}
 		api.WriteJSON(w, map[string]string{"status": "ok"})
 	})
 
 	return mgr, nil
+}
+
+// classifyStatus maps kiro-cli's OSC 9 notification text to a latched session
+// status for the tab activity dots: "Response complete" at the end of an agent
+// turn latches the done (green) state, and "Permission required" when a tool
+// call is blocked on approval latches the needs-input (amber) state (confirmed
+// against the pinned 2.11.0 build). A new working phase (the OSC 9;4 progress
+// signal, enabled by the factory's TERM_PROGRAM) clears the latch. Any other
+// message is ignored. This mapping is the only kiro-cli-specific coupling; the
+// engine stays generic (a plain shell server sets no classifier and derives
+// working/idle from output activity).
+func classifyStatus(msg string) (string, bool) {
+	switch msg {
+	case "Response complete":
+		return terminal.StatusDone, true
+	case "Permission required":
+		return terminal.StatusInput, true
+	default:
+		// Any OSC 9 text the pinned kiro-cli build does not emit for turn-end or
+		// tool-approval. If a kiro-cli bump reworded "Response complete"/"Permission
+		// required", every notification lands here and the per-tab status dots
+		// silently stop latching. This Debug line is the only runtime trace of that
+		// drift (invisible at the default Info level; raise the level to diagnose a
+		// "status dots stopped working" report after a version bump).
+		slog.Debug("unrecognized kiro-cli OSC 9 notification; tab status dots will not latch (kiro-cli notification wording may have changed on a version bump)", "message", msg)
+		return "", false
+	}
 }
 
 // Create-rate-limit tuning: a token bucket with a small burst (open several tabs
@@ -134,11 +168,20 @@ type tokenBucket struct {
 }
 
 // allow refills the bucket for the elapsed time and consumes one token,
-// returning false when none is available.
+// returning false when none is available. It reads the clock under the lock
+// (preserving the original monotonic-under-lock semantics) and delegates the
+// pure refill/consume math to allowLocked.
 func (b *tokenBucket) allow() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	now := time.Now()
+	return b.allowLocked(time.Now())
+}
+
+// allowLocked is the clock-injectable core of allow: it refills the bucket for
+// the time elapsed since the last call, caps the pool at createBurst, and
+// consumes one token, returning false when none is available. The caller must
+// hold b.mu.
+func (b *tokenBucket) allowLocked(now time.Time) bool {
 	if b.last.IsZero() {
 		b.tokens = createBurst
 	} else {
@@ -162,7 +205,7 @@ func createRateLimit(next http.Handler) http.Handler {
 	bucket := &tokenBucket{}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/sessions" && !bucket.allow() {
-			http.Error(w, "session creation rate exceeded", http.StatusTooManyRequests)
+			api.WriteError(w, r, http.StatusTooManyRequests, "rate_limited", "session creation rate exceeded")
 			return
 		}
 		next.ServeHTTP(w, r)

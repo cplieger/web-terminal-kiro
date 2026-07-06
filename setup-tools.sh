@@ -64,9 +64,9 @@ if command -v gh >/dev/null 2>&1; then
 fi
 gh_curl() {
     if [ -n "$GH_AUTH" ]; then
-        curl -fsSL --connect-timeout 10 --max-time 15 -H "Authorization: Bearer $GH_AUTH" "$@" 2>/dev/null
+        curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --connect-timeout 10 --max-time 15 -H "Authorization: Bearer $GH_AUTH" "$@" 2>/dev/null
     else
-        curl -fsSL --connect-timeout 10 --max-time 15 "$@" 2>/dev/null
+        curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --connect-timeout 10 --max-time 15 "$@" 2>/dev/null
     fi
 }
 
@@ -143,12 +143,12 @@ check_update() {
             latest=$(gh_curl "https://api.github.com/repos/${repo}/releases/latest" | jq -r '.tag_name // empty') || true ;;
         gomod)
             local mod; mod=$(jq -r "${jq_path}.update.module" "$MANIFEST")
-            latest=$(curl -fsSL --connect-timeout 10 --max-time 15 "https://proxy.golang.org/${mod}/@latest" 2>/dev/null | jq -r '.Version // empty') || true ;;
+            latest=$(curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --connect-timeout 10 --max-time 15 "https://proxy.golang.org/${mod}/@latest" 2>/dev/null | jq -r '.Version // empty') || true ;;
         url)
             local url prefix raw
             url=$(jq -r "${jq_path}.update.url" "$MANIFEST")
             prefix=$(jq -r "${jq_path}.update.strip_prefix // empty" "$MANIFEST")
-            raw=$(curl -fsSL --connect-timeout 10 --max-time 15 "$url" 2>/dev/null | head -1) || true
+            raw=$(curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --connect-timeout 10 --max-time 15 "$url" 2>/dev/null | head -1) || true
             [ -n "$raw" ] && latest="${raw#"$prefix"}" ;;
     esac
     [ -z "$latest" ] && { printf "    update: fetch failed\n"; return 1; }
@@ -204,12 +204,20 @@ requires_satisfied() {
 run_install() {
     local jq_path="$1" version="$2" install_cmd url sha256 ARTIFACT="" rc actual
     install_cmd=$(jq -r "${jq_path}.install" "$MANIFEST")
-    [ "$install_cmd" = "null" ] || [ -z "$install_cmd" ] && { printf "    error: no install command\n"; return 1; }
+    if [ "$install_cmd" = "null" ] || [ -z "$install_cmd" ]; then
+        printf "    error: no install command\n"; return 1
+    fi
     url=$(jq -r "${jq_path}.url // empty" "$MANIFEST")
     sha256=$(jq -r --arg a "$ARCH_AMD64_OR_ARM64" "${jq_path}.sha256[\$a] // empty" "$MANIFEST")
+    # Surface a per-arch integrity downgrade: an entry that opted into a sha256 map but omits the
+    # running arch would otherwise install UNVERIFIED on that arch with no diagnostic.
+    if [ -n "$url" ] && [ -z "$sha256" ] \
+       && [ "$(jq -r "(${jq_path}.sha256 // empty) | type" "$MANIFEST" 2>/dev/null)" = "object" ]; then
+        printf 'level=warn msg="sha256 map present but no entry for %s; installing UNVERIFIED" component=setup-tools\n' "$ARCH_AMD64_OR_ARM64" >&2
+    fi
     if [ -n "$url" ] && [ -n "$sha256" ]; then
         ARTIFACT=$(mktemp)
-        if ! curl -fsSL --connect-timeout 20 --max-time "$INSTALL_TIMEOUT" -o "$ARTIFACT" "$(expand "$url" "$version")"; then
+        if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --connect-timeout 20 --max-time "$INSTALL_TIMEOUT" -o "$ARTIFACT" "$(expand "$url" "$version")"; then
             printf "    error: download failed\n"; rm -f "$ARTIFACT"; return 1
         fi
         actual=$(sha256sum "$ARTIFACT" | awk '{print $1}')
