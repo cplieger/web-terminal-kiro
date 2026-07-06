@@ -419,7 +419,7 @@ func TestWSRejectsCrossOrigin(t *testing.T) {
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==") // gitleaks:allow (RFC 6455 example key)
 	req.Header.Set("Origin", "http://evil.example")
 	resp, err := srv.Client().Do(req)
 	if err != nil {
@@ -465,8 +465,8 @@ func TestWSAcceptsSameOrigin(t *testing.T) {
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
-	req.Header.Set("Origin", srv.URL) // same origin as the test server
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==") // gitleaks:allow (RFC 6455 example key)
+	req.Header.Set("Origin", srv.URL)                               // same origin as the test server
 	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("same-origin /ws handshake: %v", err)
