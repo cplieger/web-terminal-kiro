@@ -94,7 +94,7 @@ RUN mkdir -p static/vendor/fonts && \
 # side under static-src/node_modules/@cplieger so tsgo's bundler resolution
 # finds the engine when compiling the UI's `@cplieger/web-terminal-engine` import.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.2.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.2.1
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
 ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=3.3.1
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/node_modules/@cplieger/web-terminal-ui && \
