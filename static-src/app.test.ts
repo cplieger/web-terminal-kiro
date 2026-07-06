@@ -76,6 +76,7 @@ describe("vibecli bootstrap (app.ts)", () => {
     await expect(import("./app.js")).rejects.toThrow("vibecli: missing #terminal root element");
 
     expect(overlay.getAttribute("role")).toBe("alert");
+    expect(overlay.getAttribute("aria-live")).toBe("assertive");
     expect(overlay.textContent).toContain("vibecli failed to start");
     expect(createTerminalMock).not.toHaveBeenCalled();
   });
@@ -96,6 +97,7 @@ describe("vibecli bootstrap (app.ts)", () => {
 
     expect(loading.classList.contains("fade")).toBe(false);
     expect(loading.getAttribute("role")).toBe("alert");
+    expect(loading.getAttribute("aria-live")).toBe("assertive");
     expect(loading.textContent).toContain("Failed to start the terminal");
   });
 

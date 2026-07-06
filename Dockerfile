@@ -23,7 +23,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
       arm64) GO_SHA256="$GO_SHA256_ARM64" ;; \
       *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" && \
     printf '%s  /tmp/go.tar.gz\n' "$GO_SHA256" | sha256sum -c - && \
     tar -C /usr/local -xzf /tmp/go.tar.gz && \
     rm /tmp/go.tar.gz
@@ -46,12 +46,13 @@ ARG TSGO_VERSION=7.0.0-dev.20260615.1
 # TSGO_VERSION (the linux-x64 and linux-arm64 packages publish in lockstep).
 ARG TSGO_SHA256_X64=214b2ff1bae02f902b2ddc90f9599ad7991e6f333ccb97046489170cd5865d1e
 ARG TSGO_SHA256_ARM64=373161c691fcf7af07936daecbc065ce5343c4a15c47d87e879f86de921b4d1a
-RUN TSGO_ARCH=$([ "$(dpkg --print-architecture)" = "arm64" ] && echo "arm64" || echo "x64") && \
-    case "$TSGO_ARCH" in \
-      x64) TSGO_SHA256="$TSGO_SHA256_X64" ;; \
-      arm64) TSGO_SHA256="$TSGO_SHA256_ARM64" ;; \
+RUN ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in \
+      amd64) TSGO_ARCH="x64";   TSGO_SHA256="$TSGO_SHA256_X64" ;; \
+      arm64) TSGO_ARCH="arm64"; TSGO_SHA256="$TSGO_SHA256_ARM64" ;; \
+      *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/tsgo.tgz \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/tsgo.tgz \
       "https://registry.npmjs.org/@typescript/native-preview-linux-${TSGO_ARCH}/-/native-preview-linux-${TSGO_ARCH}-${TSGO_VERSION}.tgz" && \
     printf '%s  /tmp/tsgo.tgz\n' "$TSGO_SHA256" | sha256sum -c - && \
     tar -xz -C /tmp -f /tmp/tsgo.tgz && \
@@ -78,7 +79,7 @@ COPY . ./
 
 # Fetch Nerd Font for the monospace terminal display.
 RUN mkdir -p static/vendor/fonts && \
-    curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/mona.tar.xz \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/mona.tar.xz \
       "https://github.com/ryanoasis/nerd-fonts/releases/download/${NERDFONT_VERSION}/Monaspace.tar.xz" && \
     printf '%s  /tmp/mona.tar.xz\n' "$NERDFONT_SHA256" | sha256sum -c - && \
     tar -xJ -C static/vendor/fonts -f /tmp/mona.tar.xz \
@@ -93,15 +94,23 @@ RUN mkdir -p static/vendor/fonts && \
 # matching how local TS files in static-src/ are treated. Extracted side by
 # side under static-src/node_modules/@cplieger so tsgo's bundler resolution
 # finds the engine when compiling the UI's `@cplieger/web-terminal-engine` import.
+# Integrity note: unlike the Go, tsgo, and Nerd Font fetches above, the two
+# @cplieger npm tarballs are NOT sha256-pinned. npm published package versions
+# are immutable (the registry refuses to re-publish an existing version), and
+# both are first-party packages fetched over pinned TLS (--proto '=https'
+# --tlsv1.2 below). The residual risk (a registry-side byte-swap or a
+# first-party npm account takeover) is accepted here; add per-package sha256
+# ARGs + `sha256sum -c` for parity with the tsgo gate if that risk is later
+# deemed in scope (at the cost of a manual sha bump on each engine/UI release).
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.2.0
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
 ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=3.3.1
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/node_modules/@cplieger/web-terminal-ui && \
-    curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/engine.tgz "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/engine.tgz "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" && \
     tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1 -f /tmp/engine.tgz && \
     rm /tmp/engine.tgz && \
-    curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/ui.tgz "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/ui.tgz "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" && \
     tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1 -f /tmp/ui.tgz && \
     rm /tmp/ui.tgz
 
@@ -233,6 +242,14 @@ COPY tools.json /opt/vibecli/tools.json
 WORKDIR /workspace
 EXPOSE 9848
 
+# start-period is sized for the default (all tools disabled in tools.json) boot:
+# kiro-cli download only. entrypoint.sh runs setup-tools.sh FOREGROUND before the
+# server binds, and each tool install is budgeted up to INSTALL_TIMEOUT=600s, so a
+# host that enables heavy installs (e.g. the ~190 MB Go runtime) can exceed this
+# window. Under `restart: unless-stopped` the container just shows a transient
+# "unhealthy" and self-heals; under a liveness-acting orchestrator, raise
+# start-period (compose healthcheck override) to cover the enabled tools' install
+# time.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=180s \
     CMD curl -sf http://127.0.0.1:9848/api/health || exit 1
 

@@ -49,14 +49,27 @@ func RequestIDFromContext(ctx context.Context) string {
 func RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// /ws and the session status SSE (/api/sessions/events) are long-lived
-		// streams: logging them at request time would record only "opened" with a
-		// meaningless duration. The terminal package logs its own lifecycle, so
-		// skip access logging for both. (statusRecorder now implements Unwrap, so
-		// wrapping these would no longer break the engine's ResponseController
-		// flush probe — the skip is a deliberate no-useful-latency choice, not a
-		// safety necessity.)
+		// streams. A SUCCESSFUL open blocks for the session lifetime (the
+		// terminal package logs its own lifecycle), so a request-time /
+		// close-time access line would carry a meaningless duration -- keep
+		// skipping those. A FAILED open (WS upgrade refusal, bad ?session=, or a
+		// 5xx before the engine takes over) returns a quick error status that is
+		// otherwise invisible in this slog-only access log (no /metrics
+		// fallback), so wrap and log only that case. No request id is attached to
+		// the context or response header, preserving the no-id-on-/ws contract;
+		// statusRecorder implements Unwrap, so wrapping does not break the
+		// engine's ResponseController flush probe.
 		if r.URL.Path == "/ws" || r.URL.Path == "/api/sessions/events" {
-			next.ServeHTTP(w, r)
+			rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			next.ServeHTTP(rw, r)
+			if rw.status >= http.StatusBadRequest {
+				slog.Warn("http",
+					"method", r.Method,
+					"path", r.URL.Path,
+					"status", rw.status,
+					"remote", r.RemoteAddr,
+				)
+			}
 			return
 		}
 
@@ -66,17 +79,23 @@ func RequestLogger(next http.Handler) http.Handler {
 
 		rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
+		// Emit the access line from a defer so a panicking handler is still
+		// recorded in the slog stream (vibecli's only per-request signal). Without
+		// it, a panic skips this call and the request is invisible to Loki --
+		// surfacing only via net/http's default ErrorLog, outside the structured
+		// pipeline and without the request_id. The panic still propagates to
+		// net/http's conn-level handler unchanged (no recover added here).
+		defer func() {
+			slog.Info("http",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", rw.status,
+				"duration_ms", time.Since(start).Milliseconds(),
+				"request_id", id,
+				"remote", r.RemoteAddr,
+			)
+		}()
 		next.ServeHTTP(rw, r.WithContext(ctx))
-		dur := time.Since(start)
-
-		slog.Info("http",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", rw.status,
-			"duration_ms", dur.Milliseconds(),
-			"request_id", id,
-			"remote", r.RemoteAddr,
-		)
 	})
 }
 

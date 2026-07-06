@@ -33,7 +33,7 @@ export default defineConfig({
     // Forbid .only tests unconditionally — not just in CI.
     allowOnly: false,
 
-    // app.test.ts covers vibecli's thin bootstrap (the mount() wiring); the terminal
+    // app.test.ts covers vibecli's thin bootstrap (the createTerminal() wiring); the terminal
     // logic itself is tested in @cplieger/web-terminal-ui and @cplieger/web-terminal-engine.
     // passWithNoTests stays as a safety net so moving the bootstrap test into the
     // packages later won't hard-fail the suite here.

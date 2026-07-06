@@ -14,29 +14,39 @@
 // over the shared server; kiro-cli's TUI is rendered verbatim through the raw PTY
 // stream.
 //
-// The server serves the session WebSocket at "/ws" (createTerminal's default) and
-// the bundled font is Monaspace (the fontReady default), so the only option
-// passed is `loading`: the overlay element createTerminal fades out once the
-// first frame renders.
+// The session WebSocket ("/ws") and font (Monaspace) use createTerminal's
+// defaults and are left implicit. The options passed are `features` (the agent
+// preset), `theme` (vibecli's purple tokens), and -- only when present --
+// `loading`, the overlay element createTerminal fades out once the first frame
+// renders.
 
 import { createTerminal } from "@cplieger/web-terminal-ui";
 import { presetAgentTabbed } from "@cplieger/web-terminal-ui/presets";
 
+// Reveal the #loading overlay as an assertive alert with a fatal message.
+// remove("fade") undoes any fade-out createTerminal began; on the missing-root
+// path createTerminal never ran, so the remove is a harmless no-op.
+function showFatal(overlay: HTMLElement, message: string): void {
+  overlay.classList.remove("fade");
+  overlay.setAttribute("role", "alert");
+  overlay.setAttribute("aria-live", "assertive");
+  overlay.textContent = message;
+}
+
+const loading = document.getElementById("loading");
 const root = document.getElementById("terminal");
 if (!root) {
   // Surface the failure on the page, not just the console: createTerminal (which
   // fades the #loading overlay out on first frame) is never reached on this path,
   // so without this the user is left on a stuck loading screen with no explanation.
-  const overlay = document.getElementById("loading");
-  if (overlay) {
-    overlay.setAttribute("role", "alert");
-    overlay.setAttribute("aria-live", "assertive");
-    overlay.textContent =
-      "vibecli failed to start. Reload the page; if this persists the app was built incorrectly.";
+  if (loading) {
+    showFatal(
+      loading,
+      "vibecli failed to start. Reload the page; if this persists the app was built incorrectly.",
+    );
   }
   throw new Error("vibecli: missing #terminal root element");
 }
-const loading = document.getElementById("loading");
 try {
   createTerminal(root, {
     features: presetAgentTabbed(),
@@ -53,10 +63,7 @@ try {
   });
 } catch (e) {
   if (loading) {
-    loading.classList.remove("fade");
-    loading.setAttribute("role", "alert");
-    loading.setAttribute("aria-live", "assertive");
-    loading.textContent = "Failed to start the terminal. Reload the page to retry.";
+    showFatal(loading, "Failed to start the terminal. Reload the page to retry.");
   }
   throw e;
 }
