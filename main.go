@@ -28,7 +28,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/vibecli/internal/api"
 	"github.com/cplieger/webhttp"
 )
 
@@ -171,13 +170,20 @@ func utcTimeAttr(groups []string, a slog.Attr) slog.Attr {
 
 // buildHandler wraps the route mux in vibecli's middleware stack via
 // webhttp.Chain. Chain(h, A, B, C, D) == A(B(C(D(h)))), so the first entry is
-// the outermost wrapper; a request flows RequestLogger -> Recoverer ->
+// the outermost wrapper; a request flows Logging -> Recoverer ->
 // SecurityHeaders -> CrossOriginProtection -> mux, and the response unwinds the
 // other way.
 //
-//   - RequestLogger — vibecli's app-side access logger (kept local for its
-//     documented `remote` field). Outermost so it observes every final status,
-//     including a recovered 500 and a cross-origin 403.
+//   - Logging — webhttp's access logger. Outermost so it observes every final
+//     status, including a recovered 500 and a cross-origin 403. WithClientIP()
+//     with NO trusted ranges logs the real socket peer as the `client_ip`
+//     field: vibecli is LAN-direct (no reverse proxy), so the unspoofable TCP
+//     peer host IS the client. This replaces the former app-side
+//     api.RequestLogger, whose only reason to exist was the `remote`
+//     (host:port) field; `client_ip` (host only, no port) is its successor.
+//     Skips the long-lived streams (/ws and the /api/sessions/events SSE) so
+//     neither emits a misleading open-time access line; the request id is still
+//     minted, echoed, and threaded on those paths.
 //   - Recoverer — turns a downstream panic into a logged 500 (inside the logger
 //     so the access line records the 500, not the recorder's default 200).
 //   - SecurityHeaders — the fleet baseline (nosniff, X-Frame-Options: DENY,
@@ -191,7 +197,12 @@ func utcTimeAttr(groups []string, a slog.Attr) slog.Attr {
 //     it rejects a forged cross-origin unsafe request with 403.
 func buildHandler(mux http.Handler) http.Handler {
 	return webhttp.Chain(mux,
-		api.RequestLogger,
+		// requires webhttp >= v1.2.0 (WithClientIP); local build via go.work replace until released.
+		webhttp.Logging(
+			webhttp.WithLogger(slog.Default()),
+			webhttp.WithSkipPaths("/ws", "/api/sessions/events"),
+			webhttp.WithClientIP(),
+		),
 		webhttp.Recoverer(webhttp.WithRecoverLogger(slog.Default())),
 		webhttp.SecurityHeaders(),
 		http.NewCrossOriginProtection().Handler,
