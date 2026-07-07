@@ -28,10 +28,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	// Embed the IANA tz database so TZ (default Europe/Paris) is honored regardless
-	// of the base image's zoneinfo; without it, on a base that ships no
-	// /usr/share/zoneinfo, time.Local silently falls back to UTC.
-	_ "time/tzdata"
 
 	"github.com/cplieger/vibecli/internal/api"
 )
@@ -64,7 +60,7 @@ func isExposedBind(addr string) bool {
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{ReplaceAttr: utcTimeAttr})))
 
 	addr := envOr("KWEB_ADDR", ":9848")
 	// Warn for any bind reachable beyond loopback (see isExposedBind): a client
@@ -163,4 +159,16 @@ func main() {
 		slog.Warn("server shutdown returned error", "error", err)
 	}
 	<-mgrDone
+}
+
+// utcTimeAttr is a slog ReplaceAttr that renders the record's built-in time
+// key in UTC, so log-line timestamps are zone-stable regardless of the
+// container's TZ (the fleet logs-in-UTC standard). It rewrites only the
+// top-level time attribute; a user attribute that happens to share the "time"
+// key inside a group is left untouched.
+func utcTimeAttr(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) == 0 && a.Key == slog.TimeKey && a.Value.Kind() == slog.KindTime {
+		a.Value = slog.TimeValue(a.Value.Time().UTC())
+	}
+	return a
 }
