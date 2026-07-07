@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/vibecli/internal/api"
 	"github.com/cplieger/web-terminal-engine/v2/terminal"
+	"github.com/cplieger/webhttp"
 )
 
 type routeDeps struct {
@@ -92,7 +92,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
 		unready := func(reason string) {
-			api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
+			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
 				"status": "unready",
 				"reason": reason,
 			})
@@ -118,7 +118,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 				return
 			}
 		}
-		api.WriteJSON(w, map[string]string{"status": "ok"})
+		webhttp.WriteJSON(w, map[string]string{"status": "ok"})
 	})
 
 	return mgr, nil
@@ -205,7 +205,7 @@ func createRateLimit(next http.Handler) http.Handler {
 	bucket := &tokenBucket{}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/sessions" && !bucket.allow() {
-			api.WriteError(w, r, http.StatusTooManyRequests, "rate_limited", "session creation rate exceeded")
+			webhttp.WriteError(w, r, http.StatusTooManyRequests, "rate_limited", "session creation rate exceeded")
 			return
 		}
 		next.ServeHTTP(w, r)

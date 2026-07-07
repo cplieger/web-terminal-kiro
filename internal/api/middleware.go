@@ -1,194 +1,56 @@
-// This file holds the request-logging middleware (RequestLogger), the
-// request-id minting and validation (requestIDOrNew, validRequestID), and
-// the typed error envelope (APIError, WriteError). http.go owns the JSON
-// response writers (WriteJSON, WriteJSONStatus, Ok) and the named error
-// helpers (BadRequest, Conflict, MethodNotAllowed); the package doc lives
-// in http.go.
-
+// Package api holds vibecli's one app-specific piece of HTTP plumbing: the
+// request-logging + request-id access logger. The JSON response writers, the
+// error envelope, the status recorder, and the request-id primitives it used
+// to carry now come from github.com/cplieger/webhttp, so this package is just
+// the access-log middleware that layers vibecli's `remote` field on top.
 package api
 
 import (
-	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/cplieger/webhttp"
 )
 
-// RequestID is the canonical HTTP header carrying the per-request id.
-// We accept inbound values (validated for shape; see RequestLogger) and
-// echo them back so a reverse proxy (Caddy, Traefik) that injects an
-// id can correlate logs end-to-end. When absent, RequestLogger mints
-// a fresh one. Header naming follows the X-Request-ID de-facto standard.
-const RequestID = "X-Request-ID"
-
-type ctxKey struct{}
-
-// RequestIDFromContext returns the request id stored by RequestLogger,
-// or "" if the context does not carry one.
-func RequestIDFromContext(ctx context.Context) string {
-	v, ok := ctx.Value(ctxKey{}).(string)
-	if !ok {
-		return ""
-	}
-	return v
-}
-
-// RequestLogger wraps next with method/path/status/latency/request-id
-// access logging at slog.Info. Skips noisy paths (the WebSocket /ws
-// handler runs for the lifetime of a session and should not emit per-
-// connection access logs at session-open time; the WS handler logs
-// its own lifecycle events).
+// RequestLogger wraps next with method/path/status/latency/request-id/remote
+// access logging at slog.Info, built on webhttp's request-id and
+// status-recorder primitives. It skips the long-lived streams (/ws and the
+// session status SSE /api/sessions/events): logging them at open time would
+// record only "opened" with a meaningless duration, and the terminal package
+// logs its own lifecycle.
 //
-// Each request gets a stable id available via RequestIDFromContext.
-// An inbound X-Request-Id header is reused when it matches the
-// validated shape (alphanumeric + dashes + underscores, 1..64 chars);
-// otherwise a 16-byte random hex id is generated. The id is also set
-// on the response so callers can correlate without server logs.
+// The `remote` field (r.RemoteAddr) is vibecli's documented access-log
+// contract, so this stays app-side rather than using webhttp.Logging (which
+// omits it). An inbound X-Request-ID is reused when it satisfies
+// webhttp.ValidRequestID; otherwise a fresh id is minted with
+// webhttp.NewRequestID. The id is echoed on the response and threaded into the
+// request context via webhttp.WithRequestID.
 func RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /ws and the session status SSE (/api/sessions/events) are long-lived
-		// streams. A SUCCESSFUL open blocks for the session lifetime (the
-		// terminal package logs its own lifecycle), so a request-time /
-		// close-time access line would carry a meaningless duration -- keep
-		// skipping those. A FAILED open (WS upgrade refusal, bad ?session=, or a
-		// 5xx before the engine takes over) returns a quick error status that is
-		// otherwise invisible in this slog-only access log (no /metrics
-		// fallback), so wrap and log only that case. No request id is attached to
-		// the context or response header, preserving the no-id-on-/ws contract;
-		// statusRecorder implements Unwrap, so wrapping does not break the
-		// engine's ResponseController flush probe.
 		if r.URL.Path == "/ws" || r.URL.Path == "/api/sessions/events" {
-			rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-			next.ServeHTTP(rw, r)
-			if rw.status >= http.StatusBadRequest {
-				slog.Warn("http",
-					"method", r.Method,
-					"path", r.URL.Path,
-					"status", rw.status,
-					"remote", r.RemoteAddr,
-				)
-			}
+			next.ServeHTTP(w, r)
 			return
 		}
 
-		id := requestIDOrNew(r.Header.Get(RequestID))
-		w.Header().Set(RequestID, id)
-		ctx := context.WithValue(r.Context(), ctxKey{}, id)
-
-		rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		start := time.Now()
-		// Emit the access line from a defer so a panicking handler is still
-		// recorded in the slog stream (vibecli's only per-request signal). Without
-		// it, a panic skips this call and the request is invisible to Loki --
-		// surfacing only via net/http's default ErrorLog, outside the structured
-		// pipeline and without the request_id. The panic still propagates to
-		// net/http's conn-level handler unchanged (no recover added here).
-		defer func() {
-			slog.Info("http",
-				"method", r.Method,
-				"path", r.URL.Path,
-				"status", rw.status,
-				"duration_ms", time.Since(start).Milliseconds(),
-				"request_id", id,
-				"remote", r.RemoteAddr,
-			)
-		}()
-		next.ServeHTTP(rw, r.WithContext(ctx))
-	})
-}
-
-// statusRecorder wraps http.ResponseWriter to capture the response
-// status code for the access log above. It defaults to 200 (Go's
-// implicit status on the first Write) and records the first explicit
-// WriteHeader. No body buffering — this is purely for logging.
-type statusRecorder struct {
-	http.ResponseWriter
-	status      int
-	wroteHeader bool
-}
-
-func (s *statusRecorder) WriteHeader(code int) {
-	if s.wroteHeader {
-		return
-	}
-	s.status = code
-	s.wroteHeader = true
-	s.ResponseWriter.WriteHeader(code)
-}
-
-// Unwrap returns the wrapped ResponseWriter so http.ResponseController can
-// reach the underlying Flusher/Hijacker through this middleware. The
-// web-terminal-engine SSE/terminal handlers flush via http.NewResponseController,
-// which walks the Unwrap chain, so a wrapped stream still finds its flusher.
-func (s *statusRecorder) Unwrap() http.ResponseWriter {
-	return s.ResponseWriter
-}
-
-// requestIDOrNew returns inbound when it is valid, otherwise mints a
-// new 32-char hex id. Validation: 1..64 chars, alphanumeric / dash /
-// underscore only. Defends against a header-injection vector where
-// inbound text is logged or echoed back unsanitised.
-func requestIDOrNew(inbound string) string {
-	if validRequestID(inbound) {
-		return inbound
-	}
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// rand.Read on Linux uses getrandom(2) and effectively cannot
-		// fail; if it does, fall back to a timestamp-based id so we
-		// still set a value rather than crashing the request. The
-		// layout omits the '.'/fractional part so the result satisfies
-		// validRequestID ([a-zA-Z0-9_-] only), like the hex path.
-		return time.Now().UTC().Format("20060102T150405")
-	}
-	return hex.EncodeToString(b[:])
-}
-
-func validRequestID(s string) bool {
-	if len(s) < 1 || len(s) > 64 {
-		return false
-	}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '-' || r == '_':
-		default:
-			return false
+		id := r.Header.Get(webhttp.HeaderRequestID)
+		if !webhttp.ValidRequestID(id) {
+			id = webhttp.NewRequestID()
 		}
-	}
-	return true
-}
+		w.Header().Set(webhttp.HeaderRequestID, id)
+		r = r.WithContext(webhttp.WithRequestID(r.Context(), id))
 
-// APIError is the typed error envelope. The JSON wire format keeps
-// the historical `error` field as the primary message so existing
-// clients keep working; new fields (`code` and `request_id`) are
-// additive. Callers branch on Code (machine-readable) rather than
-// string-matching Message.
-//
-// The name `APIError` over `Error` is deliberate even though revive
-// flags it as stuttering: shortening to `api.Error` would collide
-// with this struct's own `Error` field (the message string), which
-// is what JSON consumers depend on.
-//
-//nolint:revive // APIError avoids field/type name collision; see godoc above.
-type APIError struct {
-	Error     string `json:"error"`
-	Code      string `json:"code,omitempty"`
-	RequestID string `json:"request_id,omitempty"`
-}
+		rw := webhttp.NewStatusRecorder(w)
+		start := time.Now()
+		next.ServeHTTP(rw, r)
 
-// WriteError writes a typed APIError at the given HTTP status. Pulls
-// the request id from r.Context() (set by RequestLogger). Code is a
-// short machine-readable token like "bad_request" or "request_too_large".
-// Pass an empty Code to emit only error+request_id.
-func WriteError(w http.ResponseWriter, r *http.Request, status int, code, msg string) {
-	WriteJSONStatus(w, status, APIError{
-		Error:     msg,
-		Code:      code,
-		RequestID: RequestIDFromContext(r.Context()),
+		slog.Info("http",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.Status(),
+			"duration_ms", time.Since(start).Milliseconds(),
+			"request_id", id,
+			"remote", r.RemoteAddr,
+		)
 	})
 }
