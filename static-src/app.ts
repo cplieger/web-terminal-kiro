@@ -52,11 +52,17 @@ try {
     features: presetAgentTabbed(),
     // vibecli's purple theme (the consumer "settings"; the UI library ships the
     // neutral defaults). Recolors hovered/active tabs and the accent icons (the
-    // mobile "+", the toggled keyboard button).
+    // mobile "+", the toggled keyboard button). The active-tab border is set
+    // explicitly: the library derives its default from --accent, but that
+    // derivation is resolved once at :root against the light-blue default, so
+    // overriding --accent alone leaves the border light blue — it must be
+    // overridden here too (a lighter/brighter purple than the 32% fill, matching
+    // the library's own accent-90% edge).
     theme: {
       "--accent": "hsl(263.1683 100% 80%)",
       "--tab-hover-bg": "hsl(263.1683 100% 80% / 16%)",
       "--tab-active-bg": "hsl(263.1683 100% 80% / 32%)",
+      "--tab-active-border": "hsl(263.1683 100% 80% / 90%)",
       "--tab-active-fg": "#fff",
     },
     ...(loading ? { loading } : {}),
