@@ -18,7 +18,7 @@ const THEME = {
   "--accent": "hsl(263.1683 100% 80%)",
   "--tab-hover-bg": "hsl(263.1683 100% 80% / 16%)",
   "--tab-active-bg": "hsl(263.1683 100% 80% / 32%)",
-  "--tab-active-border": "hsl(263.1683 100% 80% / 90%)",
+  "--tab-active-border": "color-mix(in oklch, var(--tab-active-bg), var(--text) 25%)",
   "--tab-active-fg": "#fff",
 };
 
