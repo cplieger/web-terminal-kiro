@@ -9,14 +9,19 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates curl xz-utils && rm -rf /var/lib/apt/lists/*
 
-# Go for building the web server.
+# Go for building the web server. GO_VERSION and both per-arch tarball sha256
+# pins move together, maintained by Renovate: the golang-amd64 / golang-arm64
+# custom datasources (in cplieger/.github default.json) read go.dev's
+# ?mode=json and rewrite GO_SHA256_AMD64 / GO_SHA256_ARM64 alongside GO_VERSION
+# in one grouped "golang toolchain" PR (CI builds amd64 and arm64 natively).
+# The `# go<version>` trailer on each sha line is the anchor Renovate uses to
+# resolve that arch's digest — do not hand-edit; Renovate owns these lines.
 # renovate: datasource=golang-version depName=golang
-ARG GO_VERSION=1.26.4
-# sha256 of the official go.dev linux tarball, per arch (CI builds amd64 and
-# arm64 natively). Update both alongside GO_VERSION; values come from
-# https://go.dev/dl/?mode=json (the .sha256 sidecar 302-redirects to HTML).
-ARG GO_SHA256_AMD64=1153d3d50e0ac764b447adfe05c2bcf08e889d42a02e0fe0259bd47f6733ad7f
-ARG GO_SHA256_ARM64=ef758ae7c6cf9267c9c0ef080b8965f453d89ab2d25d9eb22de4405925238768
+ARG GO_VERSION=1.26.5
+# renovate: datasource=custom.golang-amd64 depName=golang-amd64
+ARG GO_SHA256_AMD64=5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053  # go1.26.5
+# renovate: datasource=custom.golang-arm64 depName=golang-arm64
+ARG GO_SHA256_ARM64=fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49  # go1.26.5
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
       amd64) GO_SHA256="$GO_SHA256_AMD64" ;; \
