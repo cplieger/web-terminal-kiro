@@ -19,7 +19,6 @@ package main
 import (
 	"context"
 	"embed"
-	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -30,6 +29,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibecli/internal/api"
+	"github.com/cplieger/webhttp"
 )
 
 //go:embed static
@@ -115,50 +115,51 @@ func main() {
 
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           api.RequestLogger(http.NewCrossOriginProtection().Handler(mux)),
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    1 << 20,
-		BaseContext:       func(net.Listener) context.Context { return baseCtx },
-	}
+
+	// Middleware, outermost first: RequestLogger (so it observes every final
+	// status, including a recovered 500 and a cross-origin 403), then Recoverer
+	// (panic -> logged 500), then the stdlib cross-origin CSRF guard, then the
+	// routes. webhttp.NewServer supplies the streaming-safe defaults
+	// (ReadHeaderTimeout 10s, IdleTimeout 120s, Read/WriteTimeout unset) that the
+	// hijacked /ws stream needs.
+	handler := api.RequestLogger(
+		webhttp.Recoverer(webhttp.WithRecoverLogger(slog.Default()))(
+			http.NewCrossOriginProtection().Handler(mux)))
+	srv := webhttp.NewServer(handler)
+	srv.Addr = addr
+	// BaseContext hands every request a context we can cancel on shutdown (see
+	// the shutdown goroutine): the always-open /api/sessions/events SSE handler
+	// returns only on r.Context().Done(), and srv.Shutdown does not interrupt an
+	// active stream, so cancelling baseCtx is what unblocks the drain instead of
+	// blocking the full grace window whenever a browser tab is open.
+	srv.BaseContext = func(net.Listener) context.Context { return baseCtx }
 
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Flip readiness false and cancel in-flight request contexts the moment
+	// shutdown is signalled, before webhttp.Run drains, so /api/health reports
+	// 503 during the drain window. cancelBase unblocks the always-open
+	// /api/sessions/events SSE handler (it returns only on r.Context().Done();
+	// srv.Shutdown does not interrupt an active stream, so without this the drain
+	// blocks the full grace window whenever a tab is open).
 	go func() {
-		slog.Info("vibecli listening",
-			"addr", addr, "cli_path", cliPath,
-			"work_dir", workDir)
-		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("http server exited", "error", err)
-			stop()
-		}
+		<-ctx.Done()
+		ready.Store(false)
+		cancelBase()
+		slog.Info("shutting down", "cause", context.Cause(ctx))
 	}()
+
+	slog.Info("vibecli listening", "addr", addr, "cli_path", cliPath, "work_dir", workDir)
 	ready.Store(true)
 
-	<-ctx.Done()
-	ready.Store(false)
-	slog.Info("shutting down", "cause", context.Cause(ctx))
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	// Cancel every in-flight request context: the always-open
-	// /api/sessions/events SSE handler only leaves streamEvents on
-	// r.Context().Done() (srv.Shutdown does not interrupt active connections),
-	// so without this srv.Shutdown blocks the full 5s and logs a spurious
-	// "server shutdown returned error" on every graceful stop with a tab open.
-	// mgr.Shutdown tears down the per-session WS/PTY handlers concurrently
-	// (it cancels the session goroutines + closes the PTYs, but does NOT touch
-	// the SSE subscriber channel, so it alone cannot unblock the SSE).
-	cancelBase()
-	mgrDone := make(chan struct{})
-	go func() { mgr.Shutdown(); close(mgrDone) }()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Warn("server shutdown returned error", "error", err)
+	if err := webhttp.Run(ctx, srv, ln, func(context.Context) { mgr.Shutdown() },
+		webhttp.WithShutdownGrace(5*time.Second)); err != nil {
+		slog.Error("http server exited", "error", err)
+		mgr.Shutdown()
+		os.Exit(1)
 	}
-	<-mgrDone
 }
 
 // utcTimeAttr is a slog ReplaceAttr that renders the record's built-in time
