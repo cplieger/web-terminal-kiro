@@ -11,7 +11,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 
 # Go for building the web server.
 # renovate: datasource=golang-version depName=golang
-ARG GO_VERSION=1.26.4
+ARG GO_VERSION=1.26.5
 # sha256 of the official go.dev linux tarball, per arch (CI builds amd64 and
 # arm64 natively). Update both alongside GO_VERSION; values come from
 # https://go.dev/dl/?mode=json (the .sha256 sidecar 302-redirects to HTML).
