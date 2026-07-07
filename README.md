@@ -154,6 +154,10 @@ vibecli is deliberately small: an HTTP + WebSocket server around the engine, the
 
 Build, test, and layout notes are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+### Access-log client IP (`TRUSTED_PROXIES`)
+
+The access log records a `client_ip` per request. By default (`TRUSTED_PROXIES` unset) it logs the direct socket peer and ignores any `X-Forwarded-For` header, so the logged IP cannot be spoofed — the correct choice when vibecli is directly exposed. When you run it behind a reverse proxy the socket peer is the proxy, not the user, so set `TRUSTED_PROXIES` to the proxy's address(es) — a comma-separated list of CIDRs or bare IPs, e.g. `TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10` — and the log resolves the real client from a trusted `X-Forwarded-For`. Only a request whose socket peer is inside the set has its `X-Forwarded-For` trusted (spoof-safe); a malformed entry is logged and skipped rather than aborting startup.
+
 ## Disclaimer
 
 This project is built with care and follows security best practices, but it is intended for personal / self-hosted use. No guarantees of fitness for production environments. Use at your own risk.
