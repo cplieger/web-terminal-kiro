@@ -22,7 +22,8 @@ import (
 //
 // The `remote` field (r.RemoteAddr) is vibecli's documented access-log
 // contract, so this stays app-side rather than using webhttp.Logging (which
-// omits it). An inbound X-Request-ID is reused when it satisfies
+// omits it) — collapse to webhttp.Logging(WithClientIP) after webhttp releases
+// it. An inbound X-Request-ID is reused when it satisfies
 // webhttp.ValidRequestID; otherwise a fresh id is minted with
 // webhttp.NewRequestID. The id is echoed on the response and threaded into the
 // request context via webhttp.WithRequestID.

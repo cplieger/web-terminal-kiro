@@ -13,7 +13,6 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/cplieger/vibecli/internal/api"
 	"github.com/cplieger/web-terminal-engine/v2/terminal"
 )
 
@@ -284,15 +283,18 @@ func TestBuildETags_isContentAddressedSHA256(t *testing.T) {
 	}
 }
 
-// TestSSEStreamsThroughRequestLogger is the regression guard for the tab status
-// stream behind vibecli's own middleware. RequestLogger wraps /ws and this SSE
-// path in a statusRecorder (to record a failed open); statusRecorder implements
-// Unwrap, so http.NewResponseController walks the Unwrap chain to the real Flusher
-// and the stream still flushes rather than 500ing. This drives
-// /api/sessions/events through the full CrossOriginProtection + RequestLogger
-// chain and asserts the stream opens (200 + text/event-stream) and flushes an
-// event.
-func TestSSEStreamsThroughRequestLogger(t *testing.T) {
+// TestSSEStreamsThroughLoggingMiddleware is the regression guard for the tab
+// status stream behind vibecli's own middleware. webhttp.Logging wraps most
+// requests in a webhttp.StatusRecorder; if the SSE path were wrapped by
+// something opaque to streaming the engine's flush probe would fail and the
+// stream would 500. It is instead in Logging's WithSkipPaths set (like /ws), so
+// it flows through the streaming-transparent primitives. This drives
+// /api/sessions/events through the full production middleware stack
+// (buildHandler: Logging + Recoverer + SecurityHeaders + CrossOriginProtection)
+// and asserts the stream opens (200 + text/event-stream) and flushes an event
+// -- also proving the SecurityHeaders/Recoverer layers stay transparent to the
+// SSE stream.
+func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	mux := http.NewServeMux()
 	var ready atomic.Bool
 	ready.Store(true)
@@ -312,8 +314,7 @@ func TestSSEStreamsThroughRequestLogger(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	handler := api.RequestLogger(http.NewCrossOriginProtection().Handler(mux))
-	srv := httptest.NewServer(handler)
+	srv := httptest.NewServer(buildHandler(mux, nil))
 	t.Cleanup(srv.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -336,7 +337,7 @@ func TestSSEStreamsThroughRequestLogger(t *testing.T) {
 			return // the initial-sync event flushed through the middleware
 		}
 	}
-	t.Fatalf("SSE stream delivered no data through RequestLogger (scan err: %v)", sc.Err())
+	t.Fatalf("SSE stream delivered no data through the logging middleware (scan err: %v)", sc.Err())
 }
 
 // TestCreateRateLimit pins the create throttle: a burst of POST /api/sessions is
@@ -378,6 +379,56 @@ func TestCreateRateLimit(t *testing.T) {
 	}
 }
 
+// TestSecurityHeaders_presentOnNormalResponse pins the baseline response
+// security headers that buildHandler layers on every response via
+// webhttp.SecurityHeaders(). vibecli sent NO security headers before the
+// webhttp standardization, so this is the regression guard for the fleet
+// baseline: X-Content-Type-Options nosniff, X-Frame-Options DENY, and
+// Referrer-Policy strict-origin-when-cross-origin on a normal 200. It also pins
+// the two deliberate choices -- X-Frame-Options is the DENY default because
+// vibecli is never embedded in a frame, and NO Content-Security-Policy is set,
+// because a wrong CSP would silently break the terminal UI's fonts + WebSocket.
+// Driven through the full production chain (buildHandler) so the assertion
+// tracks what the server actually sends.
+func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
+	mux := http.NewServeMux()
+	var ready atomic.Bool
+	ready.Store(true)
+	deps := &routeDeps{
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+		ready:    &ready,
+		workDir:  "",
+		cmd:      []string{"/bin/cat"},
+	}
+	mgr, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
+
+	rec := httptest.NewRecorder()
+	buildHandler(mux, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/health: status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	for _, tc := range []struct{ header, want string }{
+		{"X-Content-Type-Options", "nosniff"},
+		{"X-Frame-Options", "DENY"},
+		{"Referrer-Policy", "strict-origin-when-cross-origin"},
+	} {
+		if got := rec.Header().Get(tc.header); got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.header, got, tc.want)
+		}
+	}
+	// No CSP by design: SecurityHeaders() is used without WithCSP so the
+	// terminal UI's fonts and WebSocket are not gated by a policy vibecli would
+	// have to keep in lockstep with the vendored UI bundle.
+	if got := rec.Header().Get("Content-Security-Policy"); got != "" {
+		t.Errorf("Content-Security-Policy = %q, want unset (no CSP by design)", got)
+	}
+}
+
 // TestWSRejectsCrossOrigin pins the WebSocket CSWSH guard. /ws is mounted via
 // mgr.WebSocketHandler() with no WithAcceptOptions, so the engine relies on
 // coder/websocket's secure-by-default same-origin check (nil AcceptOptions ->
@@ -411,8 +462,7 @@ func TestWSRejectsCrossOrigin(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	handler := api.RequestLogger(http.NewCrossOriginProtection().Handler(mux))
-	srv := httptest.NewServer(handler)
+	srv := httptest.NewServer(buildHandler(mux, nil))
 	t.Cleanup(srv.Close)
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/ws?session="+id, http.NoBody)
@@ -457,8 +507,7 @@ func TestWSAcceptsSameOrigin(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	handler := api.RequestLogger(http.NewCrossOriginProtection().Handler(mux))
-	srv := httptest.NewServer(handler)
+	srv := httptest.NewServer(buildHandler(mux, nil))
 	t.Cleanup(srv.Close)
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/ws?session="+id, http.NoBody)
