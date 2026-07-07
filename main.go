@@ -116,16 +116,11 @@ func main() {
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
 
-	// Middleware, outermost first: RequestLogger (so it observes every final
-	// status, including a recovered 500 and a cross-origin 403), then Recoverer
-	// (panic -> logged 500), then the stdlib cross-origin CSRF guard, then the
-	// routes. webhttp.NewServer supplies the streaming-safe defaults
+	// buildHandler wraps mux in the middleware stack (see its doc comment for the
+	// ordering rationale). webhttp.NewServer supplies the streaming-safe defaults
 	// (ReadHeaderTimeout 10s, IdleTimeout 120s, Read/WriteTimeout unset) that the
 	// hijacked /ws stream needs.
-	handler := api.RequestLogger(
-		webhttp.Recoverer(webhttp.WithRecoverLogger(slog.Default()))(
-			http.NewCrossOriginProtection().Handler(mux)))
-	srv := webhttp.NewServer(handler)
+	srv := webhttp.NewServer(buildHandler(mux))
 	srv.Addr = addr
 	// BaseContext hands every request a context we can cancel on shutdown (see
 	// the shutdown goroutine): the always-open /api/sessions/events SSE handler
@@ -172,4 +167,33 @@ func utcTimeAttr(groups []string, a slog.Attr) slog.Attr {
 		a.Value = slog.TimeValue(a.Value.Time().UTC())
 	}
 	return a
+}
+
+// buildHandler wraps the route mux in vibecli's middleware stack via
+// webhttp.Chain. Chain(h, A, B, C, D) == A(B(C(D(h)))), so the first entry is
+// the outermost wrapper; a request flows RequestLogger -> Recoverer ->
+// SecurityHeaders -> CrossOriginProtection -> mux, and the response unwinds the
+// other way.
+//
+//   - RequestLogger — vibecli's app-side access logger (kept local for its
+//     documented `remote` field). Outermost so it observes every final status,
+//     including a recovered 500 and a cross-origin 403.
+//   - Recoverer — turns a downstream panic into a logged 500 (inside the logger
+//     so the access line records the 500, not the recorder's default 200).
+//   - SecurityHeaders — the fleet baseline (nosniff, X-Frame-Options: DENY,
+//     Referrer-Policy) on every response. No CSP: vibecli serves an HTML
+//     terminal UI (fonts + WebSocket) and a wrong policy would silently break
+//     it. X-Frame-Options DENY is the default and is safe because vibecli is
+//     never embedded in a frame. Placed outside CrossOriginProtection so even a
+//     rejected cross-origin request still carries the headers.
+//   - CrossOriginProtection — the stdlib cross-origin/CSRF guard, kept
+//     innermost (its long-standing position directly in front of the routes) so
+//     it rejects a forged cross-origin unsafe request with 403.
+func buildHandler(mux http.Handler) http.Handler {
+	return webhttp.Chain(mux,
+		api.RequestLogger,
+		webhttp.Recoverer(webhttp.WithRecoverLogger(slog.Default())),
+		webhttp.SecurityHeaders(),
+		http.NewCrossOriginProtection().Handler,
+	)
 }
