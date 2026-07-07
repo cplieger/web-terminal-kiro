@@ -9,10 +9,9 @@ stream. This guide covers the things the codebase won't tell you at a glance.
 ## Architecture at a glance
 
 - `main.go`, `routes.go` — server entry point and route wiring (both at repo
-  root, `package main`). `main.go` embeds the web UI with `//go:embed static`.
-- `internal/api/` — HTTP response helpers (`WriteJSON`, `WriteJSONStatus`,
-  `BadRequest`, `Ok`, …) and the `RequestLogger` middleware (structured slog
-  access logging).
+  root, `package main`). `main.go` embeds the web UI with `//go:embed static`
+  and assembles the middleware stack in `buildHandler` on top of `webhttp`
+  (access logging, panic recovery, security headers, cross-origin protection).
 - `static-src/` — TypeScript + CSS sources, compiled into `static/`.
 
 vibecli is a thin consumer of the first-party web-terminal libraries: the
@@ -23,8 +22,9 @@ repos, not here. The Go server and TS client share a binary wire protocol, not
 code — a wire-format change is a `web-terminal-engine` concern and lands in that
 repo, not this one.
 
-Observability is slog-only: `RequestLogger` emits a structured access-log line
-per request (method/path/status/duration_ms/request_id/remote). There is no
+Observability is slog-only: webhttp's `Logging` middleware (wired in
+`buildHandler` with `WithClientIP()`) emits a structured access-log line per
+request (method/path/status/duration_ms/request_id/client_ip). There is no
 Prometheus `/metrics` endpoint.
 
 ## Generated assets (read before building)
@@ -112,10 +112,10 @@ assert at least once (`expect.requireAssertions`) and `.only` is forbidden.
 
 ## Conventions and gotchas
 
-- **Always use the `internal/api` response helpers.** Never hand-craft JSON
-  error bodies (`http.Error` with a JSON string, `w.Write([]byte(...))`). Use
-  `WriteJSON`, `WriteJSONStatus`, `Ok`, `BadRequest`, `Conflict`,
-  `MethodNotAllowed`.
+- **Always use webhttp's response helpers.** Never hand-craft JSON error
+  bodies (`http.Error` with a JSON string, `w.Write([]byte(...))`). Use
+  `webhttp.WriteJSON`, `webhttp.WriteJSONStatus`, `webhttp.Ok`, and
+  `webhttp.WriteError` (the JSON error envelope).
 - **Client-local vs library code.** `static-src/app.ts` is the only client
   source vibecli owns — a single `createTerminal(root, { features: presetAgentTabbed(), theme })` call (the theme is vibecli's purple token set; `presetAgentTabbed` pulls in tabs, the activity monitor, touch toolbar, context menu, clipboard, scroll-to-bottom, predictive echo, connection banner, and animations). The input model,
   IME/composition, predictive echo, viewport, mobile key toolbar, and status
