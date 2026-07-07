@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -58,6 +59,35 @@ func isExposedBind(addr string) bool {
 	return ip == nil || !ip.IsLoopback()
 }
 
+// parseTrustedProxies reads a comma-separated list of CIDRs / bare IPs from the
+// TRUSTED_PROXIES env var into the trusted-proxy set the access log's client-IP
+// resolver consults (webhttp.WithClientIP -> ClientIP). It delegates the
+// CIDR/bare-IP parsing to the shared webhttp.ParseCIDRs helper, which trims
+// whitespace, skips blanks, treats a bare IP as a single host (/32 or /128), and
+// reports invalid entries separately.
+//
+// It is intentionally LENIENT: a malformed entry is logged (named) at Warn and
+// skipped, and the valid subset is used, rather than aborting startup — one typo
+// in an operator's proxy list must not disable proxy awareness entirely, and it
+// must never fall open. An unset or empty var yields nil, i.e. "trust nothing",
+// so ClientIP ignores X-Forwarded-For and logs the spoof-proof socket peer — the
+// correct default for a directly-exposed deployment. Behind a reverse proxy, set
+// the var to the proxy's CIDR(s) so the access log records the real client.
+func parseTrustedProxies() []*net.IPNet {
+	const key = "TRUSTED_PROXIES"
+	v := os.Getenv(key)
+	if v == "" {
+		return nil
+	}
+	nets, invalid := webhttp.ParseCIDRs(strings.Split(v, ","))
+	if len(invalid) > 0 {
+		slog.Warn("ignoring malformed "+key+" entries; using the valid proxy set",
+			"invalid", invalid,
+			"hint", "each entry must be a CIDR (e.g. 10.0.0.0/8) or a bare IP (e.g. 192.168.1.5)")
+	}
+	return nets
+}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{ReplaceAttr: utcTimeAttr})))
 
@@ -82,6 +112,12 @@ func main() {
 			"hint", "bind-mount a host directory to /workspace in compose.yaml")
 		os.Exit(1)
 	}
+
+	// TRUSTED_PROXIES names the reverse proxies (CIDRs or bare IPs) whose
+	// X-Forwarded-For the access log may trust to recover the real client IP.
+	// Unset/empty ⇒ nil ⇒ trust nothing ⇒ log the unspoofable socket peer (the
+	// spoof-safe default for a directly-exposed deployment). See parseTrustedProxies.
+	trustedProxies := parseTrustedProxies()
 
 	// Concurrent kiro-cli chat sessions (browser tabs) are uncapped, like a
 	// browser: managing tabs is the user's job.
@@ -119,7 +155,7 @@ func main() {
 	// ordering rationale). webhttp.NewServer supplies the streaming-safe defaults
 	// (ReadHeaderTimeout 10s, IdleTimeout 120s, Read/WriteTimeout unset) that the
 	// hijacked /ws stream needs.
-	srv := webhttp.NewServer(buildHandler(mux))
+	srv := webhttp.NewServer(buildHandler(mux, trustedProxies))
 	srv.Addr = addr
 	// BaseContext hands every request a context we can cancel on shutdown (see
 	// the shutdown goroutine): the always-open /api/sessions/events SSE handler
@@ -152,7 +188,7 @@ func main() {
 		webhttp.WithShutdownGrace(5*time.Second)); err != nil {
 		slog.Error("http server exited", "error", err)
 		mgr.Shutdown()
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic // exitAfterDefer: a failed Serve must exit non-zero; the deferred stop()/cancelBase() only release signal+context state the process exit reclaims anyway.
 	}
 }
 
@@ -175,15 +211,18 @@ func utcTimeAttr(groups []string, a slog.Attr) slog.Attr {
 // other way.
 //
 //   - Logging — webhttp's access logger. Outermost so it observes every final
-//     status, including a recovered 500 and a cross-origin 403. WithClientIP()
-//     with NO trusted ranges logs the real socket peer as the `client_ip`
-//     field: vibecli is LAN-direct (no reverse proxy), so the unspoofable TCP
-//     peer host IS the client. This replaces the former app-side
-//     api.RequestLogger, whose only reason to exist was the `remote`
-//     (host:port) field; `client_ip` (host only, no port) is its successor.
-//     Skips the long-lived streams (/ws and the /api/sessions/events SSE) so
-//     neither emits a misleading open-time access line; the request id is still
-//     minted, echoed, and threaded on those paths.
+//     status, including a recovered 500 and a cross-origin 403. WithClientIP is
+//     passed the TRUSTED_PROXIES set (parseTrustedProxies) as the `client_ip`
+//     field's trusted-proxy ranges: unset/empty ⇒ trust nothing, so `client_ip`
+//     is the unspoofable socket peer and X-Forwarded-For is ignored — the
+//     spoof-safe default for a directly-exposed deployment. Behind a reverse
+//     proxy, TRUSTED_PROXIES names the proxy CIDR(s) so `client_ip` resolves to
+//     the real client from a trusted XFF instead of the proxy's own address.
+//     This replaces the former app-side api.RequestLogger, whose only reason to
+//     exist was the `remote` (host:port) field; `client_ip` (host only, no port)
+//     is its successor. Skips the long-lived streams (/ws and the
+//     /api/sessions/events SSE) so neither emits a misleading open-time access
+//     line; the request id is still minted, echoed, and threaded on those paths.
 //   - Recoverer — turns a downstream panic into a logged 500 (inside the logger
 //     so the access line records the 500, not the recorder's default 200).
 //   - SecurityHeaders — the fleet baseline (nosniff, X-Frame-Options: DENY,
@@ -195,13 +234,12 @@ func utcTimeAttr(groups []string, a slog.Attr) slog.Attr {
 //   - CrossOriginProtection — the stdlib cross-origin/CSRF guard, kept
 //     innermost (its long-standing position directly in front of the routes) so
 //     it rejects a forged cross-origin unsafe request with 403.
-func buildHandler(mux http.Handler) http.Handler {
+func buildHandler(mux http.Handler, trustedProxies []*net.IPNet) http.Handler {
 	return webhttp.Chain(mux,
-		// requires webhttp >= v1.2.0 (WithClientIP); local build via go.work replace until released.
 		webhttp.Logging(
 			webhttp.WithLogger(slog.Default()),
 			webhttp.WithSkipPaths("/ws", "/api/sessions/events"),
-			webhttp.WithClientIP(),
+			webhttp.WithClientIP(trustedProxies...),
 		),
 		webhttp.Recoverer(webhttp.WithRecoverLogger(slog.Default())),
 		webhttp.SecurityHeaders(),
