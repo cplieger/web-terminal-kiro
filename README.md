@@ -53,7 +53,6 @@ The image ships working defaults; most setups only pick a port and a volume.
 | --- | --- | --- |
 | `KWEB_ADDR` | `:9848` | Listen address (`host:port`). |
 | `KWEB_WORK_DIR` | `/workspace` | Directory each terminal session starts in (must exist). |
-| `TZ` | _(unset)_ | Container timezone, e.g. `Europe/Paris`. |
 
 - **Port:** `9848` (HTTP + WebSocket).
 - **Volumes:** `/config` persists kiro-cli auth/tokens, installed tools, settings, and `~/.ssh` + git config; `/workspace` is your repositories / working directory.

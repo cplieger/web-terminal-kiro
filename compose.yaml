@@ -5,9 +5,6 @@ services:
     container_name: vibecli
     restart: unless-stopped
 
-    environment:
-      TZ: "Europe/Paris"
-
     ports:
       - "9848:9848"
 
