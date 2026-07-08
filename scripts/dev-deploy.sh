@@ -9,11 +9,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 HOST="${DEPLOY_HOST:?set DEPLOY_HOST to your dev box (ssh host or IP)}"
 BIN="vibecli-dev-bin"
-[ -f "$BIN" ] || { echo "missing $BIN — run scripts/dev-build.sh first" >&2; exit 1; }
+[ -f "$BIN" ] || {
+  echo "missing $BIN — run scripts/dev-build.sh first" >&2
+  exit 1
+}
 
 echo "scp -> ${HOST}:/tmp/$BIN"
 scp -q "$BIN" "${HOST}:/tmp/$BIN"
 echo "docker cp + restart vibecli-dev"
+# $BIN is a fixed local constant (not user input); expanding it client-side into
+# the remote command is intentional — SC2029's client-vs-server caveat is moot here.
+# shellcheck disable=SC2029
 ssh "$HOST" "sudo docker cp /tmp/$BIN vibecli-dev:/app/vibecli && sudo docker restart vibecli-dev"
 sleep 6
 code=$(curl -sf -m5 -o /dev/null -w "%{http_code}" "http://${HOST}:9849/api/health" || echo "ERR")
