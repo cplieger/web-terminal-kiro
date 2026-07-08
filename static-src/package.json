@@ -7,8 +7,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest --run --coverage",
     "lint:eslint": "eslint .",
-    "lint:prettier": "prettier --check ../..",
-    "lint:fix": "eslint . --fix && prettier --write ../..",
+    "lint:prettier": "prettier --check .",
+    "lint:fix": "eslint . --fix && prettier --write .",
     "lint:knip": "knip"
   },
   "devDependencies": {
