@@ -25,7 +25,9 @@ repo, not this one.
 Observability is slog-only: webhttp's `Logging` middleware (wired in
 `buildHandler` with `WithClientIP()`) emits a structured access-log line per
 request (method/path/status/duration_ms/request_id/client_ip). There is no
-Prometheus `/metrics` endpoint.
+Prometheus `/metrics` endpoint. Log timestamps are UTC (a `utcTimeAttr` slog
+`ReplaceAttr` forces the record time to UTC), so the image needs no `TZ` and
+embeds no `time/tzdata`.
 
 ## Generated assets (read before building)
 
