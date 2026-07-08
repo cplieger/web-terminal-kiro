@@ -35,8 +35,8 @@ done
 cp "$UI_DIR/package.json" "$UI_PKG/package.json"
 # The UI ships a nested src tree (src/kernel/, src/features/) since v3, so copy
 # recursively, preserving subdirectories and excluding tests.
-(cd "$UI_DIR/src" && find . -name '*.ts' ! -name '*.test.ts' ! -name 'fc-strict-setup.ts' -print0) |
-  while IFS= read -r -d '' f; do
+(cd "$UI_DIR/src" && find . -name '*.ts' ! -name '*.test.ts' ! -name 'fc-strict-setup.ts' -print0) \
+  | while IFS= read -r -d '' f; do
     mkdir -p "$UI_PKG/src/$(dirname "$f")"
     cp "$UI_DIR/src/$f" "$UI_PKG/src/$f"
   done
