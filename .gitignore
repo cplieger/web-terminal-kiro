@@ -6,10 +6,11 @@ node_modules/
 .vitest-cache/
 static-src/coverage/
 
-# Local `go build` output. The Dockerfile builds to /vibecli in the builder
-# stage (COPY --from=builder /vibecli); a bare `go build` in the repo root
-# drops the same binary here. Never commit it (OSSF Scorecard Binary-Artifacts).
-/vibecli
+# Local `go build` output. The Dockerfile builds to /web-terminal-kiro in the
+# builder stage (COPY --from=builder /web-terminal-kiro); a bare `go build` in
+# the repo root drops the same binary here. Never commit it (OSSF Scorecard
+# Binary-Artifacts).
+/web-terminal-kiro
 
 
 static/style.css
@@ -23,5 +24,5 @@ static/style.css
 # Local rebuild dev loop (scripts/dev-build.sh) — not for CI/release
 go.work
 go.work.sum
-vibecli-dev-bin
+web-terminal-kiro-dev-bin
 static/vendor/

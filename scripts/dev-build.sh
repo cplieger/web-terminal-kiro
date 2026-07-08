@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Local dev build of vibecli against the LOCAL (working-tree) engine + UI, for
+# Local dev build of web-terminal-kiro against the LOCAL (working-tree) engine + UI, for
 # the rebuild/restructure effort (docs in web-terminal-engine/docs/REBUILD.md +
-# RESTRUCTURE.md). Produces ./vibecli-dev-bin with static assets embedded,
+# RESTRUCTURE.md). Produces ./web-terminal-kiro-dev-bin with static assets embedded,
 # built from the sibling ../web-terminal-engine (engine) and ../web-terminal-ui (UI) checkouts
 # instead of the published Go module / npm packages. Deploy with
 # scripts/dev-deploy.sh.
 #
-# Not for CI or release. go.work and vibecli-dev-bin are gitignored.
+# Not for CI or release. go.work and web-terminal-kiro-dev-bin are gitignored.
 # Override the sibling checkouts with ENGINE_DIR=... / UI_DIR=...
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -57,7 +57,7 @@ tsgo --module ESNext --target ESNext --moduleResolution bundler \
   --rootDir "$UI_PKG/src" --skipLibCheck --strict "${ui_ts[@]}"
 
 echo "[5/6] fonts (Monaspace Nerd Font, cached) + CSS bundle (from UI package)"
-FONT_CACHE="${HOME}/.cache/vibecli-fonts"
+FONT_CACHE="${HOME}/.cache/web-terminal-kiro-fonts"
 FONT_VER="v3.4.0"
 # Keep in lockstep with NERDFONT_SHA256 in the Dockerfile (Monaspace.tar.xz, this tag).
 FONT_SHA256="5fdb97828e1a23fd28ea5ed0e7d15cdebb77ef079aaa48b93f1526764b40ef8c"
@@ -85,5 +85,5 @@ while IFS= read -r line || [ -n "$line" ]; do
 done <"$UI_DIR/css/MANIFEST"
 
 echo "[6/6] go build (CGO off, linux/amd64 host = container arch)"
-CGO_ENABLED=0 go build -trimpath -o vibecli-dev-bin .
-echo "OK -> $(pwd)/vibecli-dev-bin ($(du -h vibecli-dev-bin | cut -f1))"
+CGO_ENABLED=0 go build -trimpath -o web-terminal-kiro-dev-bin .
+echo "OK -> $(pwd)/web-terminal-kiro-dev-bin ($(du -h web-terminal-kiro-dev-bin | cut -f1))"

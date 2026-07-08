@@ -1,13 +1,13 @@
-// vibecli client entry point.
+// web-terminal-kiro client entry point.
 //
 // All terminal behavior lives in the shared packages: the
 // @cplieger/web-terminal-engine engine (render / scroll / connection / keyboard)
 // and the @cplieger/web-terminal-ui reference UI (the modular kernel plus opt-in
-// features). vibecli is the thinnest possible consumer: createTerminal builds the
+// features). web-terminal-kiro is the thinnest possible consumer: createTerminal builds the
 // whole terminal UI inside the #terminal root element with the agent-shell
 // feature set (presetAgentTabbed: tabs + activity monitor + touch toolbar +
 // context menu + clipboard + scroll-to-bottom + predictive echo + connection
-// banner + animations). vibecli is an agent shell, so it wants the activity
+// banner + animations). web-terminal-kiro is an agent shell, so it wants the activity
 // monitor (per-tab working/done/needs-input dots); a generic terminal would use
 // the plain presetTabbed, which is label-only. Each browser tab drives its own
 // independent kiro-cli chat session
@@ -16,7 +16,7 @@
 //
 // The session WebSocket ("/ws") and font (Monaspace) use createTerminal's
 // defaults and are left implicit. The options passed are `features` (the agent
-// preset), `theme` (vibecli's purple tokens), and -- only when present --
+// preset), `theme` (web-terminal-kiro's purple tokens), and -- only when present --
 // `loading`, the overlay element createTerminal fades out once the first frame
 // renders.
 
@@ -42,15 +42,15 @@ if (!root) {
   if (loading) {
     showFatal(
       loading,
-      "vibecli failed to start. Reload the page; if this persists the app was built incorrectly.",
+      "Web Terminal for Kiro failed to start. Reload the page; if this persists the app was built incorrectly.",
     );
   }
-  throw new Error("vibecli: missing #terminal root element");
+  throw new Error("web-terminal-kiro: missing #terminal root element");
 }
 try {
   createTerminal(root, {
     features: presetAgentTabbed(),
-    // vibecli's purple theme (the consumer "settings"; the UI library ships the
+    // web-terminal-kiro's purple theme (the consumer "settings"; the UI library ships the
     // neutral defaults). Recolors hovered/active tabs and the accent icons (the
     // mobile "+", the toggled keyboard button). The active-tab border is set
     // explicitly because the library resolves its default once at :root, so

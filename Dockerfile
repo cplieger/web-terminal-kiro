@@ -68,7 +68,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
 # don't carry these, so they render as tofu (black squares) in
 # the terminal display. Bundling one Mono-width Nerd Font + serving
 # it via @font-face fixes that. JetBrainsMono is ~3.8 MB
-# uncompressed; with go:embed it grows the vibecli binary by that
+# uncompressed; with go:embed it grows the web-terminal-kiro binary by that
 # much and ships gzipped over the wire (~900 KB to the browser).
 # renovate: datasource=github-releases depName=ryanoasis/nerd-fonts
 ARG NERDFONT_VERSION=v3.4.0
@@ -166,7 +166,7 @@ RUN set -eu; \
 
 # Build the Go binary with static assets embedded via go:embed.
 # CGO disabled so the binary runs on any glibc.
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /vibecli .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /web-terminal-kiro .
 
 # --- Final stage: minimal runtime with kiro-cli + git ---
 FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
@@ -176,7 +176,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Baked-in dependencies. kiro-cli itself is downloaded on first boot
 # by entrypoint.sh (licensing prevents us from baking it into the
-# image); everything else is stable utility surface vibecli or the
+# image); everything else is stable utility surface web-terminal-kiro or the
 # interactive user needs:
 #   - ca-certificates + curl + unzip: kiro-cli installer + HTTPS trust
 #   - git: source control from inside the terminal (gh is NOT baked; it
@@ -193,7 +193,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 #     shared object file". Surfaced once kiro-cli >= 2.6 started
 #     exercising the code path.
 #
-# Session persistence is handled by vibecli's own VT screen
+# Session persistence is handled by web-terminal-kiro's own VT screen
 # (internal/vt) — the server keeps an authoritative cell buffer and
 # replays the current snapshot on each WS reconnect. No external
 # multiplexer (tmux/dtach) is required.
@@ -239,10 +239,10 @@ ENV KWEB_ADDR=:9848
 # the host-key cache.
 RUN sed -i 's|^root:x:0:0:root:/root:|root:x:0:0:root:/config/home:|' /etc/passwd
 
-COPY --from=builder /vibecli /app/vibecli
-COPY --chmod=755 entrypoint.sh /opt/vibecli/entrypoint.sh
-COPY --chmod=755 setup-tools.sh /opt/vibecli/setup-tools.sh
-COPY tools.json /opt/vibecli/tools.json
+COPY --from=builder /web-terminal-kiro /app/web-terminal-kiro
+COPY --chmod=755 entrypoint.sh /opt/web-terminal-kiro/entrypoint.sh
+COPY --chmod=755 setup-tools.sh /opt/web-terminal-kiro/setup-tools.sh
+COPY tools.json /opt/web-terminal-kiro/tools.json
 
 WORKDIR /workspace
 EXPOSE 9848
@@ -258,4 +258,4 @@ EXPOSE 9848
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=180s \
     CMD curl -sf http://127.0.0.1:9848/api/health || exit 1
 
-ENTRYPOINT ["/opt/vibecli/entrypoint.sh"]
+ENTRYPOINT ["/opt/web-terminal-kiro/entrypoint.sh"]

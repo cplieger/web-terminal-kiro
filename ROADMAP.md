@@ -1,18 +1,17 @@
 # Roadmap
 
-Vibecli is **pre-1.0** (currently `v0.x`) — a minimal browser terminal wrapping
-a single kiro-cli PTY. This document supersedes the
+Web Terminal for Kiro is a browser terminal wrapping a single kiro-cli PTY,
+now at **v1.0**. This document supersedes the
 [default shared roadmap](https://github.com/cplieger/.github/blob/main/ROADMAP.md)
 for this repository.
 
 ## Current focus
 
-- **iOS UI / UX.** The bulk of the remaining work is on the iOS browser
-  experience: terminal rendering, keyboard handling, and touch interaction on
-  mobile Safari.
-- **WebSocket robustness.** Resolve the outstanding issues around the PTY
-  WebSocket stream — reconnection, backgrounding/foregrounding on mobile, and
-  stream stability — which are the main source of current bug reports.
+- **iOS UI / UX.** Continued polish of the iOS browser experience: terminal
+  rendering, keyboard handling, and touch interaction on mobile Safari.
+- **WebSocket robustness.** Ongoing hardening of the PTY WebSocket stream:
+  reconnection, backgrounding/foregrounding on mobile, and overall stream
+  stability.
 
 ## Ongoing
 
