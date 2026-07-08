@@ -33,7 +33,9 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
   });
 
   it("throws a clear error when the #terminal root element is missing", async () => {
-    await expect(import("./app.js")).rejects.toThrow("web-terminal-kiro: missing #terminal root element");
+    await expect(import("./app.js")).rejects.toThrow(
+      "web-terminal-kiro: missing #terminal root element",
+    );
     expect(createTerminalMock).not.toHaveBeenCalled();
   });
 
@@ -74,7 +76,9 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     overlay.id = "loading";
     document.body.appendChild(overlay);
 
-    await expect(import("./app.js")).rejects.toThrow("web-terminal-kiro: missing #terminal root element");
+    await expect(import("./app.js")).rejects.toThrow(
+      "web-terminal-kiro: missing #terminal root element",
+    );
 
     expect(overlay.getAttribute("role")).toBe("alert");
     expect(overlay.getAttribute("aria-live")).toBe("assertive");
