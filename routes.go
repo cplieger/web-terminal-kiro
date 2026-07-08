@@ -23,7 +23,7 @@ type routeDeps struct {
 	workDir  string
 	// kiroReadyMarker, when non-empty, is a file the entrypoint touches only
 	// after verifying a runnable, correctly-versioned kiro-cli is installed
-	// (see entrypoint.sh). /api/health Stats it to reflect vibecli's core
+	// (see entrypoint.sh). /api/health Stats it to reflect web-terminal-kiro's core
 	// dependency. Empty (e.g. `go run`/tests outside the container) skips the
 	// gate, preserving pure-listener readiness semantics.
 	kiroReadyMarker string
@@ -54,7 +54,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	// No TERM_PROGRAM override here: the engine now advertises TERM_PROGRAM=
 	// iTerm.app (>= 3.6.6), which puts kiro-cli in its OSC 9;4 progress allowlist
 	// (driving the tab's "working" dot) and enables DEC 2026 synchronized output.
-	// That is the same identity web-terminal-server gets, so vibecli inherits it
+	// That is the same identity web-terminal-server gets, so web-terminal-kiro inherits it
 	// from the engine rather than pinning its own (it formerly set WezTerm; both
 	// unlock kiro-cli, and iTerm.app additionally covers other agents like Claude
 	// Code). Anything the engine can't render (inline images) is consumed silently.
@@ -101,7 +101,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 			unready("starting up or shutting down")
 			return
 		}
-		// kiro-cli readiness (env-gated via kiroReadyMarker). vibecli's core job
+		// kiro-cli readiness (env-gated via kiroReadyMarker). web-terminal-kiro's core job
 		// is spawning kiro-cli chat PTYs, but the HTTP listener comes up even when
 		// the first-boot install failed (degraded-not-dead start). Reflect the
 		// entrypoint's boot-time verdict here so a broken kiro-cli surfaces as

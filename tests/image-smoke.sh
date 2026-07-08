@@ -1,11 +1,11 @@
 #!/bin/sh
-# Runtime image smoke test for vibecli. Invoked by the central CI docker job:
+# Runtime image smoke test for web-terminal-kiro. Invoked by the central CI docker job:
 #   sh tests/image-smoke.sh <image-ref>
 #
 # Starts the assembled image and waits for the container's own HEALTHCHECK
 # (HTTP GET /api/health on :9848) to report "healthy" — proving the web
 # terminal server binds, the embedded UI is present, and the health endpoint
-# serves. vibecli's first boot is blocking: entrypoint.sh downloads and
+# serves. web-terminal-kiro's first boot is blocking: entrypoint.sh downloads and
 # verifies kiro-cli and runs setup-tools.sh in the foreground before the
 # server binds, so /api/health stays down until that finishes. The image's
 # HEALTHCHECK start-period (180s) holds off counting failed probes until then;
@@ -16,7 +16,7 @@
 set -eu
 
 IMG="${1:?usage: image-smoke.sh <image-ref>}"
-NAME="smoke-vibecli-$$"
+NAME="smoke-web-terminal-kiro-$$"
 TIMEOUT=240 # see header: covers the first-boot kiro-cli download + 180s start-period
 
 # shellcheck disable=SC2329  # invoked indirectly via trap
@@ -41,17 +41,17 @@ while [ "$i" -lt "$TIMEOUT" ]; do
   # and the verdict never depends on what health a stopped container reports.
   if [ "$(docker inspect --format '{{ .State.Running }}' "$NAME" 2>/dev/null || echo missing)" != "true" ]; then
     ec=$(docker inspect --format '{{ .State.ExitCode }}' "$NAME" 2>/dev/null || echo '?')
-    printf 'FAIL: vibecli container exited early (exit code %s)\n' "$ec" >&2
+    printf 'FAIL: web-terminal-kiro container exited early (exit code %s)\n' "$ec" >&2
     exit 1
   fi
   status=$(docker inspect --format '{{ if .State.Health }}{{ .State.Health.Status }}{{ else }}no-healthcheck{{ end }}' "$NAME" 2>/dev/null || echo gone)
   case "$status" in
     healthy)
-      printf 'vibecli image smoke: ok (healthy after %ss)\n' "$i"
+      printf 'web-terminal-kiro image smoke: ok (healthy after %ss)\n' "$i"
       exit 0
       ;;
     unhealthy)
-      printf 'FAIL: vibecli reported unhealthy\n' >&2
+      printf 'FAIL: web-terminal-kiro reported unhealthy\n' >&2
       exit 1
       ;;
     no-healthcheck)
@@ -59,12 +59,12 @@ while [ "$i" -lt "$TIMEOUT" ]; do
       exit 1
       ;;
     gone)
-      printf 'FAIL: vibecli container is gone\n' >&2
+      printf 'FAIL: web-terminal-kiro container is gone\n' >&2
       exit 1
       ;;
   esac
   i=$((i + 1))
   sleep 1
 done
-printf 'FAIL: vibecli did not become healthy within %ss (last status: %s)\n' "$TIMEOUT" "$status" >&2
+printf 'FAIL: web-terminal-kiro did not become healthy within %ss (last status: %s)\n' "$TIMEOUT" "$status" >&2
 exit 1

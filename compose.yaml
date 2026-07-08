@@ -1,13 +1,13 @@
-# Example compose for vibecli. See the README for all configuration options and hardening.
+# Example compose for web-terminal-kiro. See the README for all configuration options and hardening.
 services:
-  vibecli:
-    image: ghcr.io/cplieger/vibecli:latest
-    container_name: vibecli
+  web-terminal-kiro:
+    image: ghcr.io/cplieger/web-terminal-kiro:latest
+    container_name: web-terminal-kiro
     restart: unless-stopped
 
     ports:
       - "9848:9848"
 
     volumes:
-      - "/opt/appdata/vibecli/config:/config"
-      - "/opt/appdata/vibecli/workspace:/workspace"
+      - "/opt/appdata/web-terminal-kiro/config:/config"
+      - "/opt/appdata/web-terminal-kiro/workspace:/workspace"

@@ -1,4 +1,4 @@
-// Package main is vibecli — a browser terminal wrapped around kiro-cli.
+// Package main is web-terminal-kiro — a browser terminal wrapped around kiro-cli.
 // Each /ws connection exec's `kiro-cli chat` directly in a PTY. Server-side
 // state lives in the web-terminal-engine VT screen buffer (its vt package):
 // on reconnect, the current cell snapshot is replayed to the client. No
@@ -181,7 +181,7 @@ func main() {
 		slog.Info("shutting down", "cause", context.Cause(ctx))
 	}()
 
-	slog.Info("vibecli listening", "addr", addr, "cli_path", cliPath, "work_dir", workDir)
+	slog.Info("web-terminal-kiro listening", "addr", addr, "cli_path", cliPath, "work_dir", workDir)
 	ready.Store(true)
 
 	if err := webhttp.Run(ctx, srv, ln, func(context.Context) { mgr.Shutdown() },
@@ -204,7 +204,7 @@ func utcTimeAttr(groups []string, a slog.Attr) slog.Attr {
 	return a
 }
 
-// buildHandler wraps the route mux in vibecli's middleware stack via
+// buildHandler wraps the route mux in web-terminal-kiro's middleware stack via
 // webhttp.Chain. Chain(h, A, B, C, D) == A(B(C(D(h)))), so the first entry is
 // the outermost wrapper; a request flows Logging -> Recoverer ->
 // SecurityHeaders -> CrossOriginProtection -> mux, and the response unwinds the
@@ -226,9 +226,9 @@ func utcTimeAttr(groups []string, a slog.Attr) slog.Attr {
 //   - Recoverer — turns a downstream panic into a logged 500 (inside the logger
 //     so the access line records the 500, not the recorder's default 200).
 //   - SecurityHeaders — the fleet baseline (nosniff, X-Frame-Options: DENY,
-//     Referrer-Policy) on every response. No CSP: vibecli serves an HTML
+//     Referrer-Policy) on every response. No CSP: web-terminal-kiro serves an HTML
 //     terminal UI (fonts + WebSocket) and a wrong policy would silently break
-//     it. X-Frame-Options DENY is the default and is safe because vibecli is
+//     it. X-Frame-Options DENY is the default and is safe because web-terminal-kiro is
 //     never embedded in a frame. Placed outside CrossOriginProtection so even a
 //     rejected cross-origin request still carries the headers.
 //   - CrossOriginProtection — the stdlib cross-origin/CSRF guard, kept

@@ -4,7 +4,7 @@
     "into /config/tools/ and persist across container restarts.",
     "",
     "This SHIPPED default is bare-bones: every entry is \"enabled\": false.",
-    "vibecli has no management UI, so each host opts in by editing its own",
+    "web-terminal-kiro has no management UI, so each host opts in by editing its own",
     "/config/tools.json and setting \"enabled\": true on the entries it wants.",
     "(Editing this repo file only changes the seed for FRESH /config volumes.)",
     "",

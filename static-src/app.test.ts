@@ -13,7 +13,7 @@ vi.mock("@cplieger/web-terminal-ui/presets", () => ({
   presetAgentTabbed: presetAgentTabbedMock,
 }));
 
-// vibecli's purple theme, passed through createTerminal (matches app.ts).
+// web-terminal-kiro's purple theme, passed through createTerminal (matches app.ts).
 const THEME = {
   "--accent": "hsl(263.1683 100% 80%)",
   "--tab-hover-bg": "hsl(263.1683 100% 80% / 16%)",
@@ -22,7 +22,7 @@ const THEME = {
   "--tab-active-fg": "#fff",
 };
 
-describe("vibecli bootstrap (app.ts)", () => {
+describe("web-terminal-kiro bootstrap (app.ts)", () => {
   beforeEach(() => {
     // resetModules so each dynamic import re-runs app.ts top-level code; clear
     // the mocks' call history between tests (their implementations persist).
@@ -33,7 +33,7 @@ describe("vibecli bootstrap (app.ts)", () => {
   });
 
   it("throws a clear error when the #terminal root element is missing", async () => {
-    await expect(import("./app.js")).rejects.toThrow("vibecli: missing #terminal root element");
+    await expect(import("./app.js")).rejects.toThrow("web-terminal-kiro: missing #terminal root element");
     expect(createTerminalMock).not.toHaveBeenCalled();
   });
 
@@ -74,11 +74,11 @@ describe("vibecli bootstrap (app.ts)", () => {
     overlay.id = "loading";
     document.body.appendChild(overlay);
 
-    await expect(import("./app.js")).rejects.toThrow("vibecli: missing #terminal root element");
+    await expect(import("./app.js")).rejects.toThrow("web-terminal-kiro: missing #terminal root element");
 
     expect(overlay.getAttribute("role")).toBe("alert");
     expect(overlay.getAttribute("aria-live")).toBe("assertive");
-    expect(overlay.textContent).toContain("vibecli failed to start");
+    expect(overlay.textContent).toContain("Web Terminal for Kiro failed to start");
     expect(createTerminalMock).not.toHaveBeenCalled();
   });
 

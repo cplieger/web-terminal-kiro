@@ -1,4 +1,4 @@
-module github.com/cplieger/vibecli
+module github.com/cplieger/web-terminal-kiro
 
 go 1.26.5
 

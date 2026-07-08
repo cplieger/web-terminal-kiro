@@ -1,6 +1,6 @@
-# Contributing to vibecli
+# Contributing to Web Terminal for Kiro
 
-vibecli is a single Go binary that serves a static web UI and brokers one
+Web Terminal for Kiro is a single Go binary that serves a static web UI and brokers one
 `kiro-cli chat` PTY per session (each browser tab is a session with its own
 `/ws?session=` connection), via `terminal.NewSessionManager`. There is no chat-history store
 and no ACP layer — the browser drives kiro-cli's own TUI through a terminal
@@ -14,7 +14,7 @@ stream. This guide covers the things the codebase won't tell you at a glance.
   (access logging, panic recovery, security headers, cross-origin protection).
 - `static-src/` — TypeScript + CSS sources, compiled into `static/`.
 
-vibecli is a thin consumer of the first-party web-terminal libraries: the
+Web Terminal for Kiro is a thin consumer of the first-party web-terminal libraries: the
 terminal engine `web-terminal-engine` (`github.com/cplieger/web-terminal-engine/v2`
 server-side, `@cplieger/web-terminal-engine` client-side) and the reference UI
 `@cplieger/web-terminal-ui`. Most of "what the terminal does" lives in those
@@ -41,7 +41,7 @@ go generate ./...   # runs: tsgo --project static-src/tsconfig.json -> static/ap
 ```
 
 `go generate` needs `tsgo` (the TypeScript-native preview compiler) on `PATH`.
-vibecli ships no local CSS: the bundle is assembled from the vendored
+Web Terminal for Kiro ships no local CSS: the bundle is assembled from the vendored
 `@cplieger/web-terminal-ui` package. At image-build time the Dockerfile
 concatenates the files listed in that package's `css/MANIFEST` into
 `static/style.css`. For a local `go run .`, install the package first
@@ -119,7 +119,7 @@ assert at least once (`expect.requireAssertions`) and `.only` is forbidden.
   `webhttp.WriteJSON`, `webhttp.WriteJSONStatus`, `webhttp.Ok`, and
   `webhttp.WriteError` (the JSON error envelope).
 - **Client-local vs library code.** `static-src/app.ts` is the only client
-  source vibecli owns — a single `createTerminal(root, { features: presetAgentTabbed(), theme })` call (the theme is vibecli's purple token set; `presetAgentTabbed` pulls in tabs, the activity monitor, touch toolbar, context menu, clipboard, scroll-to-bottom, predictive echo, connection banner, and animations). The input model,
+  source Web Terminal for Kiro owns — a single `createTerminal(root, { features: presetAgentTabbed(), theme })` call (the theme is Web Terminal for Kiro's purple token set; `presetAgentTabbed` pulls in tabs, the activity monitor, touch toolbar, context menu, clipboard, scroll-to-bottom, predictive echo, connection banner, and animations). The input model,
   IME/composition, predictive echo, viewport, mobile key toolbar, and status
   banner, plus the render / keyboard / scroll / connection layers, all live in
   `@cplieger/web-terminal-ui` (built on `@cplieger/web-terminal-engine`);

@@ -43,7 +43,7 @@ func TestIsExposedBind(t *testing.T) {
 // `v != ""` guard treats "" the same as unset, which os.Getenv alone does not
 // express.
 func TestEnvOr_emptyEnvFallsBackToDefault(t *testing.T) {
-	const key = "VIBECLI_ENVOR_TEST_KEY"
+	const key = "WEB_TERMINAL_KIRO_ENVOR_TEST_KEY"
 	cases := []struct {
 		name  string
 		value string

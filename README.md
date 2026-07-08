@@ -1,25 +1,25 @@
-# vibecli
+# Web Terminal for Kiro
 
-[![Image Size](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibecli/badges/size.json)](https://github.com/cplieger/vibecli/pkgs/container/vibecli)
+[![Image Size](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/web-terminal-kiro/badges/size.json)](https://github.com/cplieger/web-terminal-kiro/pkgs/container/web-terminal-kiro)
 ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue)
 ![base: Debian](https://img.shields.io/badge/base-Debian-A81D33?logo=debian)
-[![Test coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibecli/badges/coverage.json)](https://github.com/cplieger/vibecli/actions/workflows/coverage.yml)
-[![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibecli/badges/mutation.json)](https://github.com/cplieger/vibecli/issues?q=label%3Agremlins-tracker)
+[![Test coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/web-terminal-kiro/badges/coverage.json)](https://github.com/cplieger/web-terminal-kiro/actions/workflows/coverage.yml)
+[![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/web-terminal-kiro/badges/mutation.json)](https://github.com/cplieger/web-terminal-kiro/issues?q=label%3Agremlins-tracker)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13223/badge)](https://www.bestpractices.dev/projects/13223)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/vibecli/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/vibecli)
-[![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/vibecli/releases)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/web-terminal-kiro/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/web-terminal-kiro)
+[![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/web-terminal-kiro/releases)
 
 A minimal browser terminal for the **Kiro CLI**: run `kiro-cli` in a browser tab, on your desktop or your phone.
 
-vibecli gives each browser tab its own `kiro-cli` session over a live PTY stream and renders kiro-cli's real terminal UI verbatim, the way an SSH session would, with no chat layer, history store, or translation in between.
+Web Terminal for Kiro gives each browser tab its own `kiro-cli` session over a live PTY stream and renders kiro-cli's real terminal UI verbatim, the way an SSH session would, with no chat layer, history store, or translation in between.
 
 What sets it apart from a typical browser terminal: the screen is **real browser text, not a canvas**, so scrolling and text selection are native; it is **touch-first with multiple tabs**, as usable on a phone as on a laptop; and sessions **survive sleep and network drops**: the screen and scrollback are replayed on reconnect, so you never lose your place.
 
-Published as a container image: `ghcr.io/cplieger/vibecli` (amd64 + arm64).
+Published as a container image: `ghcr.io/cplieger/web-terminal-kiro` (amd64 + arm64).
 
 ## ⚠️ It is a remote shell
 
-A browser tab here is an interactive shell with access to your files under `/workspace` and to kiro-cli's stored credentials. Anyone who can reach the port can use it, and vibecli has **no built-in authentication**. Before exposing it beyond your own machine, do one (ideally both) of:
+A browser tab here is an interactive shell with access to your files under `/workspace` and to kiro-cli's stored credentials. Anyone who can reach the port can use it, and Web Terminal for Kiro has **no built-in authentication**. Before exposing it beyond your own machine, do one (ideally both) of:
 
 - put it behind an authenticating reverse proxy (Caddy forward-auth, oauth2-proxy, Authentik, …), and/or
 - keep the published port on loopback or a private network.
@@ -31,8 +31,8 @@ The server logs a warning at startup when it binds a non-loopback address.
 ```yaml
 # compose.yaml
 services:
-  vibecli:
-    image: ghcr.io/cplieger/vibecli:latest
+  web-terminal-kiro:
+    image: ghcr.io/cplieger/web-terminal-kiro:latest
     ports:
       - "9848:9848"
     volumes:
@@ -43,7 +43,7 @@ services:
 
 Open <http://localhost:9848> and sign in from the terminal (`kiro-cli login`). Open more tabs for more sessions.
 
-vibecli runs as root so `git`, `gh`, and SSH work; don't add a `user:` line, and expect files under the mounts to be root-owned on the host.
+Web Terminal for Kiro runs as root so `git`, `gh`, and SSH work; don't add a `user:` line, and expect files under the mounts to be root-owned on the host.
 
 ## Configuration
 
@@ -63,7 +63,7 @@ kiro-cli itself is pinned and downloaded on first boot (it is not redistributed 
 
 ### Access-log client IP
 
-The access log records a `client_ip` per request. By default (`TRUSTED_PROXIES` unset) it logs the direct socket peer and ignores any `X-Forwarded-For` header, so the logged IP cannot be spoofed; that's the correct choice when vibecli is directly exposed. When you run it behind a reverse proxy the socket peer is the proxy, not the user, so set `TRUSTED_PROXIES` to the proxy's address(es), a comma-separated list of CIDRs or bare IPs (e.g. `TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10`), and the log resolves the real client from a trusted `X-Forwarded-For`. Only a request whose socket peer is inside the set has its `X-Forwarded-For` trusted (spoof-safe); a malformed entry is logged and skipped rather than aborting startup.
+The access log records a `client_ip` per request. By default (`TRUSTED_PROXIES` unset) it logs the direct socket peer and ignores any `X-Forwarded-For` header, so the logged IP cannot be spoofed; that's the correct choice when Web Terminal for Kiro is directly exposed. When you run it behind a reverse proxy the socket peer is the proxy, not the user, so set `TRUSTED_PROXIES` to the proxy's address(es), a comma-separated list of CIDRs or bare IPs (e.g. `TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10`), and the log resolves the real client from a trusted `X-Forwarded-For`. Only a request whose socket peer is inside the set has its `X-Forwarded-For` trusted (spoof-safe); a malformed entry is logged and skipped rather than aborting startup.
 
 ## Features
 
@@ -93,11 +93,11 @@ Everything below works on a phone as well as a desktop.
 
 ## Works with the whole kiro-cli TUI
 
-Because vibecli drives kiro-cli's own terminal UI directly, every kiro-cli feature works with no extra setup, including queue steering (`Ctrl+S`), goal-driven runs (`/goal`), and turn rewind (`/rewind`). On a phone, the shortcuts that need modifier keys are reachable through the on-screen toolbar (sticky-Ctrl, then the letter).
+Because Web Terminal for Kiro drives kiro-cli's own terminal UI directly, every kiro-cli feature works with no extra setup, including queue steering (`Ctrl+S`), goal-driven runs (`/goal`), and turn rewind (`/rewind`). On a phone, the shortcuts that need modifier keys are reachable through the on-screen toolbar (sticky-Ctrl, then the letter).
 
 ## Tools
 
-vibecli ships kiro-cli, `git`, and base utilities. Everything else is declared in a JSON manifest at `/config/tools.json` and installed into `/config/tools/` on boot, persisting across restarts. There is no management UI; you edit the manifest and restart the container.
+Web Terminal for Kiro ships kiro-cli, `git`, and base utilities. Everything else is declared in a JSON manifest at `/config/tools.json` and installed into `/config/tools/` on boot, persisting across restarts. There is no management UI; you edit the manifest and restart the container.
 
 **Enable a bundled tool.** The manifest ships several entries, all disabled by default. Set `"enabled": true` on the ones you want:
 
@@ -132,7 +132,7 @@ Language servers are picked up by kiro-cli's code intelligence automatically. `g
 }
 ```
 
-`${VERSION}` and `${BIN}` are substituted at install time. The shipped `gh` and `golangci-lint` entries are good templates; they show the architecture placeholders for multi-arch downloads and the optional integrity check: add a `url` plus a per-arch `sha256` map (`{"amd64": "…", "arm64": "…"}`) and vibecli verifies the download before installing (pin the entry with `"auto_update": false` so the checksum keeps matching).
+`${VERSION}` and `${BIN}` are substituted at install time. The shipped `gh` and `golangci-lint` entries are good templates; they show the architecture placeholders for multi-arch downloads and the optional integrity check: add a `url` plus a per-arch `sha256` map (`{"amd64": "…", "arm64": "…"}`) and Web Terminal for Kiro verifies the download before installing (pin the entry with `"auto_update": false` so the checksum keeps matching).
 
 Editing this repo's `tools.json` only seeds a fresh `/config` volume; on an existing install, edit the manifest inside `/config`.
 
@@ -141,17 +141,17 @@ Editing this repo's `tools.json` only seeds a fresh `/config` volume; on an exis
 ```text
 kiro-cli                      one process per browser tab
    │  PTY
-web-terminal-engine           Go PTY + VT engine ──► vibecli server
+web-terminal-engine           Go PTY + VT engine ──► web-terminal-kiro server
    │  binary wire protocol over WebSocket
 web-terminal-engine + web-terminal-ui   ──► your browser (renderer + touch UI)
 ```
 
-vibecli is deliberately small: an HTTP + WebSocket server around the engine, the kiro-cli install, and a structured access log. The terminal itself is the shared web-terminal libraries.
+Web Terminal for Kiro is deliberately small: an HTTP + WebSocket server around the engine, the kiro-cli install, and a structured access log. The terminal itself is the shared web-terminal libraries.
 
 ## Related projects
 
 - [vibekit](https://github.com/cplieger/vibekit): the sister app, a chat-first Kiro web UI (chat history, MCP, agent tools) instead of a raw terminal.
-- [web-terminal-engine](https://github.com/cplieger/web-terminal-engine): the terminal engine (Go PTY/VT + TypeScript renderer) behind vibecli.
+- [web-terminal-engine](https://github.com/cplieger/web-terminal-engine): the terminal engine (Go PTY/VT + TypeScript renderer) behind this app.
 - [web-terminal-ui](https://github.com/cplieger/web-terminal-ui): the touch-first browser UI.
 - [web-terminal-server](https://github.com/cplieger/web-terminal-server): a generic browser terminal for any command, built on the same engine.
 

@@ -2,7 +2,7 @@
 # Reads /config/tools.json on container boot, checks for updates, and
 # installs enabled tools into /config/tools (persisted across restarts).
 #
-# vibecli has no management UI, so everything is driven by tools.json:
+# web-terminal-kiro has no management UI, so everything is driven by tools.json:
 #   enabled      bool        install this entry (missing -> true)
 #   auto_update  bool        bump version on boot (missing -> true; false pins)
 #   requires     []"sec.name" deps that must be enabled first (e.g. lsp gopls

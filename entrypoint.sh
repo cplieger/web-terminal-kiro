@@ -1,5 +1,5 @@
 #!/bin/bash
-# vibecli entrypoint. Ensures the pinned kiro-cli version is installed
+# web-terminal-kiro entrypoint. Ensures the pinned kiro-cli version is installed
 # (downloads on first boot or whenever the on-disk version drifts from
 # the pin), then hands off to the Go web server. Matches vibekit's
 # licensing pattern: we download kiro-cli at runtime rather than bake
@@ -45,7 +45,7 @@ mkdir -p "$TOOLS/bin" "$HOME/.local/bin" "$HOME/.ssh" "$HOME/.kiro" \
 
 # Seed tools.json on first boot from the image default.
 if [ ! -f /config/tools.json ]; then
-  cp /opt/vibecli/tools.json /config/tools.json
+  cp /opt/web-terminal-kiro/tools.json /config/tools.json
   printf 'First boot: created /config/tools.json from defaults\n'
 fi
 
@@ -185,7 +185,7 @@ fi
 if [ -x "$BIN" ]; then
   "$BIN" settings telemetry.enabled false >/dev/null 2>&1 || true
   "$BIN" settings "app.disableAutoupdates" "true" >/dev/null 2>&1 || true
-  # Enable kiro-cli's OSC 9 desktop-notification escape so vibecli's tab
+  # Enable kiro-cli's OSC 9 desktop-notification escape so web-terminal-kiro's tab
   # activity monitor can classify turn-end ("Response complete") and
   # tool-approval ("Permission required") into per-tab status dots. osc9 emits
   # the notification inline in the PTY stream (the only method that reaches a
@@ -205,7 +205,7 @@ if [ -x "$BIN" ]; then
 fi
 
 # Readiness marker consumed by the Go server's /api/health (main.go reads
-# KIRO_CLI_READY_MARKER; routes.go Stats it). kiro-cli is vibecli's core
+# KIRO_CLI_READY_MARKER; routes.go Stats it). kiro-cli is web-terminal-kiro's core
 # dependency, yet the HTTP listener comes up even when the first-boot install
 # failed (degraded-not-dead start, per the install WARNING above). Record here
 # whether a runnable, correctly-versioned binary is present so the health signal
@@ -232,7 +232,7 @@ fi
 if [ -s /config/tools.json ]; then
   SETUP_LOG="/tmp/setup-tools.log"
   printf 'Running setup-tools.sh (log: %s)\n' "$SETUP_LOG"
-  bash /opt/vibecli/setup-tools.sh 2>&1 | tee "$SETUP_LOG"
+  bash /opt/web-terminal-kiro/setup-tools.sh 2>&1 | tee "$SETUP_LOG"
   if [ "${PIPESTATUS[0]}" -ne 0 ]; then
     printf 'level=warn msg="setup-tools.sh reported failures" log=%s component=entrypoint\n' "$SETUP_LOG" >&2
   fi
@@ -245,4 +245,4 @@ theme_file="$HOME/.kiro/settings/kiro_cli_theme.json"
 mkdir -p "$(dirname "$theme_file")"
 printf '{"baseTheme":"dark","diffPreset":"dark"}\n' >"$theme_file"
 
-exec /app/vibecli
+exec /app/web-terminal-kiro

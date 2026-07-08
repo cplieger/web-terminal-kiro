@@ -90,7 +90,7 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 // server is handed a marker path (as entrypoint.sh does via
 // KIRO_CLI_READY_MARKER), /api/health returns 503 while the marker is absent (a
 // failed/incomplete kiro-cli install) and 200 once it exists — reflecting
-// vibecli's core dependency with a cheap Stat, never launching kiro-cli. An
+// web-terminal-kiro's core dependency with a cheap Stat, never launching kiro-cli. An
 // empty marker path skips the gate, so out-of-container runs (tests, bare
 // `go run`) keep pure-listener readiness.
 func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
@@ -284,7 +284,7 @@ func TestBuildETags_isContentAddressedSHA256(t *testing.T) {
 }
 
 // TestSSEStreamsThroughLoggingMiddleware is the regression guard for the tab
-// status stream behind vibecli's own middleware. webhttp.Logging wraps most
+// status stream behind web-terminal-kiro's own middleware. webhttp.Logging wraps most
 // requests in a webhttp.StatusRecorder; if the SSE path were wrapped by
 // something opaque to streaming the engine's flush probe would fail and the
 // stream would 500. It is instead in Logging's WithSkipPaths set (like /ws), so
@@ -381,12 +381,12 @@ func TestCreateRateLimit(t *testing.T) {
 
 // TestSecurityHeaders_presentOnNormalResponse pins the baseline response
 // security headers that buildHandler layers on every response via
-// webhttp.SecurityHeaders(). vibecli sent NO security headers before the
+// webhttp.SecurityHeaders(). web-terminal-kiro sent NO security headers before the
 // webhttp standardization, so this is the regression guard for the fleet
 // baseline: X-Content-Type-Options nosniff, X-Frame-Options DENY, and
 // Referrer-Policy strict-origin-when-cross-origin on a normal 200. It also pins
 // the two deliberate choices -- X-Frame-Options is the DENY default because
-// vibecli is never embedded in a frame, and NO Content-Security-Policy is set,
+// web-terminal-kiro is never embedded in a frame, and NO Content-Security-Policy is set,
 // because a wrong CSP would silently break the terminal UI's fonts + WebSocket.
 // Driven through the full production chain (buildHandler) so the assertion
 // tracks what the server actually sends.
@@ -422,7 +422,7 @@ func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 		}
 	}
 	// No CSP by design: SecurityHeaders() is used without WithCSP so the
-	// terminal UI's fonts and WebSocket are not gated by a policy vibecli would
+	// terminal UI's fonts and WebSocket are not gated by a policy web-terminal-kiro would
 	// have to keep in lockstep with the vendored UI bundle.
 	if got := rec.Header().Get("Content-Security-Policy"); got != "" {
 		t.Errorf("Content-Security-Policy = %q, want unset (no CSP by design)", got)

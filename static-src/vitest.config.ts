@@ -1,4 +1,4 @@
-// Vitest 4.1 configuration for vibecli TypeScript unit tests.
+// Vitest 4.1 configuration for web-terminal-kiro TypeScript unit tests.
 // Default environment: node (pure functions, no DOM overhead).
 // DOM modules: add `// @vitest-environment happy-dom` at the top of the
 // test file to get window/document/localStorage/etc. No browser binary
@@ -33,7 +33,7 @@ export default defineConfig({
     // Forbid .only tests unconditionally — not just in CI.
     allowOnly: false,
 
-    // app.test.ts covers vibecli's thin bootstrap (the createTerminal() wiring); the terminal
+    // app.test.ts covers web-terminal-kiro's thin bootstrap (the createTerminal() wiring); the terminal
     // logic itself is tested in @cplieger/web-terminal-ui and @cplieger/web-terminal-engine.
     // passWithNoTests stays as a safety net so moving the bootstrap test into the
     // packages later won't hard-fail the suite here.
@@ -87,7 +87,7 @@ export default defineConfig({
       reportOnFailure: true,
       reporter: ["text", "text-summary", "lcov"],
       thresholds: {
-        // Thresholds intentionally low: vibecli's frontend is small and
+        // Thresholds intentionally low: web-terminal-kiro's frontend is small and
         // most code is DOM/terminal/WS side-effect wiring. Bump these
         // when more pure helpers are extracted into testable modules.
         lines: 5,
