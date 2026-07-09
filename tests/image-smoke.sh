@@ -19,7 +19,7 @@ IMG="${1:?usage: image-smoke.sh <image-ref>}"
 NAME="smoke-web-terminal-kiro-$$"
 TIMEOUT=240 # see header: covers the first-boot kiro-cli download + 180s start-period
 
-# shellcheck disable=SC2329  # invoked indirectly via trap
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via trap
 cleanup() {
   code=$?
   # Dump container logs only on failure (a passing run stays quiet).
