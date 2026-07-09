@@ -11,11 +11,13 @@
 
 A minimal browser terminal for the **Kiro CLI**: run `kiro-cli` in a browser tab, on your desktop or your phone.
 
+![Web Terminal for Kiro running kiro-cli in a browser tab, with more sessions open across tabs](docs/screenshot.png)
+
 Web Terminal for Kiro gives each browser tab its own `kiro-cli` session over a live PTY stream and renders kiro-cli's real terminal UI verbatim, the way an SSH session would, with no chat layer, history store, or translation in between.
 
 What sets it apart from a typical browser terminal: the screen is **real browser text, not a canvas**, so scrolling and text selection are native; it is **touch-first with multiple tabs**, as usable on a phone as on a laptop; and sessions **survive sleep and network drops**: the screen and scrollback are replayed on reconnect, so you never lose your place.
 
-Published as a container image: `ghcr.io/cplieger/web-terminal-kiro` (amd64 + arm64).
+Published as a multi-arch (amd64 + arm64) container image on **GHCR** (`ghcr.io/cplieger/web-terminal-kiro`) and **Docker Hub** (`cplieger/web-terminal-kiro`).
 
 ## ⚠️ It is a remote shell
 
@@ -41,7 +43,7 @@ services:
     restart: unless-stopped
 ```
 
-Open <http://localhost:9848> and sign in from the terminal (`kiro-cli login`). Open more tabs for more sessions.
+Open <http://localhost:9848>. On first launch, kiro-cli walks you through sign-in with a device-code flow: it prints a URL and a one-time code, so you open the URL in any browser (your phone works), enter the code, and you're in. Every browser tab is a fresh session.
 
 Web Terminal for Kiro runs as root so `git`, `gh`, and SSH work; don't add a `user:` line, and expect files under the mounts to be root-owned on the host.
 
@@ -53,7 +55,7 @@ The image ships working defaults; most setups only pick a port and a volume.
 | --- | --- | --- |
 | `KWEB_ADDR` | `:9848` | Listen address (`host:port`). |
 | `KWEB_WORK_DIR` | `/workspace` | Directory each terminal session starts in (must exist). |
-| `TRUSTED_PROXIES` | _(unset)_ | Reverse-proxy CIDRs / bare IPs whose `X-Forwarded-For` the access log trusts to resolve `client_ip`. See [Access-log client IP](#access-log-client-ip). |
+| `TRUSTED_PROXIES` | _(unset)_ | Reverse-proxy CIDRs / bare IPs whose `X-Forwarded-For` the access log trusts to resolve `client_ip`. See [Behind a reverse proxy](#behind-a-reverse-proxy). |
 
 - **Port:** `9848` (HTTP + WebSocket).
 - **Volumes:** `/config` persists kiro-cli auth/tokens, installed tools, settings, and `~/.ssh` + git config; `/workspace` is your repositories / working directory.
@@ -61,9 +63,27 @@ The image ships working defaults; most setups only pick a port and a volume.
 
 kiro-cli itself is pinned and downloaded on first boot (it is not redistributed inside the image); newer versions arrive by pulling a newer image tag.
 
-### Access-log client IP
+### kiro-cli settings and MCP servers
 
-The access log records a `client_ip` per request. By default (`TRUSTED_PROXIES` unset) it logs the direct socket peer and ignores any `X-Forwarded-For` header, so the logged IP cannot be spoofed; that's the correct choice when Web Terminal for Kiro is directly exposed. When you run it behind a reverse proxy the socket peer is the proxy, not the user, so set `TRUSTED_PROXIES` to the proxy's address(es), a comma-separated list of CIDRs or bare IPs (e.g. `TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10`), and the log resolves the real client from a trusted `X-Forwarded-For`. Only a request whose socket peer is inside the set has its `X-Forwarded-For` trusted (spoof-safe); a malformed entry is logged and skipped rather than aborting startup.
+Everything kiro-cli stores lives under `/config` and survives container recreation, so your sign-in, settings, and installed tools stick around. To add [MCP](https://modelcontextprotocol.io) servers, edit kiro-cli's own config on the volume at `/config/home/.kiro/settings/mcp.json`, or run `docker exec -it web-terminal-kiro kiro-cli mcp add --scope global <name> ...`. Use global scope (the per-workspace default only applies under `/workspace`) so the server loads in every session, then open a new tab, since kiro-cli reads its MCP config at session start.
+
+### Behind a reverse proxy
+
+Web Terminal for Kiro has no built-in authentication, so the cleanest way to expose it is to let a reverse proxy terminate TLS and require a login. A minimal [Caddy](https://caddyserver.com) config adds HTTP Basic auth in front of the terminal:
+
+```caddyfile
+webterm.example.com {
+    basic_auth {
+        # generate the hash with: caddy hash-password
+        alice $2a$14$...
+    }
+    reverse_proxy 127.0.0.1:9848
+}
+```
+
+For real single sign-on, use forward auth (Authentik, oauth2-proxy) instead of Basic auth; Caddy proxies the terminal's WebSocket transparently either way. Pair this with a published port bound to loopback (`127.0.0.1:9848:9848`) so the only route in is through the proxy.
+
+Behind a proxy, also set `TRUSTED_PROXIES` so the access log records the real client. By default (`TRUSTED_PROXIES` unset) the log uses the direct socket peer and ignores any `X-Forwarded-For` header, so the logged IP cannot be spoofed; that's the correct choice when Web Terminal for Kiro is directly exposed. When a proxy sits in front, the socket peer is the proxy, not the user, so set `TRUSTED_PROXIES` to the proxy's address(es), a comma-separated list of CIDRs or bare IPs (e.g. `TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10`); the log then resolves the real client from a trusted `X-Forwarded-For`. Only a request whose socket peer is inside the set has its `X-Forwarded-For` trusted (spoof-safe); a malformed entry is logged and skipped rather than aborting startup.
 
 ## Features
 
@@ -139,14 +159,16 @@ Editing this repo's `tools.json` only seeds a fresh `/config` volume; on an exis
 ## How it fits together
 
 ```text
-kiro-cli                      one process per browser tab
+kiro-cli chat                          one PTY-backed process per browser tab
    │  PTY
-web-terminal-engine           Go PTY + VT engine ──► web-terminal-kiro server
+web-terminal-engine (Go)               PTY bridge + VT screen buffer + wire protocol
+   │  via terminal.NewSessionManager
+web-terminal-kiro server (this app)    HTTP + WebSocket, the kiro-cli install, access log
    │  binary wire protocol over WebSocket
-web-terminal-engine + web-terminal-ui   ──► your browser (renderer + touch UI)
+web-terminal-engine + web-terminal-ui  renderer + touch UI, running in your browser
 ```
 
-Web Terminal for Kiro is deliberately small: an HTTP + WebSocket server around the engine, the kiro-cli install, and a structured access log. The terminal itself is the shared web-terminal libraries.
+Web Terminal for Kiro is deliberately small: an HTTP + WebSocket server around the engine, the kiro-cli install, and a structured access log. Everything terminal-related lives in the shared web-terminal libraries.
 
 ## Related projects
 
