@@ -8,7 +8,7 @@
 #   requires     []"sec.name" deps that must be enabled first (e.g. lsp gopls
 #                            requires runtimes.go)
 #   shims        {name: cmd} wrapper scripts written to BIN exec'ing cmd —
-#                            lets tsgo masquerade as typescript-language-server
+#                            lets tsc masquerade as typescript-language-server
 #                            and pyrefly as pyright (the names kiro-cli probes)
 #   version / update{method,...} / install
 #   lsp.method   binary|go   which install pipeline an lsp entry uses
