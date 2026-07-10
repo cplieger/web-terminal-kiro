@@ -46,7 +46,7 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # linux-x64 tarball is published in lockstep at the same version string.
 # See .github/renovate.json for the followTag rule.
 # renovate: datasource=npm depName=@typescript/native-preview
-ARG TSGO_VERSION=7.0.0-dev.20260615.1
+ARG TSGO_VERSION=7.0.0-dev.20260707.2
 # sha256 of the platform-specific tsgo tarball, per arch. Update both alongside
 # TSGO_VERSION (the linux-x64 and linux-arm64 packages publish in lockstep).
 ARG TSGO_SHA256_X64=214b2ff1bae02f902b2ddc90f9599ad7991e6f333ccb97046489170cd5865d1e
