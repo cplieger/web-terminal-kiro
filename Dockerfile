@@ -108,7 +108,7 @@ RUN mkdir -p static/vendor/fonts && \
 # ARGs + `sha256sum -c` for parity with the tsgo gate if that risk is later
 # deemed in scope (at the cost of a manual sha bump on each engine/UI release).
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.2.1
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.3.2
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
 ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=3.4.3
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/node_modules/@cplieger/web-terminal-ui && \
