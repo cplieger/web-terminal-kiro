@@ -553,55 +553,6 @@ func TestClassifyStatus(t *testing.T) {
 	}
 }
 
-// TestTokenBucketAllowLocked drives the clock-injectable core of the create
-// rate limiter with a synthetic clock so refill, cap, and recovery are
-// deterministic (allow() itself reads the real clock). TestCreateRateLimit only
-// fires a same-instant burst, so it never exercises recovery-over-time or the
-// refill cap (`if b.tokens > createBurst`); this pins both. The cap is
-// DoS-relevant -- without it an idle client banks unbounded tokens and defeats
-// the burst limit.
-func TestTokenBucketAllowLocked(t *testing.T) {
-	base := time.Unix(0, 0)
-	b := &tokenBucket{}
-
-	// First call seeds a full burst, then consumes one token; the rest of the
-	// burst drains at the same instant (no time elapses, so no refill).
-	for i := range int(createBurst) {
-		if !b.allowLocked(base) {
-			t.Fatalf("burst token %d should be allowed (seeded full burst)", i)
-		}
-	}
-	// Burst spent at the same instant: the next same-instant call is denied.
-	if b.allowLocked(base) {
-		t.Fatal("call past the burst at the same instant should be denied")
-	}
-
-	// After createRefillPerSec seconds exactly one token has refilled, so a
-	// single call is allowed again (recovery over time) and the one after it is
-	// denied.
-	after := base.Add(time.Duration(float64(time.Second) / createRefillPerSec))
-	if !b.allowLocked(after) {
-		t.Fatal("a token should have refilled after createRefillPerSec seconds")
-	}
-	if b.allowLocked(after) {
-		t.Fatal("only one token refills per createRefillPerSec seconds; the second same-instant call must be denied")
-	}
-
-	// An idle client cannot bank unbounded tokens: after a long gap the pool is
-	// capped at createBurst, so exactly createBurst same-instant calls succeed
-	// and the next is denied. This kills the uncovered refill-cap mutant.
-	far := after.Add(time.Hour)
-	allowed := 0
-	for range int(createBurst) + 1 {
-		if b.allowLocked(far) {
-			allowed++
-		}
-	}
-	if allowed != int(createBurst) {
-		t.Errorf("idle refill allowed %d calls, want %d (pool must cap at createBurst)", allowed, int(createBurst))
-	}
-}
-
 // TestHealthEndpoint_reasonDistinguishesUnreadyCause pins the reason body of
 // the two 503 paths, which TestHealthEndpoint_reflectsReadiness and
 // TestHealthEndpoint_reflectsKiroCliReadiness leave unchecked: both assert only

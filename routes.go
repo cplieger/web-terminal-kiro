@@ -9,9 +9,7 @@ import (
 	"os"
 	"path"
 	"strings"
-	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/cplieger/web-terminal-engine/v2/terminal"
 	"github.com/cplieger/webhttp"
@@ -160,56 +158,18 @@ const (
 	createRefillPerSec = 1.0
 )
 
-// tokenBucket is a minimal mutex-guarded token bucket (no external dependency).
-type tokenBucket struct {
-	last   time.Time
-	tokens float64
-	mu     sync.Mutex
-}
-
-// allow refills the bucket for the elapsed time and consumes one token,
-// returning false when none is available. It reads the clock under the lock
-// (preserving the original monotonic-under-lock semantics) and delegates the
-// pure refill/consume math to allowLocked.
-func (b *tokenBucket) allow() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.allowLocked(time.Now())
-}
-
-// allowLocked is the clock-injectable core of allow: it refills the bucket for
-// the time elapsed since the last call, caps the pool at createBurst, and
-// consumes one token, returning false when none is available. The caller must
-// hold b.mu.
-func (b *tokenBucket) allowLocked(now time.Time) bool {
-	if b.last.IsZero() {
-		b.tokens = createBurst
-	} else {
-		b.tokens += now.Sub(b.last).Seconds() * createRefillPerSec
-		if b.tokens > createBurst {
-			b.tokens = createBurst
-		}
-	}
-	b.last = now
-	if b.tokens >= 1 {
-		b.tokens--
-		return true
-	}
-	return false
-}
-
-// createRateLimit wraps the session REST handler, gating POST /api/sessions
-// (session creation) behind a token bucket. List (GET) and close (DELETE) pass
-// through unthrottled.
+// createRateLimit gates POST /api/sessions (session creation) behind a shared
+// token bucket via webhttp.RateLimiter, so a caller cannot fork kiro-cli
+// processes without bound; list (GET) and close (DELETE) pass through
+// unthrottled. The bucket is process-wide (it bounds aggregate create churn),
+// which is what matters when each kiro-cli chat is a heavy process.
 func createRateLimit(next http.Handler) http.Handler {
-	bucket := &tokenBucket{}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/api/sessions" && !bucket.allow() {
-			webhttp.WriteError(w, r, http.StatusTooManyRequests, "rate_limited", "session creation rate exceeded")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return webhttp.RateLimiter(createBurst, createRefillPerSec,
+		webhttp.WithRateLimitWhen(func(r *http.Request) bool {
+			return r.Method == http.MethodPost && r.URL.Path == "/api/sessions"
+		}),
+		webhttp.WithRateLimitError("rate_limited", "session creation rate exceeded"),
+	)(next)
 }
 
 // buildETags walks the embedded static tree once and computes a stable

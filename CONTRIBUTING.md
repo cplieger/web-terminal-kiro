@@ -25,7 +25,7 @@ repo, not this one.
 Observability is slog-only: webhttp's `Logging` middleware (wired in
 `buildHandler` with `WithClientIP()`) emits a structured access-log line per
 request (method/path/status/duration_ms/request_id/client_ip). There is no
-Prometheus `/metrics` endpoint. Log timestamps are UTC (a `utcTimeAttr` slog
+Prometheus `/metrics` endpoint. Log timestamps are UTC (`slogx`'s `UTCTime`
 `ReplaceAttr` forces the record time to UTC), so the image needs no `TZ` and
 embeds no `time/tzdata`.
 
@@ -37,10 +37,12 @@ before `go run .` or `go build .`, otherwise `go:embed` captures a stale or
 empty tree:
 
 ```sh
-go generate ./...   # runs: tsgo --project static-src/tsconfig.json -> static/app.js
+go generate ./...   # runs: tsc --project static-src/tsconfig.json -> static/app.js
 ```
 
-`go generate` needs `tsgo` (the TypeScript-native preview compiler) on `PATH`.
+`go generate` runs the TypeScript 7 native compiler `tsc` from `static-src`'s
+`@typescript/native` devDependency, so run `cd static-src && npm install` first
+— the `//go:generate` directive invokes `static-src/node_modules/.bin/tsc`.
 Web Terminal for Kiro ships no local CSS: the bundle is assembled from the vendored
 `@cplieger/web-terminal-ui` package. At image-build time the Dockerfile
 concatenates the files listed in that package's `css/MANIFEST` into
@@ -101,7 +103,7 @@ golangci-lint fmt       # apply gofumpt + gci formatting
 Frontend (from `static-src/`):
 
 ```sh
-npm run typecheck       # tsgo -project tsconfig.json
+npm run typecheck       # tsc -project tsconfig.json
 npm run test            # vitest --run (node + happy-dom; *.test.ts)
 npm run lint:eslint     # eslint .
 npm run lint:prettier   # prettier --check ../..
