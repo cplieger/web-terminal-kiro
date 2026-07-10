@@ -1,4 +1,4 @@
-# Dev-only build artifacts; production uses vendored TS via tsgo at Docker build time.
+# Dev-only build artifacts; production uses vendored TS via tsc at Docker build time.
 static/*.js
 static/*.js.map
 static/wire/

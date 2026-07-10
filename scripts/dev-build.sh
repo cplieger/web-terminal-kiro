@@ -14,6 +14,12 @@ ENGINE_DIR="${ENGINE_DIR:-../web-terminal-engine}"
 UI_DIR="${UI_DIR:-../web-terminal-ui}"
 ENGINE_PKG="static-src/node_modules/@cplieger/web-terminal-engine"
 UI_PKG="static-src/node_modules/@cplieger/web-terminal-ui"
+# The TS7 native compiler comes from static-src's @typescript/native devDep.
+TSC="static-src/node_modules/.bin/tsc"
+[ -x "$TSC" ] || {
+  echo "error: $TSC not found — run 'cd static-src && npm install' first" >&2
+  exit 1
+}
 
 echo "[1/6] go.work -> local engine (replace; engine module is unpublished)"
 cat >go.work <<'EOF'
@@ -41,18 +47,18 @@ cp "$UI_DIR/package.json" "$UI_PKG/package.json"
     cp "$UI_DIR/src/$f" "$UI_PKG/src/$f"
   done
 
-echo "[3/6] tsgo: app -> static/app.js (resolves @cplieger/web-terminal-ui)"
-tsgo --project static-src/tsconfig.json
+echo "[3/6] tsc: app -> static/app.js (resolves @cplieger/web-terminal-ui)"
+"$TSC" --project static-src/tsconfig.json
 
-echo "[4/6] tsgo: engine + UI libs -> static/vendor/"
+echo "[4/6] tsc: engine + UI libs -> static/vendor/"
 rm -rf static/vendor/cplieger-web-terminal-engine static/vendor/cplieger-web-terminal-ui
-tsgo --module ESNext --target ESNext --moduleResolution bundler \
+"$TSC" --module ESNext --target ESNext --moduleResolution bundler \
   --outDir static/vendor/cplieger-web-terminal-engine \
   --rootDir "$ENGINE_PKG/src" --skipLibCheck --strict "$ENGINE_PKG/src"/*.ts
 # Compile the whole nested UI src tree (index.ts + presets.ts + kernel/ +
 # features/); find collects every .ts (the overlay already excluded tests).
 mapfile -t ui_ts < <(find "$UI_PKG/src" -name '*.ts')
-tsgo --module ESNext --target ESNext --moduleResolution bundler \
+"$TSC" --module ESNext --target ESNext --moduleResolution bundler \
   --outDir static/vendor/cplieger-web-terminal-ui \
   --rootDir "$UI_PKG/src" --skipLibCheck --strict "${ui_ts[@]}"
 

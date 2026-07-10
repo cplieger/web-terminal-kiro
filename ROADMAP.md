@@ -17,10 +17,6 @@ for this repository.
 
 - Incorporate fixes from the weekly central fuzzing and
   [gremlins](https://gremlins.dev/) mutation-testing runs.
-- Adopt the stable `tsgo`
-  ([@typescript/native-preview](https://www.npmjs.com/package/@typescript/native-preview))
-  release for the browser terminal frontend once it reaches general
-  availability.
 - Track the pinned kiro-cli version via Renovate; dependency and base-image
   currency; security findings (CodeQL / Trivy / Scorecard) addressed as they
   arise.

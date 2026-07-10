@@ -34,34 +34,33 @@ RUN ARCH=$(dpkg --print-architecture) && \
     rm /tmp/go.tar.gz
 ENV PATH="/usr/local/go/bin:${PATH}"
 
-# tsgo (TypeScript 7 native preview) for compiling the browser client.
-# Matches the approach in apps/vibekit's Dockerfile: pull Microsoft's
-# typescript-go preview tarball, invoke the binary with --project on
-# static-src/tsconfig.json, emit lands in static/app.js for go:embed.
-# The tsgo binary is used here at build time only (TS compilation).
-# Runtime LSPs are no longer baked — they install on-demand via
+# tsc — the TypeScript 7 native compiler (a Go binary) — compiles the browser
+# client at build time (emit lands in static/app.js for go:embed). Matches
+# apps/vibekit's approach. Now that TS7 shipped stable, the native compiler is
+# the `typescript` package's per-platform `tsc`
+# (@typescript/typescript-linux-<arch>, published in lockstep with the
+# metapackage). Runtime LSPs are not baked — they install on-demand via
 # setup-tools.sh from /config/tools.json.
-# Tracks @typescript/native-preview's `latest` dist-tag (Microsoft's curated
-# stabler channel) rather than the daily `latest`; the platform-specific
-# linux-x64 tarball is published in lockstep at the same version string.
-# See .github/renovate.json for the followTag rule.
-# renovate: datasource=npm depName=@typescript/native-preview
-ARG TSGO_VERSION=7.0.0-dev.20260615.1
-# sha256 of the platform-specific tsgo tarball, per arch. Update both alongside
-# TSGO_VERSION (the linux-x64 and linux-arm64 packages publish in lockstep).
-ARG TSGO_SHA256_X64=214b2ff1bae02f902b2ddc90f9599ad7991e6f333ccb97046489170cd5865d1e
-ARG TSGO_SHA256_ARM64=373161c691fcf7af07936daecbc065ce5343c4a15c47d87e879f86de921b4d1a
+# renovate: datasource=npm depName=typescript
+ARG TS_VERSION=7.0.2
+# sha256 of the platform-specific tsc tarball, per arch. npm publishes SHA-512
+# (dist.integrity), not this SHA-256, so Renovate bumps TS_VERSION but cannot
+# move these — the manual-sha-bump rule in cplieger/.github (scoped to this
+# repo) labels the PR with the recompute commands. Update both alongside
+# TS_VERSION (the linux-x64 and linux-arm64 packages publish in lockstep).
+ARG TS_SHA256_X64=7ecad6f67377e831856367ab062ef394f21506a611405bf8ac0ff039348637d3
+ARG TS_SHA256_ARM64=c83d931ac9dd7549cde6e71246aa9d6a9812843023df3e277fe3b5dcf41dd0ea
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) TSGO_ARCH="x64";   TSGO_SHA256="$TSGO_SHA256_X64" ;; \
-      arm64) TSGO_ARCH="arm64"; TSGO_SHA256="$TSGO_SHA256_ARM64" ;; \
+      amd64) TS_ARCH="x64";   TS_SHA256="$TS_SHA256_X64" ;; \
+      arm64) TS_ARCH="arm64"; TS_SHA256="$TS_SHA256_ARM64" ;; \
       *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/tsgo.tgz \
-      "https://registry.npmjs.org/@typescript/native-preview-linux-${TSGO_ARCH}/-/native-preview-linux-${TSGO_ARCH}-${TSGO_VERSION}.tgz" && \
-    printf '%s  /tmp/tsgo.tgz\n' "$TSGO_SHA256" | sha256sum -c - && \
-    tar -xz -C /tmp -f /tmp/tsgo.tgz && \
-    rm /tmp/tsgo.tgz
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/tsc.tgz \
+      "https://registry.npmjs.org/@typescript/typescript-linux-${TS_ARCH}/-/typescript-linux-${TS_ARCH}-${TS_VERSION}.tgz" && \
+    printf '%s  /tmp/tsc.tgz\n' "$TS_SHA256" | sha256sum -c - && \
+    tar -xz -C /tmp -f /tmp/tsc.tgz && \
+    rm /tmp/tsc.tgz
 
 # Nerd Font. kiro-cli's diff UI uses nerd-font private-use-area
 # glyphs (line markers, file-type icons). System monospace fonts
@@ -97,15 +96,15 @@ RUN mkdir -p static/vendor/fonts && \
 # Fetch the engine + UI TypeScript from the npm registry. Both publish TS
 # source only (no precompiled JS) — same pattern as @cplieger/reactive,
 # matching how local TS files in static-src/ are treated. Extracted side by
-# side under static-src/node_modules/@cplieger so tsgo's bundler resolution
+# side under static-src/node_modules/@cplieger so tsc's bundler resolution
 # finds the engine when compiling the UI's `@cplieger/web-terminal-engine` import.
-# Integrity note: unlike the Go, tsgo, and Nerd Font fetches above, the two
+# Integrity note: unlike the Go, tsc, and Nerd Font fetches above, the two
 # @cplieger npm tarballs are NOT sha256-pinned. npm published package versions
 # are immutable (the registry refuses to re-publish an existing version), and
 # both are first-party packages fetched over pinned TLS (--proto '=https'
 # --tlsv1.2 below). The residual risk (a registry-side byte-swap or a
 # first-party npm account takeover) is accepted here; add per-package sha256
-# ARGs + `sha256sum -c` for parity with the tsgo gate if that risk is later
+# ARGs + `sha256sum -c` for parity with the tsc gate if that risk is later
 # deemed in scope (at the cost of a manual sha bump on each engine/UI release).
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.3.2
@@ -123,8 +122,8 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/no
 # Must run before the binary build because main.go's `//go:embed static`
 # captures static/ at `go build` time.
 #
-# Step 1: tsgo --project compiles app TS — tsconfig.json's outDir is
-# "../static", so tsgo writes static/app.js directly into the embed tree.
+# Step 1: tsc --project compiles app TS — tsconfig.json's outDir is
+# "../static", so tsc writes static/app.js directly into the embed tree.
 # The lib import (`@cplieger/web-terminal-ui`) is preserved in the emit as a
 # bare specifier; the browser resolves it via the importmap in
 # static/index.html.
@@ -134,8 +133,8 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/no
 # UI's bare `@cplieger/web-terminal-engine` and both packages' relative `./*.js`) are
 # preserved and resolve via the importmap + vendored dirs at runtime.
 RUN mapfile -t ui_ts < <(find static-src/node_modules/@cplieger/web-terminal-ui/src -name '*.ts') && \
-    /tmp/package/lib/tsgo --project static-src/tsconfig.json && \
-    /tmp/package/lib/tsgo \
+    /tmp/package/lib/tsc --project static-src/tsconfig.json && \
+    /tmp/package/lib/tsc \
         --module ESNext \
         --target ESNext \
         --moduleResolution bundler \
@@ -144,7 +143,7 @@ RUN mapfile -t ui_ts < <(find static-src/node_modules/@cplieger/web-terminal-ui/
         --skipLibCheck \
         --strict \
         static-src/node_modules/@cplieger/web-terminal-engine/src/*.ts && \
-    /tmp/package/lib/tsgo \
+    /tmp/package/lib/tsc \
         --module ESNext \
         --target ESNext \
         --moduleResolution bundler \
@@ -216,7 +215,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 # as vibekit). Users who want TS/Python/Go LSPs add them to their
 # tools.json with the shim pattern — see the reference config for an
 # example. This saves ~32 MB off the compressed image and eliminates
-# the daily tsgo-bump Docker rebuild churn.
+# the daily tsc-bump Docker rebuild churn.
 
 # Developer tools (gh, etc.) are installed dynamically from
 # /config/tools.json on first boot via setup-tools.sh. This lets

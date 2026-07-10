@@ -20,7 +20,7 @@
     "Pin the entry too (auto_update:false): a sha256 matches ONE artifact, so",
     "letting auto_update bump the version would break the digest match.",
     "",
-    "LSPs use the shim pattern to stay small: tsgo (TS) and pyrefly (Python)",
+    "LSPs use the shim pattern to stay small: tsc (TS) and pyrefly (Python)",
     "are single standalone binaries with NO Node runtime, shimmed as",
     "typescript-language-server / pyright. gopls (Go) additionally needs",
     "runtimes.go enabled (~190 MB) — enable BOTH lsp.gopls and runtimes.go.",
@@ -64,15 +64,15 @@
   },
   "custom": {},
   "lsp": {
-    "tsgo": {
+    "tsc": {
       "enabled": false,
       "auto_update": false,
-      "version": "7.0.0-dev.20260527.2",
+      "version": "7.0.2",
       "method": "binary",
-      "description": "TypeScript/JavaScript LSP (tsgo native preview, Go-compiled standalone binary — no Node runtime). Shimmed as typescript-language-server. Pinned: bump 'version' manually (npm-published; no in-image npm to auto-check).",
-      "install": "curl -fsSL https://registry.npmjs.org/@typescript/native-preview-linux-${ARCH_X64_OR_ARM64}/-/native-preview-linux-${ARCH_X64_OR_ARM64}-${VERSION}.tgz | tar -xz -C ${BIN} --strip-components=2 --wildcards 'package/lib/tsgo' 'package/lib/lib*.d.ts' && chmod 755 ${BIN}/tsgo",
+      "description": "TypeScript/JavaScript LSP: the TypeScript 7 native compiler (tsc, Go-compiled standalone binary — no Node runtime) from the stable `typescript` package's per-platform binary, installed as `tsc` and shimmed as typescript-language-server. Pinned: bump 'version' manually (npm-published; no in-image npm to auto-check).",
+      "install": "curl -fsSL https://registry.npmjs.org/@typescript/typescript-linux-${ARCH_X64_OR_ARM64}/-/typescript-linux-${ARCH_X64_OR_ARM64}-${VERSION}.tgz | tar -xz -C ${BIN} --strip-components=2 --wildcards 'package/lib/tsc' 'package/lib/lib*.d.ts' && chmod 755 ${BIN}/tsc",
       "primary": "typescript-language-server",
-      "shims": { "typescript-language-server": "/config/tools/bin/tsgo --lsp --stdio" }
+      "shims": { "typescript-language-server": "/config/tools/bin/tsc --lsp --stdio" }
     },
     "pyrefly": {
       "enabled": false,
