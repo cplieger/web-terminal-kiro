@@ -129,7 +129,7 @@ Web Terminal for Kiro ships kiro-cli, `git`, and base utilities. Everything else
     "golangci-lint": { "enabled": true }
   },
   "lsp": {
-    "tsgo":    { "enabled": true },             // TypeScript language server
+    "tsc":    { "enabled": true },             // TypeScript language server
     "pyrefly": { "enabled": true },             // Python language server
     "gopls":   { "enabled": true }              // Go; also enable runtimes.go above
   }

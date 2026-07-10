@@ -10,11 +10,12 @@ package main
 // same `static/` tree so `go run .` and `go build .` work without the
 // container.
 //
-// The single step runs tsgo to build the JS bundle from static-src.
+// The single step runs tsc (the TS7 native compiler, from static-src's
+// @typescript/native devDependency) to build the JS bundle from static-src.
 // The CSS bundle is concatenated by the Dockerfile at build time;
 // no go:generate step for it.
 //
-//go:generate tsgo --project static-src/tsconfig.json
+//go:generate static-src/node_modules/.bin/tsc --project static-src/tsconfig.json
 
 import (
 	"context"
@@ -29,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cplieger/slogx"
 	"github.com/cplieger/webhttp"
 )
 
@@ -89,7 +91,7 @@ func parseTrustedProxies() []*net.IPNet {
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{ReplaceAttr: utcTimeAttr})))
+	slogx.Setup(slogx.Options{})
 
 	addr := envOr("KWEB_ADDR", ":9848")
 	// Warn for any bind reachable beyond loopback (see isExposedBind): a client
@@ -190,18 +192,6 @@ func main() {
 		mgr.Shutdown()
 		os.Exit(1) //nolint:gocritic // exitAfterDefer: a failed Serve must exit non-zero; the deferred stop()/cancelBase() only release signal+context state the process exit reclaims anyway.
 	}
-}
-
-// utcTimeAttr is a slog ReplaceAttr that renders the record's built-in time
-// key in UTC, so log-line timestamps are zone-stable regardless of the
-// container's TZ (the fleet logs-in-UTC standard). It rewrites only the
-// top-level time attribute; a user attribute that happens to share the "time"
-// key inside a group is left untouched.
-func utcTimeAttr(groups []string, a slog.Attr) slog.Attr {
-	if len(groups) == 0 && a.Key == slog.TimeKey && a.Value.Kind() == slog.KindTime {
-		a.Value = slog.TimeValue(a.Value.Time().UTC())
-	}
-	return a
 }
 
 // buildHandler wraps the route mux in web-terminal-kiro's middleware stack via
