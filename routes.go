@@ -10,6 +10,7 @@ import (
 	"path"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/cplieger/web-terminal-engine/v2/terminal"
 	"github.com/cplieger/webhttp"
@@ -154,8 +155,8 @@ func classifyStatus(msg string) (string, bool) {
 // while normal use is unaffected. Each kiro-cli chat is a heavy process, so
 // bounding create churn matters. Mirrors web-terminal-server.
 const (
-	createBurst        = 6.0
-	createRefillPerSec = 1.0
+	createBurst    = 6
+	createInterval = time.Second // interval to accrue one create token
 )
 
 // createRateLimit gates POST /api/sessions (session creation) behind a shared
@@ -164,7 +165,7 @@ const (
 // unthrottled. The bucket is process-wide (it bounds aggregate create churn),
 // which is what matters when each kiro-cli chat is a heavy process.
 func createRateLimit(next http.Handler) http.Handler {
-	return webhttp.RateLimiter(createBurst, createRefillPerSec,
+	return webhttp.RateLimiter(createBurst, createInterval,
 		webhttp.WithRateLimitWhen(func(r *http.Request) bool {
 			return r.Method == http.MethodPost && r.URL.Path == "/api/sessions"
 		}),
