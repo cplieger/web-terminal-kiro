@@ -358,13 +358,13 @@ func TestCreateRateLimit(t *testing.T) {
 	}
 
 	allowed := 0
-	for range int(createBurst) {
+	for range createBurst {
 		if post() == http.StatusOK {
 			allowed++
 		}
 	}
-	if allowed != int(createBurst) {
-		t.Errorf("allowed %d creates in the burst, want %d", allowed, int(createBurst))
+	if allowed != createBurst {
+		t.Errorf("allowed %d creates in the burst, want %d", allowed, createBurst)
 	}
 	if code := post(); code != http.StatusTooManyRequests {
 		t.Errorf("create past the burst = %d, want 429", code)
