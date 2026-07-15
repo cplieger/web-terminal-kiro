@@ -26,3 +26,7 @@ go.work
 go.work.sum
 web-terminal-kiro-dev-bin
 static/vendor/
+
+# Stryker mutation-testing artifacts (weekly-stryker.yaml / local npx stryker run)
+reports/
+.stryker-tmp/
