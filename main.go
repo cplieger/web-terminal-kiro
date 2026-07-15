@@ -84,6 +84,35 @@ func parseTrustedProxies() []*net.IPNet {
 	return nets
 }
 
+// sessionCommand builds the per-session PTY command: `kiro-cli chat` behind a
+// sign-in guard. When no identity is present (`whoami` exits non-zero, verified
+// against the pinned build: 0 logged in, 1 not), the guard first runs
+// `kiro-cli login --use-device-flow` IN the terminal, then execs chat in the
+// same PTY on success.
+//
+// The device flow is the only sign-in that works here. kiro-cli's default flow
+// opens a browser on THIS host — a headless container, so the open fails and
+// chat exits, leaving a dead session (historically: a stuck loading screen and
+// a flashing "Reconnecting…" after the engine's 4001 close). Its PKCE localhost
+// callback could not be reached from the user's machine even if a browser
+// existed. The device flow instead prints a verification URL + code inline; the
+// terminal UI linkifies URLs, so the user opens it in their OWN browser (any
+// device), confirms, and the chat starts in the same tab. Method/license
+// selection stays interactive inside the TUI — nothing org-specific is baked
+// into the image.
+//
+// The script never interpolates cliPath: it is passed as $0 (the argument after
+// -c's script), so a path with spaces or shell metacharacters cannot break or
+// inject into the script.
+func sessionCommand(cliPath string) []string {
+	const script = `if ! "$0" whoami >/dev/null 2>&1; then
+printf '%s\n' 'kiro-cli is not signed in. Starting the device-flow sign-in:' 'open the URL it prints (tap or click it), confirm the code there, and the chat starts here on its own.' ''
+"$0" login --use-device-flow || exit 1
+fi
+exec "$0" chat`
+	return []string{"/bin/sh", "-c", script, cliPath}
+}
+
 func main() {
 	slogx.Setup(slogx.Options{})
 
@@ -117,7 +146,7 @@ func main() {
 
 	// Concurrent kiro-cli chat sessions (browser tabs) are uncapped, like a
 	// browser: managing tabs is the user's job.
-	cmd := []string{cliPath, "chat"}
+	cmd := sessionCommand(cliPath)
 
 	mux := http.NewServeMux()
 	var ready atomic.Bool
