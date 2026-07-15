@@ -30,19 +30,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cplieger/envx"
 	"github.com/cplieger/slogx"
 	"github.com/cplieger/webhttp"
 )
 
 //go:embed static
 var staticFS embed.FS
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 // isExposedBind reports whether addr binds beyond loopback. The wildcard forms
 // (empty host in ":9848", 0.0.0.0, ::) AND any specific routable IP (LAN/public)
@@ -93,7 +87,7 @@ func parseTrustedProxies() []*net.IPNet {
 func main() {
 	slogx.Setup(slogx.Options{})
 
-	addr := envOr("KWEB_ADDR", ":9848")
+	addr := envx.String("KWEB_ADDR", ":9848")
 	// Warn for any bind reachable beyond loopback (see isExposedBind): a client
 	// that can reach this port gets an UNAUTHENTICATED kiro-cli PTY.
 	if isExposedBind(addr) {
@@ -101,12 +95,12 @@ func main() {
 			"addr", addr,
 			"hint", "any client that can reach this port gets a kiro-cli PTY with filesystem access to /workspace and the /config home (auth tokens, ssh keys, gitconfig)")
 	}
-	cliPath := envOr("KIRO_CLI_PATH", "kiro-cli")
-	workDir := envOr("KWEB_WORK_DIR", "/workspace")
+	cliPath := envx.String("KIRO_CLI_PATH", "kiro-cli")
+	workDir := envx.String("KWEB_WORK_DIR", "/workspace")
 	// Readiness marker written by entrypoint.sh after it verifies a runnable,
 	// correctly-versioned kiro-cli. Empty outside the container (bare `go run`,
 	// tests) so /api/health keeps pure-listener readiness there.
-	kiroReadyMarker := envOr("KIRO_CLI_READY_MARKER", "")
+	kiroReadyMarker := envx.String("KIRO_CLI_READY_MARKER", "")
 
 	if fi, err := os.Stat(workDir); err != nil || !fi.IsDir() {
 		slog.Error("work directory missing or not a directory",

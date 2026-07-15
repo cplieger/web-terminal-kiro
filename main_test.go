@@ -35,33 +35,3 @@ func TestIsExposedBind(t *testing.T) {
 		})
 	}
 }
-
-// TestEnvOr_emptyEnvFallsBackToDefault pins envOr with hardcoded expectations:
-// a set, non-empty variable wins; an unset variable falls back; and a variable
-// set to the EMPTY STRING is treated as unset and also falls back. The
-// empty-string-as-unset case is the deliberate contract worth pinning: envOr's
-// `v != ""` guard treats "" the same as unset, which os.Getenv alone does not
-// express.
-func TestEnvOr_emptyEnvFallsBackToDefault(t *testing.T) {
-	const key = "WEB_TERMINAL_KIRO_ENVOR_TEST_KEY"
-	cases := []struct {
-		name  string
-		value string
-		want  string
-		set   bool
-	}{
-		{name: "set and non-empty returns the value", value: "chosen", set: true, want: "chosen"},
-		{name: "unset returns the fallback", set: false, want: "fallback"},
-		{name: "set to empty string is treated as unset", value: "", set: true, want: "fallback"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.set {
-				t.Setenv(key, tc.value)
-			}
-			if got := envOr(key, "fallback"); got != tc.want {
-				t.Errorf("envOr(%q, %q) = %q, want %q", key, "fallback", got, tc.want)
-			}
-		})
-	}
-}
