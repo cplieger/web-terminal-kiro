@@ -33,8 +33,8 @@ kiro_cli_version() {
 # chat.notificationMethod=osc9 settings set below and web-terminal-engine's
 # WithKeepUnfocused() in routes.go -- keep all four in lockstep.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.12.2"
-KIRO_CLI_SHA256="224200ace4e059bb69dada23cf78d9dbdd904de40347dfba70ea7897d8e803ca"
+KIRO_CLI_VERSION="2.12.3"
+KIRO_CLI_SHA256="0855bab3cbed04963ce595d6105209de8c113d81f4e96d5bff160cf7410ebfb2"
 
 mkdir -p "$TOOLS/bin" "$HOME/.local/bin" "$HOME/.ssh" "$HOME/.kiro" \
   || {
