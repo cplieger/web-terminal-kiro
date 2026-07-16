@@ -151,7 +151,7 @@ func main() {
 	mux := http.NewServeMux()
 	var ready atomic.Bool
 
-	mgr, err := registerRoutes(mux, &routeDeps{
+	mgr, cspPolicy, err := registerRoutes(mux, &routeDeps{
 		staticFS:        staticFS,
 		cmd:             cmd,
 		workDir:         workDir,
@@ -180,7 +180,7 @@ func main() {
 	// ordering rationale). webhttp.NewServer supplies the streaming-safe defaults
 	// (ReadHeaderTimeout 10s, IdleTimeout 120s, Read/WriteTimeout unset) that the
 	// hijacked /ws stream needs.
-	srv := webhttp.NewServer(buildHandler(mux, trustedProxies))
+	srv := webhttp.NewServer(buildHandler(mux, trustedProxies, cspPolicy))
 	srv.Addr = addr
 	// BaseContext hands every request a context we can cancel on shutdown (see
 	// the shutdown goroutine): the always-open /api/sessions/events SSE handler
@@ -239,15 +239,19 @@ func main() {
 //   - Recoverer — turns a downstream panic into a logged 500 (inside the logger
 //     so the access line records the 500, not the recorder's default 200).
 //   - SecurityHeaders — the fleet baseline (nosniff, X-Frame-Options: DENY,
-//     Referrer-Policy) on every response. No CSP: web-terminal-kiro serves an HTML
-//     terminal UI (fonts + WebSocket) and a wrong policy would silently break
-//     it. X-Frame-Options DENY is the default and is safe because web-terminal-kiro is
-//     never embedded in a frame. Placed outside CrossOriginProtection so even a
-//     rejected cross-origin request still carries the headers.
+//     Referrer-Policy) plus the app's hash-pinned Content-Security-Policy
+//     (csp, built fail-loud by buildCSPPolicy from the embedded index.html —
+//     the same script-src sha256 pinning web-terminal-server ships, closing
+//     the family-drift gap where this app served the same embedded-static +
+//     inline-importmap pattern with no CSP at all). X-Frame-Options DENY is
+//     the default and is consistent with the CSP's frame-ancestors 'none' —
+//     web-terminal-kiro is never embedded in a frame. Placed outside
+//     CrossOriginProtection so even a rejected cross-origin request still
+//     carries the headers.
 //   - CrossOriginProtection — the stdlib cross-origin/CSRF guard, kept
 //     innermost (its long-standing position directly in front of the routes) so
 //     it rejects a forged cross-origin unsafe request with 403.
-func buildHandler(mux http.Handler, trustedProxies []*net.IPNet) http.Handler {
+func buildHandler(mux http.Handler, trustedProxies []*net.IPNet, csp string) http.Handler {
 	return webhttp.Chain(mux,
 		webhttp.Logging(
 			webhttp.WithLogger(slog.Default()),
@@ -255,7 +259,7 @@ func buildHandler(mux http.Handler, trustedProxies []*net.IPNet) http.Handler {
 			webhttp.WithClientIP(trustedProxies...),
 		),
 		webhttp.Recoverer(webhttp.WithRecoverLogger(slog.Default())),
-		webhttp.SecurityHeaders(),
+		webhttp.SecurityHeaders(webhttp.WithCSP(csp)),
 		http.NewCrossOriginProtection().Handler,
 	)
 }
