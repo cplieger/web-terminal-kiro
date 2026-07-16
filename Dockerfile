@@ -107,28 +107,27 @@ RUN mkdir -p static/vendor/fonts && \
 # ARGs + `sha256sum -c` for parity with the tsc gate if that risk is later
 # deemed in scope (at the cost of a manual sha bump on each engine/UI release).
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.5.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.7.0
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
 ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=3.5.0
-# Pin gate (engine-pin-single-source): go.mod is the single source of truth
-# for the engine version — the Go server's wire protocol comes from go.mod
-# while the SERVED client bundle is built from the ARG-pinned tarballs above,
-# and nothing else fails when they disagree. Assert go.mod == engine ARG ==
-# static-src/package.json engine pin (and UI ARG == package.json UI pin, per
-# the docker-builds dev/prod parity rule) BEFORE fetching, so a manual bump
-# that misses a pin dies here with a named error instead of shipping a
-# wire-skewed client (the v1.1.3 incident: a 2.4.0 client against a 2.5.0
-# server). Renovate moves all pins in one grouped PR on the routine path;
-# this gate catches the human bypass.
-RUN ENGINE_GOMOD=$(sed -n 's|.*github\.com/cplieger/web-terminal-engine/v2 v\([^ ]*\).*|\1|p' go.mod) && \
-    ENGINE_NPM=$(sed -n 's|.*"@cplieger/web-terminal-engine": "\([^"]*\)".*|\1|p' static-src/package.json) && \
+# Pin gate (client-bundle parity): the SERVED client bundle is built from the
+# ARG-pinned npm tarballs above while static-src/package.json pins what local
+# dev compiles against — nothing else fails when they disagree, which is
+# exactly how v1.1.3 shipped a 2.4.0 client against a 2.5.0 server. Assert
+# engine ARG == package.json engine pin and UI ARG == package.json UI pin
+# (the docker-builds dev/prod parity rule) BEFORE fetching, so a manual bump
+# that misses a pin dies here with a named error. go.mod is deliberately NOT
+# compared: the engine's Go module and npm package version independently per
+# release (a Go-only release moves the tag without publishing npm, so lockstep
+# is not satisfiable); wire compatibility across the two halves is the
+# engine's own contract (wire_binary protocol version + the conformance
+# suite), not a version-string equality. Renovate moves the ARG+package.json
+# pins in one grouped PR on the routine path; this gate catches the human
+# bypass.
+RUN ENGINE_NPM=$(sed -n 's|.*"@cplieger/web-terminal-engine": "\([^"]*\)".*|\1|p' static-src/package.json) && \
     UI_NPM=$(sed -n 's|.*"@cplieger/web-terminal-ui": "\([^"]*\)".*|\1|p' static-src/package.json) && \
-    : "${ENGINE_GOMOD:?pin-gate: no web-terminal-engine/v2 require found in go.mod}" && \
     : "${ENGINE_NPM:?pin-gate: no @cplieger/web-terminal-engine pin found in static-src/package.json}" && \
     : "${UI_NPM:?pin-gate: no @cplieger/web-terminal-ui pin found in static-src/package.json}" && \
-    if [ "$ENGINE_GOMOD" != "$CPLIEGER_WEB_TERMINAL_ENGINE_VERSION" ]; then \
-      echo "ERROR engine-pin-mismatch: go.mod requires web-terminal-engine/v2 v${ENGINE_GOMOD} but Dockerfile ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION} (the served client would skew from the server wire protocol)" >&2; exit 1; \
-    fi && \
     if [ "$ENGINE_NPM" != "$CPLIEGER_WEB_TERMINAL_ENGINE_VERSION" ]; then \
       echo "ERROR engine-pin-mismatch: static-src/package.json pins @cplieger/web-terminal-engine ${ENGINE_NPM} but Dockerfile ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}" >&2; exit 1; \
     fi && \
