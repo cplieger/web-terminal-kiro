@@ -110,7 +110,32 @@ RUN mkdir -p static/vendor/fonts && \
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.5.0
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
 ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=3.5.0
-RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/node_modules/@cplieger/web-terminal-ui && \
+# Pin gate (engine-pin-single-source): go.mod is the single source of truth
+# for the engine version — the Go server's wire protocol comes from go.mod
+# while the SERVED client bundle is built from the ARG-pinned tarballs above,
+# and nothing else fails when they disagree. Assert go.mod == engine ARG ==
+# static-src/package.json engine pin (and UI ARG == package.json UI pin, per
+# the docker-builds dev/prod parity rule) BEFORE fetching, so a manual bump
+# that misses a pin dies here with a named error instead of shipping a
+# wire-skewed client (the v1.1.3 incident: a 2.4.0 client against a 2.5.0
+# server). Renovate moves all pins in one grouped PR on the routine path;
+# this gate catches the human bypass.
+RUN ENGINE_GOMOD=$(sed -n 's|.*github\.com/cplieger/web-terminal-engine/v2 v\([^ ]*\).*|\1|p' go.mod) && \
+    ENGINE_NPM=$(sed -n 's|.*"@cplieger/web-terminal-engine": "\([^"]*\)".*|\1|p' static-src/package.json) && \
+    UI_NPM=$(sed -n 's|.*"@cplieger/web-terminal-ui": "\([^"]*\)".*|\1|p' static-src/package.json) && \
+    : "${ENGINE_GOMOD:?pin-gate: no web-terminal-engine/v2 require found in go.mod}" && \
+    : "${ENGINE_NPM:?pin-gate: no @cplieger/web-terminal-engine pin found in static-src/package.json}" && \
+    : "${UI_NPM:?pin-gate: no @cplieger/web-terminal-ui pin found in static-src/package.json}" && \
+    if [ "$ENGINE_GOMOD" != "$CPLIEGER_WEB_TERMINAL_ENGINE_VERSION" ]; then \
+      echo "ERROR engine-pin-mismatch: go.mod requires web-terminal-engine/v2 v${ENGINE_GOMOD} but Dockerfile ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION} (the served client would skew from the server wire protocol)" >&2; exit 1; \
+    fi && \
+    if [ "$ENGINE_NPM" != "$CPLIEGER_WEB_TERMINAL_ENGINE_VERSION" ]; then \
+      echo "ERROR engine-pin-mismatch: static-src/package.json pins @cplieger/web-terminal-engine ${ENGINE_NPM} but Dockerfile ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}" >&2; exit 1; \
+    fi && \
+    if [ "$UI_NPM" != "$CPLIEGER_WEB_TERMINAL_UI_VERSION" ]; then \
+      echo "ERROR ui-pin-mismatch: static-src/package.json pins @cplieger/web-terminal-ui ${UI_NPM} but Dockerfile ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=${CPLIEGER_WEB_TERMINAL_UI_VERSION}" >&2; exit 1; \
+    fi && \
+    mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/node_modules/@cplieger/web-terminal-ui && \
     curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/engine.tgz "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" && \
     tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1 -f /tmp/engine.tgz && \
     rm /tmp/engine.tgz && \
@@ -192,8 +217,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 #     shared object file". Surfaced once kiro-cli >= 2.6 started
 #     exercising the code path.
 #
-# Session persistence is handled by web-terminal-kiro's own VT screen
-# (internal/vt) — the server keeps an authoritative cell buffer and
+# Session persistence is handled by the shared web-terminal-engine/v2
+# vt package — the server keeps an authoritative cell buffer and
 # replays the current snapshot on each WS reconnect. No external
 # multiplexer (tmux/dtach) is required.
 # hadolint ignore=DL3008
