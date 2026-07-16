@@ -384,7 +384,15 @@ if section_empty lsp; then printf "  (none configured)\n"; else
           FAILURES=$((FAILURES + 1))
         }
         ;;
-      *) printf "    error: unknown install method '%s'\n" "$install_method" ;;
+      *)
+        # Count the malformed manifest as a failure and skip shim creation:
+        # a shim pointing at a tool that never installed would mask the error
+        # (kiro-cli would probe a broken wrapper), and without the FAILURES
+        # bump the run would still report overall success.
+        printf "    error: unknown install method '%s'\n" "$install_method"
+        FAILURES=$((FAILURES + 1))
+        continue
+        ;;
     esac
     write_shims "$jq_path"
   done
