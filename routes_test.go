@@ -3,10 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,23 +18,27 @@ import (
 	"time"
 
 	"github.com/cplieger/web-terminal-engine/v2/terminal"
+	"github.com/cplieger/webhttp"
 )
 
-// TestDebugRoutesNotExposed pins the security posture of registerRoutes: the
-// engine's terminal handler is mounted at /ws ONLY (via mux.Handle), never via
-// term.RegisterRoutes, which would also wire the unauthenticated /debug/raw
-// (raw PTY ring) and /debug/screen (full VT buffer) on this network surface.
-// Regressing to RegisterRoutes re-opens the leak this test guards against.
+// TestDebugRoutesNotExposed pins the route surface of registerRoutes: the
+// engine's terminal.MountAPI wires exactly its documented four routes (/ws,
+// /api/sessions + subtree, /api/sessions/events), so no diagnostic or
+// engine-internal path may ever answer on this unauthenticated surface. The
+// /debug/* probes are canaries for that contract: the pinned engine exports no
+// such routes today, and if any version ever grows one, MountAPI's
+// release-noted route-set contract plus this test keep it from appearing here
+// silently.
 func TestDebugRoutesNotExposed(t *testing.T) {
 	mux := http.NewServeMux()
 	var ready atomic.Bool
 	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
 		workDir:  "",
 		cmd:      []string{"/bin/cat"},
 	}
-	mgr, err := registerRoutes(mux, deps)
+	mgr, _, err := registerRoutes(mux, deps)
 	if err != nil {
 		t.Fatalf("registerRoutes: %v", err)
 	}
@@ -58,12 +66,12 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 	mux := http.NewServeMux()
 	var ready atomic.Bool
 	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
 		workDir:  "",
 		cmd:      []string{"/bin/cat"},
 	}
-	mgr, err := registerRoutes(mux, deps)
+	mgr, _, err := registerRoutes(mux, deps)
 	if err != nil {
 		t.Fatalf("registerRoutes: %v", err)
 	}
@@ -101,13 +109,13 @@ func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
 		var ready atomic.Bool
 		ready.Store(true)
 		deps := &routeDeps{
-			staticFS:        fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+			staticFS:        fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 			ready:           &ready,
 			workDir:         "",
 			cmd:             []string{"/bin/cat"},
 			kiroReadyMarker: markerPath,
 		}
-		mgr, err := registerRoutes(mux, deps)
+		mgr, _, err := registerRoutes(mux, deps)
 		if err != nil {
 			t.Fatalf("registerRoutes: %v", err)
 		}
@@ -139,43 +147,34 @@ func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
 	}
 }
 
-// TestCacheHeaders_setsPolicyByPath pins cacheHeaders' two-branch policy:
-// files under /vendor/fonts/ are immutable for 30 days (content-addressed by
-// filename) while everything else is no-cache so deploys take effect at once.
-// The trailing slash in the prefix is load-bearing -- "/vendor/fonts-list.json"
-// must NOT be treated as a font -- and the middleware must call next in every
-// branch.
-func TestCacheHeaders_setsPolicyByPath(t *testing.T) {
+// testIndexHTML is the minimal index fixture route tests embed: it carries one
+// inline <script> (the importmap stand-in) so buildCSPPolicy — which fails
+// loud on a script-less index.html — accepts it, mirroring the real page.
+const testIndexHTML = `<!doctype html><script type="importmap">{}</script>`
+
+// TestKiroCacheControl pins the two-branch cache POLICY handed to
+// webhttp.StaticHandler (the ETag/gzip mechanism now lives in webhttp and is
+// tested there): assets under vendor/fonts/ are immutable for 30 days while
+// everything else is no-cache + must-revalidate so deploys take effect at
+// once. Paths arrive normalized (no leading slash; "index.html" for "/"), and
+// the fonts prefix's trailing slash is load-bearing -- "vendor/fonts-list.json"
+// must NOT be treated as a font.
+func TestKiroCacheControl(t *testing.T) {
 	cases := []struct {
 		name      string
-		path      string
+		assetPath string
 		wantCache string
 	}{
-		{name: "font is immutable", path: "/vendor/fonts/iosevka.woff2", wantCache: "public, max-age=2592000, immutable"},
-		{name: "nested font is immutable", path: "/vendor/fonts/sub/x.woff2", wantCache: "public, max-age=2592000, immutable"},
-		{name: "html is no-cache", path: "/index.html", wantCache: "no-cache, must-revalidate"},
-		{name: "root is no-cache", path: "/", wantCache: "no-cache, must-revalidate"},
-		{name: "js bundle is no-cache", path: "/app.js", wantCache: "no-cache, must-revalidate"},
-		{name: "vendor non-font prefix is no-cache", path: "/vendor/fonts-list.json", wantCache: "no-cache, must-revalidate"},
+		{name: "font is immutable", assetPath: "vendor/fonts/iosevka.woff2", wantCache: "public, max-age=2592000, immutable"},
+		{name: "nested font is immutable", assetPath: "vendor/fonts/sub/x.woff2", wantCache: "public, max-age=2592000, immutable"},
+		{name: "html is no-cache", assetPath: "index.html", wantCache: "no-cache, must-revalidate"},
+		{name: "js bundle is no-cache", assetPath: "app.js", wantCache: "no-cache, must-revalidate"},
+		{name: "vendor non-font prefix is no-cache", assetPath: "vendor/fonts-list.json", wantCache: "no-cache, must-revalidate"},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			called := false
-			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				called = true
-				w.WriteHeader(http.StatusOK)
-			})
-			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, tc.path, http.NoBody)
-
-			cacheHeaders(nil, next).ServeHTTP(rec, req)
-
-			if !called {
-				t.Errorf("path %q: next handler was not called", tc.path)
-			}
-			if got := rec.Header().Get("Cache-Control"); got != tc.wantCache {
-				t.Errorf("Cache-Control for %q = %q, want %q", tc.path, got, tc.wantCache)
+			if got := kiroCacheControl(tc.assetPath); got != tc.wantCache {
+				t.Errorf("kiroCacheControl(%q) = %q, want %q", tc.assetPath, got, tc.wantCache)
 			}
 		})
 	}
@@ -193,12 +192,12 @@ func TestStaticETagRevalidation(t *testing.T) {
 	mux := http.NewServeMux()
 	var ready atomic.Bool
 	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("<!doctype html>")}},
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
 		workDir:  "",
 		cmd:      []string{"/bin/cat"},
 	}
-	mgr, err := registerRoutes(mux, deps)
+	mgr, _, err := registerRoutes(mux, deps)
 	if err != nil {
 		t.Fatalf("registerRoutes: %v", err)
 	}
@@ -231,58 +230,6 @@ func TestStaticETagRevalidation(t *testing.T) {
 	}
 }
 
-// TestBuildETags_isContentAddressedSHA256 pins the content-addressing contract
-// in buildETags' godoc: the ETag is the quoted hex SHA-256 of each file's
-// CONTENT, so it changes exactly when the bundle bytes change and busts the
-// cache on deploy. TestStaticETagRevalidation only round-trips the ETag the
-// server emits, so it stays green even if buildETags hashed the path or a
-// constant; this test hashes nothing itself (digests are hardcoded) so it
-// cannot share a bug with the code under test.
-func TestBuildETags_isContentAddressedSHA256(t *testing.T) {
-	const (
-		htmlBody = "<!doctype html>\n"
-		jsBody   = "export const x = 1;\n"
-		// Quoted lowercase-hex SHA-256 of each body, precomputed offline.
-		wantHTML = `"335fca8574f060eea24ebcdae6b78f32414f5de03da1084fd0e73d710768e3a9"`
-		wantJS   = `"b40dedde60828bf61d1fadbfc3bb7ea2e0421e9511d22f1b5fb44ae5ba07dbb3"`
-	)
-	// buildETags walks the already-Sub'd tree, so keys carry no "static/" prefix.
-	sub := fstest.MapFS{
-		"index.html":  &fstest.MapFile{Data: []byte(htmlBody)},
-		"app.js":      &fstest.MapFile{Data: []byte(jsBody)},
-		"vendor/c.js": &fstest.MapFile{Data: []byte(jsBody)},
-	}
-
-	etags, err := buildETags(sub)
-	if err != nil {
-		t.Fatalf("buildETags: %v", err)
-	}
-
-	if etags["index.html"] != wantHTML {
-		t.Errorf("ETag[index.html] = %q, want %q (quoted sha256 of the file CONTENT)", etags["index.html"], wantHTML)
-	}
-	if etags["app.js"] != wantJS {
-		t.Errorf("ETag[app.js] = %q, want %q", etags["app.js"], wantJS)
-	}
-	// Identical bytes under a different path must hash identically -- this is
-	// what dies when a mutant hashes the path instead of the content.
-	if etags["vendor/c.js"] != wantJS {
-		t.Errorf("ETag[vendor/c.js] = %q, want %q (same bytes as app.js must hash identically)", etags["vendor/c.js"], wantJS)
-	}
-	// Distinct contents must differ, or a deploy that changes the bundle would
-	// not bust the cache.
-	if etags["index.html"] == etags["app.js"] {
-		t.Errorf("distinct contents shared ETag %q; the cache would never bust on deploy", etags["index.html"])
-	}
-	// Directories get no entry (the d.IsDir() guard).
-	if _, ok := etags["vendor"]; ok {
-		t.Error(`directory "vendor" got an ETag entry; buildETags must skip directories`)
-	}
-	if _, ok := etags["."]; ok {
-		t.Error(`root "." got an ETag entry; buildETags must skip directories`)
-	}
-}
-
 // TestSSEStreamsThroughLoggingMiddleware is the regression guard for the tab
 // status stream behind web-terminal-kiro's own middleware. webhttp.Logging wraps most
 // requests in a webhttp.StatusRecorder; if the SSE path were wrapped by
@@ -299,12 +246,12 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	var ready atomic.Bool
 	ready.Store(true)
 	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
 		workDir:  "",
 		cmd:      []string{"/bin/cat"},
 	}
-	mgr, err := registerRoutes(mux, deps)
+	mgr, csp, err := registerRoutes(mux, deps)
 	if err != nil {
 		t.Fatalf("registerRoutes: %v", err)
 	}
@@ -314,7 +261,7 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	srv := httptest.NewServer(buildHandler(mux, nil))
+	srv := httptest.NewServer(buildHandler(mux, nil, csp))
 	t.Cleanup(srv.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -340,17 +287,23 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	t.Fatalf("SSE stream delivered no data through the logging middleware (scan err: %v)", sc.Err())
 }
 
+// sessionCreateBurst pins the burst of webhttp.SessionCreateRateLimit as THIS
+// app's documented contract (six creates, then 429). A deliberate tuning
+// change in the shared preset fails this test loudly so the app's docs and
+// expectations are updated consciously rather than drifting silently.
+const sessionCreateBurst = 6
+
 // TestCreateRateLimit pins the create throttle: a burst of POST /api/sessions is
 // allowed, then further creates are 429'd, while GET (list) is never limited. It
-// exercises createRateLimit directly with a stub so it does not fork real
-// kiro-cli processes.
+// exercises the shared preset exactly as registerRoutes wires it, with a stub
+// next handler so it does not fork real kiro-cli processes.
 func TestCreateRateLimit(t *testing.T) {
 	var restHit atomic.Bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		restHit.Store(true)
 		w.WriteHeader(http.StatusOK)
 	})
-	h := createRateLimit(next)
+	h := webhttp.SessionCreateRateLimit("/api/sessions")(next)
 	post := func() int {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
@@ -358,13 +311,13 @@ func TestCreateRateLimit(t *testing.T) {
 	}
 
 	allowed := 0
-	for range createBurst {
+	for range sessionCreateBurst {
 		if post() == http.StatusOK {
 			allowed++
 		}
 	}
-	if allowed != createBurst {
-		t.Errorf("allowed %d creates in the burst, want %d", allowed, createBurst)
+	if allowed != sessionCreateBurst {
+		t.Errorf("allowed %d creates in the burst, want %d", allowed, sessionCreateBurst)
 	}
 	if code := post(); code != http.StatusTooManyRequests {
 		t.Errorf("create past the burst = %d, want 429", code)
@@ -395,19 +348,19 @@ func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 	var ready atomic.Bool
 	ready.Store(true)
 	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
 		workDir:  "",
 		cmd:      []string{"/bin/cat"},
 	}
-	mgr, err := registerRoutes(mux, deps)
+	mgr, csp, err := registerRoutes(mux, deps)
 	if err != nil {
 		t.Fatalf("registerRoutes: %v", err)
 	}
 	t.Cleanup(mgr.Shutdown)
 
 	rec := httptest.NewRecorder()
-	buildHandler(mux, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+	buildHandler(mux, nil, csp).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/health: status = %d, want %d", rec.Code, http.StatusOK)
@@ -421,11 +374,95 @@ func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 			t.Errorf("%s = %q, want %q", tc.header, got, tc.want)
 		}
 	}
-	// No CSP by design: SecurityHeaders() is used without WithCSP so the
-	// terminal UI's fonts and WebSocket are not gated by a policy web-terminal-kiro would
-	// have to keep in lockstep with the vendored UI bundle.
-	if got := rec.Header().Get("Content-Security-Policy"); got != "" {
-		t.Errorf("Content-Security-Policy = %q, want unset (no CSP by design)", got)
+	// The CSP is hash-pinned from the embedded index.html (buildCSPPolicy via
+	// webhttp.InlineScriptHashes): script-src carries 'self' plus at least one
+	// sha256 token and never 'unsafe-inline'; style-src keeps 'unsafe-inline'
+	// for the renderer's per-cell styles. This closed the family-drift gap
+	// where web-terminal-kiro served the same embedded-static + inline-importmap
+	// pattern as web-terminal-server with no CSP at all.
+	servedCSP := rec.Header().Get("Content-Security-Policy")
+	if servedCSP == "" {
+		t.Fatal("Content-Security-Policy is unset; the hash-pinned policy must be served on every response")
+	}
+	if !strings.Contains(servedCSP, "script-src 'self' 'sha256-") {
+		t.Errorf("CSP script-src = %q, want 'self' plus a pinned sha256 token", servedCSP)
+	}
+	if strings.Contains(servedCSP, "script-src 'self' 'unsafe-inline'") {
+		t.Errorf("CSP = %q, want script-src without 'unsafe-inline'", servedCSP)
+	}
+	for _, want := range []string{
+		"default-src 'self'", "style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data:", "connect-src 'self'", "frame-ancestors 'none'",
+	} {
+		if !strings.Contains(servedCSP, want) {
+			t.Errorf("CSP = %q, want it to contain %q", servedCSP, want)
+		}
+	}
+}
+
+// TestCSPScriptHashesMatchEmbeddedInlineScripts is the anti-drift guard for
+// the script-src hardening, ported from web-terminal-server: it independently
+// re-extracts every inline <script> in the REAL embedded index.html with a
+// regexp (a different implementation from webhttp's byte scanner, so agreement
+// is a genuine cross-check) and asserts the sha256 hash of each appears in the
+// CSP buildCSPPolicy assembles. Hashes are computed from the embed, never
+// hardcoded, so the test tracks index.html automatically.
+func TestCSPScriptHashesMatchEmbeddedInlineScripts(t *testing.T) {
+	indexHTML, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read embedded static/index.html: %v", err)
+	}
+	sub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		t.Fatalf("fs.Sub: %v", err)
+	}
+	csp, err := buildCSPPolicy(sub)
+	if err != nil {
+		t.Fatalf("buildCSPPolicy: %v", err)
+	}
+
+	scriptRE := regexp.MustCompile(`(?is)<script\b([^>]*)>(.*?)</script\s*>`)
+	srcRE := regexp.MustCompile(`(?i)(^|[\s/])src\s*=`)
+
+	found := 0
+	for _, m := range scriptRE.FindAllSubmatch(indexHTML, -1) {
+		if srcRE.Match(m[1]) {
+			continue // external script (/app.js), covered by 'self'
+		}
+		found++
+		sum := sha256.Sum256(m[2])
+		token := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+		if !strings.Contains(csp, token) {
+			t.Errorf("CSP is missing the hash for an inline script.\ncontent=%q\nwant token %s\nCSP: %s", m[2], token, csp)
+		}
+	}
+	if found < 1 {
+		t.Fatalf("oracle found %d inline scripts in index.html, want >= 1 (the importmap); the regexp or the file changed", found)
+	}
+}
+
+// TestBuildCSPPolicyFailsLoud pins the fail-loud contract: buildCSPPolicy
+// returns an error (never a silent 'unsafe-inline' degrade) when the static FS
+// is nil, index.html is missing, or index.html holds no inline <script>. A
+// production build always embeds index.html with its inline importmap, so any
+// of these means a malformed build that must abort startup.
+func TestBuildCSPPolicyFailsLoud(t *testing.T) {
+	cases := []struct {
+		name string
+		fsys fs.FS
+	}{
+		{"nil FS", nil},
+		{"missing index.html", fstest.MapFS{}},
+		{"only external scripts", fstest.MapFS{
+			"index.html": &fstest.MapFile{Data: []byte(`<html><body><script src="/app.js"></script></body></html>`)},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := buildCSPPolicy(tc.fsys); err == nil {
+				t.Errorf("buildCSPPolicy(%s) = nil error, want a fail-loud error", tc.name)
+			}
+		})
 	}
 }
 
@@ -443,12 +480,12 @@ func TestWSRejectsCrossOrigin(t *testing.T) {
 	var ready atomic.Bool
 	ready.Store(true)
 	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
 		workDir:  "",
 		cmd:      []string{"/bin/cat"},
 	}
-	mgr, err := registerRoutes(mux, deps)
+	mgr, csp, err := registerRoutes(mux, deps)
 	if err != nil {
 		t.Fatalf("registerRoutes: %v", err)
 	}
@@ -462,7 +499,7 @@ func TestWSRejectsCrossOrigin(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	srv := httptest.NewServer(buildHandler(mux, nil))
+	srv := httptest.NewServer(buildHandler(mux, nil, csp))
 	t.Cleanup(srv.Close)
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/ws?session="+id, http.NoBody)
@@ -492,12 +529,12 @@ func TestWSAcceptsSameOrigin(t *testing.T) {
 	var ready atomic.Bool
 	ready.Store(true)
 	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
 		workDir:  "",
 		cmd:      []string{"/bin/cat"},
 	}
-	mgr, err := registerRoutes(mux, deps)
+	mgr, csp, err := registerRoutes(mux, deps)
 	if err != nil {
 		t.Fatalf("registerRoutes: %v", err)
 	}
@@ -507,7 +544,7 @@ func TestWSAcceptsSameOrigin(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	srv := httptest.NewServer(buildHandler(mux, nil))
+	srv := httptest.NewServer(buildHandler(mux, nil, csp))
 	t.Cleanup(srv.Close)
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/ws?session="+id, http.NoBody)
@@ -568,13 +605,13 @@ func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
 		var r atomic.Bool
 		r.Store(ready)
 		deps := &routeDeps{
-			staticFS:        fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte("ok")}},
+			staticFS:        fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 			ready:           &r,
 			workDir:         "",
 			cmd:             []string{"/bin/cat"},
 			kiroReadyMarker: markerPath,
 		}
-		mgr, err := registerRoutes(mux, deps)
+		mgr, _, err := registerRoutes(mux, deps)
 		if err != nil {
 			t.Fatalf("registerRoutes: %v", err)
 		}

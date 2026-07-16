@@ -1,16 +1,14 @@
 package main
 
 import (
-	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
-	"path"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/cplieger/web-terminal-engine/v2/terminal"
 	"github.com/cplieger/webhttp"
@@ -29,16 +27,31 @@ type routeDeps struct {
 	cmd             []string
 }
 
-func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManager, error) {
+// registerRoutes wires the full route table on mux and returns the session
+// manager (for shutdown) plus the hash-pinned CSP policy string built from the
+// embedded index.html (for buildHandler's SecurityHeaders layer) — both derive
+// from the same static tree, so they are assembled together, fail-loud.
+func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManager, string, error) {
 	sub, err := fs.Sub(deps.staticFS, "static")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	etags, err := buildETags(sub)
+	cspPolicy, err := buildCSPPolicy(sub)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	mux.Handle("/", cacheHeaders(etags, http.FileServer(http.FS(sub))))
+	// webhttp.StaticHandler supplies the embedded-static mechanism (per-file
+	// content-hash ETags — embed.FS reports a zero ModTime, so a bare
+	// http.FileServer emits no validator and every load re-downloads the
+	// bundle — plus precomputed gzip and Vary: Accept-Encoding); the per-path
+	// cache POLICY stays this app's (kiroCacheControl below). Same helper as
+	// web-terminal-server, so the two family shells cannot drift on the
+	// mechanism again.
+	staticSrv, err := webhttp.StaticHandler(sub, webhttp.WithStaticCacheControl(kiroCacheControl))
+	if err != nil {
+		return nil, "", err
+	}
+	mux.Handle("/", staticSrv)
 
 	// factory builds one kiro-cli chat session per tab: an independent PTY-backed
 	// process (deps.cmd = kiro-cli chat) with its own VT screen and scrollback, so
@@ -71,23 +84,17 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 		terminal.WithStatusClassifier(classifyStatus),
 	)
 
-	// Mount only /ws (the session WebSocket, dispatched on ?session=<id>). As with
-	// the previous single-handler setup we deliberately do NOT expose the engine's
-	// /debug/raw (raw PTY ring) or /debug/screen (full VT buffer) on this
-	// unauthenticated surface. Same posture as web-terminal-server.
-	mux.Handle("/ws", mgr.WebSocketHandler())
-
-	// Session REST API. createRateLimit gates POST /api/sessions so a caller
-	// cannot fork kiro-cli processes without bound (the limiter bounds create
-	// churn); a kiro-cli chat is heavy, so this matters more here than for a
-	// plain shell. Mounted at the exact path and the subtree so /api/sessions and
-	// /api/sessions/{id} both route.
-	limitedREST := createRateLimit(mgr.RESTHandler())
-	mux.Handle("/api/sessions", limitedREST)
-	mux.Handle("/api/sessions/", limitedREST)
-	// The status SSE is a more specific path than the REST subtree, so the mux
-	// routes it here rather than to the REST DELETE /{id} pattern.
-	mux.Handle("/api/sessions/events", mgr.EventsHandler())
+	// The engine owns its route topology: MountAPI wires exactly its documented
+	// set — /ws, /api/sessions (+ subtree), /api/sessions/events — and nothing
+	// else, so no engine-internal route can appear on this unauthenticated
+	// surface unannounced. The create gate rides webhttp's shared
+	// session-create preset (burst 6, 1/s refill, standard 429 envelope): a
+	// caller cannot fork kiro-cli processes without bound — a kiro-cli chat is
+	// heavy, so this matters more here than for a plain shell — and this app
+	// cannot drift from web-terminal-server on tuning, path, or envelope. The
+	// topology lives in the engine, the throttle policy in webhttp; this app
+	// just composes the two.
+	mgr.MountAPI(mux, terminal.WithCreateGate(webhttp.SessionCreateRateLimit(terminal.SessionsPath)))
 
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
 		unready := func(reason string) {
@@ -120,7 +127,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 		webhttp.WriteJSON(w, map[string]string{"status": "ok"})
 	})
 
-	return mgr, nil
+	return mgr, cspPolicy, nil
 }
 
 // classifyStatus maps kiro-cli's OSC 9 notification text to a latched session
@@ -150,56 +157,10 @@ func classifyStatus(msg string) (string, bool) {
 	}
 }
 
-// Create-rate-limit tuning: a token bucket with a small burst (open several tabs
-// at once) refilling at a steady rate, so sustained create churn is throttled
-// while normal use is unaffected. Each kiro-cli chat is a heavy process, so
-// bounding create churn matters. Mirrors web-terminal-server.
-const (
-	createBurst    = 6
-	createInterval = time.Second // interval to accrue one create token
-)
-
-// createRateLimit gates POST /api/sessions (session creation) behind a shared
-// token bucket via webhttp.RateLimiter, so a caller cannot fork kiro-cli
-// processes without bound; list (GET) and close (DELETE) pass through
-// unthrottled. The bucket is process-wide (it bounds aggregate create churn),
-// which is what matters when each kiro-cli chat is a heavy process.
-func createRateLimit(next http.Handler) http.Handler {
-	return webhttp.RateLimiter(createBurst, createInterval,
-		webhttp.WithRateLimitWhen(func(r *http.Request) bool {
-			return r.Method == http.MethodPost && r.URL.Path == "/api/sessions"
-		}),
-		webhttp.WithRateLimitError("rate_limited", "session creation rate exceeded"),
-	)(next)
-}
-
-// buildETags walks the embedded static tree once and computes a stable
-// content-hash ETag per file. embed.FS reports a zero ModTime, so
-// http.FileServer emits no validator on its own; precomputing a hash gives
-// http.ServeContent an If-None-Match target so unchanged assets answer 304
-// instead of re-downloading on every load.
-func buildETags(sub fs.FS) (map[string]string, error) {
-	etags := make(map[string]string)
-	err := fs.WalkDir(sub, ".", func(p string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			return nil
-		}
-		b, readErr := fs.ReadFile(sub, p)
-		if readErr != nil {
-			return readErr
-		}
-		sum := sha256.Sum256(b)
-		etags[p] = fmt.Sprintf(`"%x"`, sum[:])
-		return nil
-	})
-	return etags, err
-}
-
-// cacheHeaders applies cache policy:
-//   - fonts (/vendor/fonts/**): immutable, 30 days. The Monaspace .otf
+// kiroCacheControl is the per-asset Cache-Control policy handed to
+// webhttp.StaticHandler (which supplies the ETag/gzip mechanism; asset paths
+// arrive normalized, no leading slash):
+//   - fonts (vendor/fonts/**): immutable, 30 days. The Monaspace .otf
 //     files are large (~2.4 MB each, ~9.4 MB total) and their glyphs are
 //     fixed for a given vendored web-terminal-ui version, so immutable
 //     avoids re-downloading them on every visit. CAVEAT: the filenames
@@ -208,29 +169,58 @@ func buildETags(sub fs.FS) (map[string]string, error) {
 //     filename is served stale for up to 30 days. A font swap must change
 //     the path/filename (or hash it at vendor time) to bust the cache.
 //   - everything else (HTML/JS/CSS, ~1–30 KB modules): no-cache +
-//     must-revalidate so deployments take effect immediately. A per-file
-//     content-hash ETag (precomputed by buildETags) is set so unchanged
-//     files revalidate with a cheap 304 (no re-download): embed.FS reports
-//     a zero ModTime, so http.ServeContent emits no Last-Modified validator
-//     on its own and would otherwise re-send the full body on every load.
-//     The hash changes only when the bundle bytes change, busting the cache
+//     must-revalidate so deployments take effect immediately. The helper's
+//     content-hash ETag lets unchanged files revalidate with a cheap 304;
+//     the hash changes only when the bundle bytes change, busting the cache
 //     exactly on a deploy and keeping the TS engine bundle in lockstep with
 //     the server wire protocol.
-func cacheHeaders(etags map[string]string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasPrefix(r.URL.Path, "/vendor/fonts/"):
-			w.Header().Set("Cache-Control", "public, max-age=2592000, immutable")
-		default:
-			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
-			name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-			if name == "" {
-				name = "index.html"
-			}
-			if etag, ok := etags[name]; ok {
-				w.Header().Set("ETag", etag)
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
+func kiroCacheControl(assetPath string) string {
+	if strings.HasPrefix(assetPath, "vendor/fonts/") {
+		return "public, max-age=2592000, immutable"
+	}
+	return "no-cache, must-revalidate"
+}
+
+// cspTemplate is the Content-Security-Policy applied to every response, with a
+// single %s placeholder for the script-src hash tokens. It is deliberately the
+// SAME policy shape as web-terminal-server's (both apps serve the same
+// engine/UI bundle, so their needs are identical):
+//
+//	style-src 'unsafe-inline'  the terminal renderer sets dynamic per-cell
+//	                           inline style attributes (and index.html carries
+//	                           an inline loading-overlay <style>)
+//	img-src 'self' data:        favicon/icon data URIs
+//	connect-src 'self'          same-origin HTTP + the /ws WebSocket PTY
+//	frame-ancestors 'none'      blocks clickjacking of the interactive terminal
+const cspTemplate = "default-src 'self'; " +
+	"script-src 'self' %s; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; font-src 'self'; connect-src 'self'; " +
+	"frame-ancestors 'none'; base-uri 'none'; object-src 'none'; " +
+	"form-action 'none'"
+
+// buildCSPPolicy reads index.html from sub, hashes every inline <script> in it
+// (via webhttp.InlineScriptHashes — the byte-precise scanner that hashes
+// exactly the content a browser hashes), and assembles the full CSP string.
+// web-terminal-kiro's index.html carries ONE inline script, the importmap; the
+// external /app.js module is covered by script-src 'self'. FAIL LOUD: a
+// malformed build — a nil FS, an unreadable index.html, or zero inline scripts
+// — aborts startup rather than silently dropping the script-src hardening or
+// serving a hash set that would block the importmap and break ES module
+// loading. (This ports web-terminal-server's hash-pinned CSP; web-terminal-kiro
+// previously shipped no CSP at all — the family-drift item the 2026-07
+// judgement run flagged.)
+func buildCSPPolicy(sub fs.FS) (string, error) {
+	if sub == nil {
+		return "", errors.New("buildCSPPolicy: nil static FS")
+	}
+	html, err := fs.ReadFile(sub, "index.html")
+	if err != nil {
+		return "", fmt.Errorf("buildCSPPolicy: read index.html: %w", err)
+	}
+	hashes := webhttp.InlineScriptHashes(html)
+	if len(hashes) == 0 {
+		return "", errors.New("buildCSPPolicy: no inline <script> blocks in index.html")
+	}
+	return fmt.Sprintf(cspTemplate, strings.Join(hashes, " ")), nil
 }

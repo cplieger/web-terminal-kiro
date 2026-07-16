@@ -153,8 +153,10 @@ func TestBuildHandlerClientIPThreading(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/probe", http.NoBody)
 			req.Header.Set("X-Forwarded-For", xffIP)
 			// Synchronous ServeHTTP: the deferred access-log line fires before it
-			// returns, so buf is populated with no goroutine race.
-			buildHandler(mux, tc.trusted).ServeHTTP(httptest.NewRecorder(), req)
+			// returns, so buf is populated with no goroutine race. The CSP value
+			// is irrelevant to client-IP resolution; a fixed policy keeps the
+			// stack shape production-true.
+			buildHandler(mux, tc.trusted, "default-src 'self'").ServeHTTP(httptest.NewRecorder(), req)
 
 			want := "client_ip=" + tc.wantIP
 			if !strings.Contains(buf.String(), want) {
