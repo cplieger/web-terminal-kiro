@@ -1,0 +1,36 @@
+# Tool names the compiled catalog MUST resolve, verified at image build
+# by `toolcatalog verify` (a gap fails the build instead of a boot job).
+# Two groups:
+#
+# 1. The shipped seed templates (toolbelt.DefaultSeed): the disabled
+#    LSP trio + gh that first-boot manifests carry.
+# 2. The borgcube migration manifest's catalog-backed entries (the v1
+#    toolbox re-add, docs/migration). Entries with explicit sources in
+#    the migration manifest (npm:html-validate, npm:stylelint,
+#    npm:puppeteer, manual codeql) need no catalog entry and are NOT
+#    listed here.
+#
+# seed
+gopls
+tsc-native
+pyrefly
+gh
+# backend runtimes (auto-adopted dependencies)
+go
+node
+uv
+# migration manifest (catalog-backed)
+actionlint
+age
+dive
+gitleaks
+golangci-lint
+grype
+hadolint
+shellcheck
+shfmt
+staticcheck
+syft
+trivy
+yamllint
+yq

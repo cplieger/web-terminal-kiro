@@ -81,6 +81,43 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
 
+# Compile the tool catalog: install knowledge for ~700 tools joined from
+# the mise registry (names, descriptions; MIT) and the aqua registry
+# (binary install definitions with checksum sources; MIT) by the
+# toolbelt toolcatalog lane (its embedded base overlays add runtimes,
+# forge CLIs, and the language-server entries with their shims). The
+# verify pass asserts every required-tools.txt name resolves to usable
+# install knowledge for linux amd64+arm64, so a registry-ref bump that
+# drops a seed or migration tool FAILS THE BUILD here instead of a boot
+# job on the box. The catalog freezes per image tag; tool versions still
+# resolve live at install time.
+# renovate: datasource=github-releases depName=jdx/mise
+ARG MISE_REGISTRY_REF=v2026.7.7
+# renovate: datasource=github-releases depName=aquaproj/aqua-registry
+ARG AQUA_REGISTRY_REF=v4.538.1
+# renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog
+ARG TOOLBELT_TOOLCATALOG_VERSION=v1.1.0
+# hadolint ignore=DL3062
+RUN mkdir -p /tmp/registries && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" \
+      | tar -xz -C /tmp/registries && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "https://codeload.github.com/aquaproj/aqua-registry/tar.gz/refs/tags/${AQUA_REGISTRY_REF}" \
+      | tar -xz -C /tmp/registries && \
+    go run "github.com/cplieger/toolbelt/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
+      -mise "/tmp/registries/mise-${MISE_REGISTRY_REF#v}/registry" \
+      -aqua "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/pkgs" \
+      -refs "mise=${MISE_REGISTRY_REF},aqua=${AQUA_REGISTRY_REF}" \
+      -out /tmp/tool-catalog.json && \
+    go run "github.com/cplieger/toolbelt/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
+      verify -catalog /tmp/tool-catalog.json -require required-tools.txt && \
+    # MIT requires the copyright + permission notice to travel with
+    # copies/substantial portions; the compiled catalog embeds data
+    # derived from both registries, so ship both license texts.
+    mkdir -p /tmp/catalog-licenses && \
+    cp "/tmp/registries/mise-${MISE_REGISTRY_REF#v}/LICENSE" /tmp/catalog-licenses/LICENSE.mise && \
+    cp "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/LICENSE" /tmp/catalog-licenses/LICENSE.aqua-registry && \
+    rm -rf /tmp/registries
+
 # Fetch Nerd Font for the monospace terminal display.
 RUN mkdir -p static/vendor/fonts && \
     curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/mona.tar.xz \
@@ -107,9 +144,9 @@ RUN mkdir -p static/vendor/fonts && \
 # ARGs + `sha256sum -c` for parity with the tsc gate if that risk is later
 # deemed in scope (at the cost of a manual sha bump on each engine/UI release).
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.7.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.8.0
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=3.5.0
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=4.0.0
 # Pin gate (client-bundle parity): the SERVED client bundle is built from the
 # ARG-pinned npm tarballs above while static-src/package.json pins what local
 # dev compiles against — nothing else fails when they disagree, which is
@@ -234,24 +271,27 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Language servers are no longer baked into the image. They install
-# on-demand via setup-tools.sh from /config/tools.json (same mechanism
-# as vibekit). Users who want TS/Python/Go LSPs add them to their
-# tools.json with the shim pattern — see the reference config for an
-# example. This saves ~32 MB off the compressed image and eliminates
-# the daily tsc-bump Docker rebuild churn.
-
-# Developer tools (gh, etc.) are installed dynamically from
-# /config/tools.json on first boot via setup-tools.sh. This lets
-# users customize their toolset without rebuilding the image.
+# Language servers and developer tools (gh, linters, runtimes) are NOT
+# baked into the image: the server's toolbelt engine installs them from
+# the /config/tools.json manifest (schema v2) against the image-baked
+# catalog. First boot seeds disabled templates (gopls, tsc-native,
+# pyrefly, gh) — enable one by flipping "disabled": false and
+# restarting, or through the loopback tools API. This keeps the image
+# ~32 MB slimmer and free of the daily LSP-bump rebuild churn.
 
 # kiro-cli installs under $HOME/.local. Home is under /config so the
 # install survives container restarts.
 ENV HOME=/config/home
+# PATH leads with the engine-managed bin dir. The legacy segments
+# (tools/go/bin, runtimes/{go,node}/bin) are retained for volumes whose
+# binaries predate the toolbelt engine; prune them once a startup audit
+# shows no binary resolves only through them (evidence-gated, not
+# release-count-gated). GOROOT/GOBIN are gone: the engine installs Go
+# under versioned opt/go/<ver>/ trees with a bin/go symlink and the
+# toolchain derives GOROOT itself; go-installed tools land in the bin
+# dir via the engine's own GOBIN env at install time.
 ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/tools/runtimes/go/bin:/config/tools/runtimes/node/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ENV GOROOT="/config/tools/runtimes/go"
 ENV GOPATH="/config/tools/go"
-ENV GOBIN="/config/tools/go/bin"
 ENV KIRO_CLI_PATH=/config/tools/bin/kiro-cli
 ENV KWEB_WORK_DIR=/workspace
 ENV KWEB_ADDR=:9848
@@ -263,21 +303,21 @@ ENV KWEB_ADDR=:9848
 RUN sed -i 's|^root:x:0:0:root:/root:|root:x:0:0:root:/config/home:|' /etc/passwd
 
 COPY --from=builder /web-terminal-kiro /app/web-terminal-kiro
+COPY --from=builder /tmp/tool-catalog.json /app/tool-catalog.json
+COPY --from=builder /tmp/catalog-licenses /app/catalog-licenses
 COPY --chmod=755 entrypoint.sh /opt/web-terminal-kiro/entrypoint.sh
-COPY --chmod=755 setup-tools.sh /opt/web-terminal-kiro/setup-tools.sh
-COPY tools.json /opt/web-terminal-kiro/tools.json
 
 WORKDIR /workspace
 EXPOSE 9848
 
-# start-period is sized for the default (all tools disabled in tools.json) boot:
-# kiro-cli download only. entrypoint.sh runs setup-tools.sh FOREGROUND before the
-# server binds, and each tool install is budgeted up to INSTALL_TIMEOUT=600s, so a
-# host that enables heavy installs (e.g. the ~190 MB Go runtime) can exceed this
-# window. Under `restart: unless-stopped` the container just shows a transient
-# "unhealthy" and self-heals; under a liveness-acting orchestrator, raise
-# start-period (compose healthcheck override) to cover the enabled tools' install
-# time.
+# start-period covers the first-boot kiro-cli download window only. The
+# server binds BEFORE tool installs (the toolbelt engine converges in
+# the background; only session creation waits on it), so /api/health is
+# reachable throughout even a long install window — it reports the
+# install state in the informational "tools" field without going
+# unhealthy. Under `restart: unless-stopped` a transient unhealthy
+# self-heals; under a liveness-acting orchestrator, wire /api/health to
+# a readinessProbe.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=180s \
     CMD curl -sf http://127.0.0.1:9848/api/health || exit 1
 

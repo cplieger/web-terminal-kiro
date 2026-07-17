@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/cplieger/toolbelt"
 	"github.com/cplieger/web-terminal-engine/v2/terminal"
 	"github.com/cplieger/webhttp"
 )
@@ -636,5 +638,153 @@ func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
 	code, b = body(newMux(true, filepath.Join(t.TempDir(), ".absent")))
 	if code != http.StatusServiceUnavailable || !strings.Contains(b, "kiro-cli unavailable") {
 		t.Errorf("kiro-cli-absent: (status %d, body %q), want 503 with reason %q", code, b, "kiro-cli unavailable")
+	}
+}
+
+// newToolsDeps builds routeDeps with a real toolbelt engine on temp dirs
+// (no catalog: search degrades, installs would fail — irrelevant here,
+// these tests exercise the HTTP boundary, not installs).
+func newToolsDeps(t *testing.T) *routeDeps {
+	t.Helper()
+	dir := t.TempDir()
+	eng, err := toolbelt.New(&toolbelt.Config{
+		ConfigDir: dir,
+		ToolsDir:  filepath.Join(dir, "tools"),
+	})
+	if err != nil {
+		t.Fatalf("toolbelt.New: %v", err)
+	}
+	t.Cleanup(eng.Close)
+	var ready atomic.Bool
+	ready.Store(true)
+	return &routeDeps{
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
+		ready:    &ready,
+		workDir:  "",
+		cmd:      []string{"/bin/cat"},
+		tools:    eng,
+	}
+}
+
+// TestToolsAPI_LoopbackOnly pins the tools API's only boundary on this
+// unauthenticated port: the SOCKET PEER must be loopback. A remote peer
+// gets 403 regardless of headers (forwarded headers are client-controlled
+// and deliberately ignored); the in-container consumer (curl localhost)
+// passes and reads the inventory.
+func TestToolsAPI_LoopbackOnly(t *testing.T) {
+	mux := http.NewServeMux()
+	deps := newToolsDeps(t)
+	mgr, _, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
+
+	// Remote peer: refused, even claiming loopback via forwarded headers.
+	req := httptest.NewRequest(http.MethodGet, "/api/tools", http.NoBody)
+	req.RemoteAddr = "203.0.113.9:44321"
+	req.Header.Set("X-Forwarded-For", "127.0.0.1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("remote peer: status = %d, want 403 (body %s)", rec.Code, rec.Body.String())
+	}
+
+	// Loopback peer: served. The fresh engine has an empty manifest, so
+	// the inventory decodes with zero tools.
+	req = httptest.NewRequest(http.MethodGet, "/api/tools", http.NoBody)
+	req.RemoteAddr = "127.0.0.1:55555"
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("loopback peer: status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var inv struct {
+		Tools []struct{} `json:"tools"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &inv); err != nil {
+		t.Fatalf("inventory decode: %v", err)
+	}
+	if len(inv.Tools) != 0 {
+		t.Fatalf("fresh inventory = %d tools, want 0", len(inv.Tools))
+	}
+
+	// IPv6 loopback passes too.
+	req = httptest.NewRequest(http.MethodGet, "/api/tools", http.NoBody)
+	req.RemoteAddr = "[::1]:55555"
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ipv6 loopback peer: status = %d, want 200", rec.Code)
+	}
+}
+
+// TestToolsAPI_AbsentWithoutEngine pins the no-engine shape (bare `go run`
+// / tests outside the container): /api/tools is simply not a registered
+// pattern, falling through to the static catch-all.
+func TestToolsAPI_AbsentWithoutEngine(t *testing.T) {
+	mux := http.NewServeMux()
+	var ready atomic.Bool
+	deps := &routeDeps{
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
+		ready:    &ready,
+		workDir:  "",
+		cmd:      []string{"/bin/cat"},
+	}
+	mgr, _, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
+	if _, pat := mux.Handler(httptest.NewRequest(http.MethodGet, "/api/tools", http.NoBody)); pat == "/api/tools" {
+		t.Fatal("/api/tools registered without a tools engine")
+	}
+}
+
+// TestSessionCreateGate_ToolsSyncing pins the boot-convergence session
+// gate: while the tools reconcile runs, POST /api/sessions answers 503
+// ("tools installing") so the first kiro-cli never spawns before the
+// manifest's tools are on PATH; once the gate lifts, creation flows
+// through to the engine (and its rate limit) again. Health and the tools
+// API stay reachable throughout — that is the bind-first point.
+func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
+	mux := http.NewServeMux()
+	deps := newToolsDeps(t)
+	var syncing atomic.Bool
+	syncing.Store(true)
+	deps.toolsSyncing = syncing.Load
+	deps.toolsState = func() string { return "syncing" }
+	mgr, _, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
+
+	create := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader("{}"))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := create(); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("create during sync: status = %d, want 503 (body %s)", rec.Code, rec.Body.String())
+	} else if !strings.Contains(rec.Body.String(), "tools installing") {
+		t.Fatalf("create during sync: body %q missing the reason", rec.Body.String())
+	}
+
+	// Health stays reachable and reports the informational tools state.
+	hreq := httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody)
+	hrec := httptest.NewRecorder()
+	mux.ServeHTTP(hrec, hreq)
+	if hrec.Code != http.StatusOK || !strings.Contains(hrec.Body.String(), `"tools":"syncing"`) {
+		t.Fatalf("health during sync = %d %s, want 200 with tools:syncing", hrec.Code, hrec.Body.String())
+	}
+
+	// Gate lifts: creation reaches the engine (any non-503 outcome).
+	syncing.Store(false)
+	if rec := create(); rec.Code == http.StatusServiceUnavailable {
+		t.Fatalf("create after sync: still 503 (body %s)", rec.Body.String())
 	}
 }
