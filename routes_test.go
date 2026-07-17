@@ -782,9 +782,28 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 		t.Fatalf("health during sync = %d %s, want 200 with tools:syncing", hrec.Code, hrec.Body.String())
 	}
 
-	// Gate lifts: creation reaches the engine (any non-503 outcome).
+	// Gate lifts: the composed gate passes requests through to the inner
+	// chain again. Asserted against a stub inner handler rather than the
+	// real create endpoint — spawning an actual PTY session here would
+	// leak its logging goroutines into later tests that capture
+	// slog.Default (the client-ip threading test), which the race
+	// detector rightly flags.
 	syncing.Store(false)
-	if rec := create(); rec.Code == http.StatusServiceUnavailable {
-		t.Fatalf("create after sync: still 503 (body %s)", rec.Body.String())
+	inner := 0
+	gate := composeGate(func(next http.Handler) http.Handler { return next }, syncing.Load)
+	gated := gate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		inner++
+		w.WriteHeader(http.StatusCreated)
+	}))
+	rec := httptest.NewRecorder()
+	gated.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
+	if rec.Code != http.StatusCreated || inner != 1 {
+		t.Fatalf("create after sync: status %d inner %d, want pass-through", rec.Code, inner)
+	}
+	syncing.Store(true)
+	rec = httptest.NewRecorder()
+	gated.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
+	if rec.Code != http.StatusServiceUnavailable || inner != 1 {
+		t.Fatalf("re-gated create: status %d inner %d, want 503 and no inner call", rec.Code, inner)
 	}
 }
