@@ -13,6 +13,14 @@ stream. This guide covers the things the codebase won't tell you at a glance.
   and assembles the middleware stack in `buildHandler` on top of `webhttp`
   (access logging, panic recovery, security headers, cross-origin protection).
 - `static-src/` — TypeScript + CSS sources, compiled into `static/`.
+- Tool provisioning is the external
+  [`cplieger/toolbelt`](https://github.com/cplieger/toolbelt) library, consumed
+  headless: `startTools` (main.go) reconciles `/config/tools.json` in the
+  background after the listener binds, session creation waits on that first
+  pass (503 "tools installing"), and `/api/tools` is the library's REST
+  projection admitted for loopback socket peers only (`loopbackOnly` in
+  routes.go). OS packages ride the `APT_PACKAGES` env in `entrypoint.sh`,
+  not the manifest.
 
 Web Terminal for Kiro is a thin consumer of the first-party web-terminal libraries: the
 terminal engine `web-terminal-engine` (`github.com/cplieger/web-terminal-engine/v2`
@@ -75,7 +83,9 @@ in production `entrypoint.sh` downloads a Renovate-pinned version on first boot.
 
 `/api/health` reports readiness. Under a bare `go run` it reflects only that the
 HTTP listener is up: the kiro-cli readiness gate is env-gated on
-`KIRO_CLI_READY_MARKER`, which is left unset locally. In the image the entrypoint
+`KIRO_CLI_READY_MARKER`, which is left unset locally, and the tools engine is
+disabled when the config dir is missing (`KWEB_CONFIG_DIR`, default `/config`)
+— a warn is logged and the `/api/tools` routes are simply absent. In the image the entrypoint
 writes that marker only after verifying `kiro-cli --version` matches the pin, so
 `/api/health` returns `503 {"reason":"kiro-cli unavailable"}` until kiro-cli is
 installed and runnable (the container healthcheck reflects that).
