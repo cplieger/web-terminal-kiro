@@ -49,12 +49,6 @@ mkdir -p "$TOOLS/bin" "$HOME/.local/bin" "$HOME/.ssh" "$HOME/.kiro" \
     exit 1
   }
 
-# Seed tools.json on first boot from the image default.
-if [ ! -f /config/tools.json ]; then
-  cp /opt/web-terminal-kiro/tools.json /config/tools.json
-  printf 'First boot: created /config/tools.json from defaults\n'
-fi
-
 install_kiro_cli() {
   printf 'Installing kiro-cli %s\n' "$KIRO_CLI_VERSION"
   printf '  kiro-cli is proprietary AWS Content; by installing you accept\n'
@@ -229,17 +223,34 @@ else
   rm -f "$KIRO_CLI_READY_MARKER"
 fi
 
-# Install/update tools from /config/tools.json, FOREGROUND (blocking) so LSPs
-# and other tools are on PATH before the server can spawn kiro-cli — kiro-cli
-# scans PATH for language servers at code-intelligence init, and a non-blocking
-# install here would race that scan on first boot, leaving LSPs undetected.
-# Logged so an incomplete/failed run is diagnosable rather than silent.
-if [ -s /config/tools.json ]; then
-  SETUP_LOG="/tmp/setup-tools.log"
-  printf 'Running setup-tools.sh (log: %s)\n' "$SETUP_LOG"
-  bash /opt/web-terminal-kiro/setup-tools.sh 2>&1 | tee "$SETUP_LOG"
-  if [ "${PIPESTATUS[0]}" -ne 0 ]; then
-    printf 'level=warn msg="setup-tools.sh reported failures" log=%s component=entrypoint\n' "$SETUP_LOG" >&2
+# OS packages (APT_PACKAGES env, e.g. "python3 gcc libc6-dev"). apt state
+# lives in the ephemeral container layer — never on /config — so it is
+# re-applied on every container start: compose-level intent, not volume
+# intent. Everything else in /config/tools is owned by the server's
+# toolbelt engine (manifest: /config/tools.json v2), which converges in
+# the background after the listener binds; session creation waits on it
+# so kiro-cli never scans PATH before the manifest's tools are present.
+#
+# Each token is validated against Debian package-name grammar so env
+# content cannot smuggle apt options; `apt-get update` is REQUIRED here
+# because the image deletes the package indexes at build time (a bare
+# install would fail deterministically). Warn-not-fail preserves the
+# degraded-boot posture.
+if [ -n "${APT_PACKAGES:-}" ]; then
+  apt_pkgs=()
+  for pkg in $APT_PACKAGES; do
+    if [[ "$pkg" =~ ^[a-z0-9][a-z0-9+.-]*$ ]]; then
+      apt_pkgs+=("$pkg")
+    else
+      printf 'level=warn msg="skipping invalid APT_PACKAGES token" token="%s" component=entrypoint\n' "$pkg" >&2
+    fi
+  done
+  if [ "${#apt_pkgs[@]}" -gt 0 ]; then
+    printf 'Installing OS packages: %s\n' "${apt_pkgs[*]}"
+    if ! { apt-get update -qq && apt-get install -y -qq --no-install-recommends -- "${apt_pkgs[@]}"; }; then
+      printf 'level=warn msg="APT_PACKAGES install failed; container continues without them" component=entrypoint\n' >&2
+    fi
+    rm -rf /var/lib/apt/lists/*
   fi
 fi
 

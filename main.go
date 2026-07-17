@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/cplieger/envx"
 	"github.com/cplieger/slogx"
+	"github.com/cplieger/toolbelt"
 	"github.com/cplieger/webhttp"
 )
 
@@ -138,6 +140,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Tools engine (cplieger/toolbelt): declarative provisioning of the
+	// /config/tools tree from the tools.json manifest, replacing the
+	// retired setup-tools.sh. Constructed only when the config dir
+	// exists (the container's /config bind mount); bare `go run` and
+	// tests outside the container run without a tools surface.
+	tools := startTools(baseTools{
+		configDir:   envx.String("KWEB_CONFIG_DIR", "/config"),
+		catalogPath: envx.String("TOOL_CATALOG_PATH", "/app/tool-catalog.json"),
+	})
+
 	// TRUSTED_PROXIES names the reverse proxies (CIDRs or bare IPs) whose
 	// X-Forwarded-For the access log may trust to recover the real client IP.
 	// Unset/empty ⇒ nil ⇒ trust nothing ⇒ log the unspoofable socket peer (the
@@ -157,6 +169,9 @@ func main() {
 		workDir:         workDir,
 		ready:           &ready,
 		kiroReadyMarker: kiroReadyMarker,
+		tools:           tools.engine,
+		toolsSyncing:    tools.syncing,
+		toolsState:      tools.state,
 	})
 	if err != nil {
 		slog.Error("route registration failed", "error", err)
@@ -193,28 +208,150 @@ func main() {
 		os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Flip readiness false and cancel in-flight request contexts the moment
-	// shutdown is signalled, before webhttp.Run drains, so /api/health reports
-	// 503 during the drain window. cancelBase unblocks the always-open
-	// /api/sessions/events SSE handler (it returns only on r.Context().Done();
-	// srv.Shutdown does not interrupt an active stream, so without this the drain
-	// blocks the full grace window whenever a tab is open).
-	go func() {
-		<-ctx.Done()
-		ready.Store(false)
-		cancelBase()
-		slog.Info("shutting down", "cause", context.Cause(ctx))
-	}()
-
 	slog.Info("web-terminal-kiro listening", "addr", addr, "cli_path", cliPath, "work_dir", workDir)
 	ready.Store(true)
 
+	// The pre-drain hook flips readiness false and cancels in-flight request
+	// contexts before webhttp.Run drains, so /api/health reports 503 during the
+	// drain window. cancelBase unblocks the always-open /api/sessions/events SSE
+	// handler (it returns only on r.Context().Done(); srv.Shutdown does not
+	// interrupt an active stream, so without this the drain blocks the full
+	// grace window whenever a tab is open).
 	if err := webhttp.Run(ctx, srv, ln, func(context.Context) { mgr.Shutdown() },
-		webhttp.WithShutdownGrace(5*time.Second)); err != nil {
+		webhttp.WithShutdownGrace(5*time.Second),
+		webhttp.WithPreDrain(func(context.Context) {
+			ready.Store(false)
+			cancelBase()
+			slog.Info("shutting down", "cause", context.Cause(ctx))
+		})); err != nil {
 		slog.Error("http server exited", "error", err)
 		mgr.Shutdown()
+		tools.close()
 		os.Exit(1) //nolint:gocritic // exitAfterDefer: a failed Serve must exit non-zero; the deferred stop()/cancelBase() only release signal+context state the process exit reclaims anyway.
 	}
+	tools.close()
+}
+
+// baseTools carries startTools's inputs (env-resolved paths).
+type baseTools struct {
+	configDir   string
+	catalogPath string
+}
+
+// toolsRuntime is the running tools subsystem handed to the routes: the
+// engine (nil when disabled), the session-create gate predicate, and the
+// health detail. A zero value (engine nil, funcs nil) means "no tools
+// surface" — bare `go run` and tests outside the container.
+type toolsRuntime struct {
+	engine *toolbelt.Engine
+	// syncing reports whether the boot convergence pass is still
+	// running; session creation is gated on it so the first kiro-cli
+	// never spawns before the manifest's tools are on PATH.
+	syncing func() bool
+	// state is the /api/health informational detail:
+	// syncing | ok | degraded.
+	state func() string
+}
+
+func (t *toolsRuntime) close() {
+	if t.engine != nil {
+		t.engine.Close()
+	}
+}
+
+// startTools builds the toolbelt engine and launches the boot
+// convergence pass (bind-first: the listener comes up while installs
+// run; only session CREATION waits, via the syncing gate). The gate
+// lifts regardless of per-tool failures — degraded-not-dead, matching
+// the retired setup-tools.sh warn-and-continue posture — and the
+// health detail records the verdict. After convergence an async update
+// pass refreshes unpinned tools, and a boot warning nudges when no
+// language server is enabled (kiro-cli scans PATH for LSPs at session
+// start).
+func startTools(cfg baseTools) toolsRuntime {
+	if fi, err := os.Stat(cfg.configDir); err != nil || !fi.IsDir() {
+		slog.Warn("tools engine disabled: config dir missing",
+			"config_dir", cfg.configDir,
+			"hint", "bind-mount the persistent config volume (compose.yaml) or set KWEB_CONFIG_DIR")
+		return toolsRuntime{}
+	}
+	eng, err := toolbelt.New(&toolbelt.Config{
+		ConfigDir:   cfg.configDir,
+		ToolsDir:    filepath.Join(cfg.configDir, "tools"),
+		CatalogPath: cfg.catalogPath,
+		Seed:        toolbelt.DefaultSeed(),
+		System:      []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
+		Logger:      slog.Default(),
+	})
+	if err != nil {
+		slog.Error("tools engine failed to start; continuing without it", "error", err)
+		return toolsRuntime{}
+	}
+
+	var syncing atomic.Bool
+	var verdict atomic.Value // string: syncing | ok | degraded
+	verdict.Store("syncing")
+	finish := func(v string) {
+		verdict.Store(v)
+		syncing.Store(false)
+	}
+
+	job, rerr := eng.Reconcile(toolbelt.ReconcileMissing)
+	switch {
+	case rerr != nil:
+		slog.Warn("tools: boot reconcile not enqueued", "error", rerr)
+		finish("degraded")
+	case job == nil: // empty manifest: nothing to converge
+		finish("ok")
+	default:
+		syncing.Store(true)
+		go func() {
+			final, werr := eng.Wait(context.Background(), job.ID)
+			switch {
+			case werr != nil:
+				slog.Warn("tools: boot reconcile wait failed", "error", werr)
+				finish("degraded")
+			case final.State != toolbelt.JobDone:
+				slog.Warn("tools: boot reconcile finished degraded",
+					"state", final.State, "error", final.Error)
+				finish("degraded")
+			default:
+				slog.Info("tools: boot reconcile converged")
+				finish("ok")
+			}
+			// Freshness pass for unpinned entries, off the boot path
+			// (version-check network never holds the session gate).
+			if _, uerr := eng.Update(); uerr != nil {
+				slog.Warn("tools: update pass not enqueued", "error", uerr)
+			}
+			warnIfNoLSPEnabled(eng)
+		}()
+	}
+	return toolsRuntime{
+		engine:  eng,
+		syncing: syncing.Load,
+		state:   func() string { s, _ := verdict.Load().(string); return s },
+	}
+}
+
+// warnIfNoLSPEnabled logs the code-intelligence nudge when no
+// language-server entry is enabled: kiro-cli scans PATH for language
+// servers at session start, so a box without one silently lacks code
+// intelligence. Detection uses the inventory's catalog-derived Lsp
+// marker, so any enabled LSP (seeded template or hand-added) silences
+// it.
+func warnIfNoLSPEnabled(e *toolbelt.Engine) {
+	inv, err := e.Inventory()
+	if err != nil {
+		return
+	}
+	for i := range inv.Tools {
+		if inv.Tools[i].Lsp && !inv.Tools[i].Disabled {
+			return
+		}
+	}
+	slog.Warn("no language servers enabled; kiro code intelligence will be limited",
+		"hint", `enable gopls (Go), tsc-native (TypeScript), or pyrefly (Python): set "disabled": false in /config/tools.json and restart, or use the loopback tools API`)
 }
 
 // buildHandler wraps the route mux in web-terminal-kiro's middleware stack via

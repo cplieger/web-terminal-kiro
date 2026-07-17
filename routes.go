@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"sync/atomic"
 
+	"github.com/cplieger/toolbelt"
+	"github.com/cplieger/toolbelt/httpapi"
 	"github.com/cplieger/web-terminal-engine/v2/terminal"
 	"github.com/cplieger/webhttp"
 )
@@ -17,7 +20,15 @@ import (
 type routeDeps struct {
 	staticFS fs.FS
 	ready    *atomic.Bool
-	workDir  string
+	// tools, when non-nil, mounts the toolbelt httpapi projection at
+	// /api/tools behind the loopback gate; toolsSyncing gates session
+	// creation on the boot convergence pass; toolsState feeds the
+	// /api/health informational tools field. All nil outside the
+	// container (see startTools).
+	tools        *toolbelt.Engine
+	toolsSyncing func() bool
+	toolsState   func() string
+	workDir      string
 	// kiroReadyMarker, when non-empty, is a file the entrypoint touches only
 	// after verifying a runnable, correctly-versioned kiro-cli is installed
 	// (see entrypoint.sh). /api/health Stats it to reflect web-terminal-kiro's core
@@ -94,7 +105,32 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	// cannot drift from web-terminal-server on tuning, path, or envelope. The
 	// topology lives in the engine, the throttle policy in webhttp; this app
 	// just composes the two.
-	mgr.MountAPI(mux, terminal.WithCreateGate(webhttp.SessionCreateRateLimit(terminal.SessionsPath)))
+	// The create gate composes two layers: the fleet-standard create
+	// rate limit (outer), and — while the tools boot convergence runs —
+	// a 503 that keeps the FIRST kiro-cli session from spawning before
+	// the manifest's language servers are on PATH (kiro-cli scans PATH
+	// once at session start). Static assets, /api/health, and the tools
+	// API stay reachable throughout: the container is observable during
+	// installs instead of connection-refused (the old blocking
+	// setup-tools.sh window).
+	createGate := webhttp.SessionCreateRateLimit(terminal.SessionsPath)
+	if deps.toolsSyncing != nil {
+		createGate = composeGate(createGate, deps.toolsSyncing)
+	}
+	mgr.MountAPI(mux, terminal.WithCreateGate(createGate))
+
+	// Tools REST surface: the toolbelt httpapi projection, loopback-only.
+	// The consumer is an agent inside the container (kiro-cli's ! shell
+	// escape + curl localhost:9848); remote callers — LAN browsers
+	// included — get 403. The gate checks the socket peer (RemoteAddr),
+	// never forwarded headers, so it cannot be spoofed through a proxy.
+	// Config-file edits + restart remain the primary toggle path; this
+	// API is the no-restart alternative.
+	if deps.tools != nil {
+		toolsAPI := loopbackOnly(httpapi.Handler(deps.tools, "/api/tools"))
+		mux.Handle("/api/tools", toolsAPI)
+		mux.Handle("/api/tools/", toolsAPI)
+	}
 
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
 		unready := func(reason string) {
@@ -124,7 +160,15 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 				return
 			}
 		}
-		webhttp.WriteJSON(w, map[string]string{"status": "ok"})
+		// The tools field is INFORMATIONAL: tool convergence never gates
+		// readiness (kiro-cli is the only core dependency), so monitoring
+		// stays green during a long first-boot install window while
+		// operators can still see it (syncing | ok | degraded).
+		body := map[string]string{"status": "ok"}
+		if deps.toolsState != nil {
+			body["tools"] = deps.toolsState()
+		}
+		webhttp.WriteJSON(w, body)
 	})
 
 	return mgr, cspPolicy, nil
@@ -223,4 +267,43 @@ func buildCSPPolicy(sub fs.FS) (string, error) {
 		return "", errors.New("buildCSPPolicy: no inline <script> blocks in index.html")
 	}
 	return fmt.Sprintf(cspTemplate, strings.Join(hashes, " ")), nil
+}
+
+// composeGate wraps the session-create gate with the tools-syncing
+// check: while the boot convergence pass runs, session creation answers
+// 503 so kiro-cli never spawns before the manifest's tools are on PATH.
+// The inner gate (the create rate limit) applies once syncing is over.
+func composeGate(inner func(http.Handler) http.Handler, syncing func() bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		gated := inner(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if syncing() {
+				webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
+					"error":  "tools installing",
+					"reason": "tools installing",
+				})
+				return
+			}
+			gated.ServeHTTP(w, r)
+		})
+	}
+}
+
+// loopbackOnly admits only requests whose SOCKET PEER is a loopback
+// address. Forwarded headers are deliberately ignored — they are
+// client-controlled, and this gate is the tools API's only boundary on
+// an otherwise-unauthenticated port. In-container consumers (kiro-cli's
+// ! escape hitting curl localhost:9848) pass; everything routed in from
+// outside — LAN browsers, the reverse proxy — is refused.
+func loopbackOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil || !net.ParseIP(host).IsLoopback() {
+			webhttp.WriteJSONStatus(w, http.StatusForbidden, map[string]string{
+				"error": "tools API is loopback-only; call it from inside the container (curl localhost:9848)",
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
