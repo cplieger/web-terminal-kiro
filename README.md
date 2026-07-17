@@ -132,17 +132,19 @@ the GitHub CLI, all disabled. Flip the ones you want and restart:
 {
   "version": 2,
   "tools": {
-    "gopls":      { "disabled": true },   // Go — set false to install (pulls the Go toolchain)
-    "tsc-native": { "disabled": false },  // TypeScript 7 native LSP: enabled, installs on restart
-    "pyrefly":    { "disabled": true },   // Python
-    "gh":         { "disabled": true }    // GitHub CLI
+    "gopls":                      { "disabled": true },   // Go — set false to install (pulls the Go toolchain)
+    "typescript-language-server": { "disabled": false },  // TypeScript LSP: enabled, installs on restart (pulls node)
+    "pyright":                    { "disabled": true },   // Python LSP
+    "gh":                         { "disabled": true }    // GitHub CLI
   }
 }
 ```
 
-Install knowledge (download URLs, checksums, shims, dependencies) comes from a
+Install knowledge (download URLs, checksums, dependencies) comes from a
 catalog of ~700 tools compiled into the image from the mise and aqua registries —
-a template carries no install commands, so it never goes stale. Language servers
+a template carries no install commands, so it never goes stale. Dependencies
+auto-adopt: enabling `typescript-language-server` installs `node` and the
+`typescript` package with it, no extra manifest entries needed. Language servers
 are picked up by kiro-cli's code intelligence automatically; the boot log warns
 when none is enabled. While tools install, the web UI and health endpoint stay
 reachable and only new-session creation waits, so the first session always sees
@@ -178,10 +180,6 @@ curl -s -X POST  localhost:9848/api/tools -d '{"name": "ripgrep"}'         # add
 
 OS packages are not manifest entries: set `APT_PACKAGES="gcc python3 ..."` on
 the container and the entrypoint installs them at each start.
-
-Migrating from a pre-v1.3.0 volume: the old manifest is backed up as
-`tools.json.v1.bak` automatically, and `scripts/migrate-v1-manifest.py`
-rebuilds it as a v2 manifest with your versions and pins preserved.
 
 ## How it fits together
 

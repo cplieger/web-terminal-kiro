@@ -85,7 +85,7 @@ COPY . ./
 # the mise registry (names, descriptions; MIT) and the aqua registry
 # (binary install definitions with checksum sources; MIT) by the
 # toolbelt toolcatalog lane (its embedded base overlays add runtimes,
-# forge CLIs, and the language-server entries with their shims). The
+# forge CLIs, and the official language-server entries). The
 # verify pass asserts every required-tools.txt name resolves to usable
 # install knowledge for linux amd64+arm64, so a registry-ref bump that
 # drops a seed or migration tool FAILS THE BUILD here instead of a boot
@@ -95,20 +95,20 @@ COPY . ./
 ARG MISE_REGISTRY_REF=v2026.7.7
 # renovate: datasource=github-releases depName=aquaproj/aqua-registry
 ARG AQUA_REGISTRY_REF=v4.538.1
-# renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog
-ARG TOOLBELT_TOOLCATALOG_VERSION=v1.1.0
+# renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog/v2
+ARG TOOLBELT_TOOLCATALOG_VERSION=v2.0.0
 # hadolint ignore=DL3062
 RUN mkdir -p /tmp/registries && \
     curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" \
       | tar -xz -C /tmp/registries && \
     curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "https://codeload.github.com/aquaproj/aqua-registry/tar.gz/refs/tags/${AQUA_REGISTRY_REF}" \
       | tar -xz -C /tmp/registries && \
-    go run "github.com/cplieger/toolbelt/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
+    go run "github.com/cplieger/toolbelt/cmd/toolcatalog/v2@${TOOLBELT_TOOLCATALOG_VERSION}" \
       -mise "/tmp/registries/mise-${MISE_REGISTRY_REF#v}/registry" \
       -aqua "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/pkgs" \
       -refs "mise=${MISE_REGISTRY_REF},aqua=${AQUA_REGISTRY_REF}" \
       -out /tmp/tool-catalog.json && \
-    go run "github.com/cplieger/toolbelt/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
+    go run "github.com/cplieger/toolbelt/cmd/toolcatalog/v2@${TOOLBELT_TOOLCATALOG_VERSION}" \
       verify -catalog /tmp/tool-catalog.json -require required-tools.txt && \
     # MIT requires the copyright + permission notice to travel with
     # copies/substantial portions; the compiled catalog embeds data

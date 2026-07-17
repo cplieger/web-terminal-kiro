@@ -33,7 +33,7 @@ import (
 
 	"github.com/cplieger/envx"
 	"github.com/cplieger/slogx"
-	"github.com/cplieger/toolbelt"
+	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/webhttp"
 )
 
@@ -351,7 +351,7 @@ func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 		}
 	}
 	slog.Warn("no language servers enabled; kiro code intelligence will be limited",
-		"hint", `enable gopls (Go), tsc-native (TypeScript), or pyrefly (Python): set "disabled": false in /config/tools.json and restart, or use the loopback tools API`)
+		"hint", `enable gopls (Go), typescript-language-server (TypeScript), or pyright (Python): set "disabled": false in /config/tools.json and restart, or use the loopback tools API`)
 }
 
 // buildHandler wraps the route mux in web-terminal-kiro's middleware stack via

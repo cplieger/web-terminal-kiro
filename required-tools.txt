@@ -12,13 +12,14 @@
 #
 # seed
 gopls
-tsc-native
-pyrefly
+typescript-language-server
+pyright
 gh
-# backend runtimes (auto-adopted dependencies)
+# backend runtimes + packages (auto-adopted dependencies)
 go
 node
 uv
+typescript
 # migration manifest (catalog-backed)
 actionlint
 age
