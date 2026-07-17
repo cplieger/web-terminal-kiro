@@ -117,44 +117,71 @@ Because Web Terminal for Kiro drives kiro-cli's own terminal UI directly, every 
 
 ## Tools
 
-Web Terminal for Kiro ships kiro-cli, `git`, and base utilities. Everything else is declared in a JSON manifest at `/config/tools.json` and installed into `/config/tools/` on boot, persisting across restarts. There is no management UI; you edit the manifest and restart the container.
+Web Terminal for Kiro ships kiro-cli, `git`, and base utilities. Everything else is
+declared in `/config/tools.json` — a small manifest the built-in tools engine
+(the [`toolbelt`](https://github.com/cplieger/toolbelt) library) reconciles against
+on boot: enabled entries are installed into `/config/tools/` (persisting across
+restarts), disabled entries wait as templates, removed installs are cleaned up.
+There is no management UI; you edit the manifest and restart, or drive the
+loopback API from inside a session.
 
-**Enable a bundled tool.** The manifest ships several entries, all disabled by default. Set `"enabled": true` on the ones you want:
+**Enable a bundled template.** First boot seeds language-server templates plus
+the GitHub CLI, all disabled. Flip the ones you want and restart:
 
 ```jsonc
 {
-  "runtimes": { "go": { "enabled": true } },   // Go toolchain (needed by gopls)
-  "binary": {
-    "gh":            { "enabled": true },       // GitHub CLI
-    "golangci-lint": { "enabled": true }
-  },
-  "lsp": {
-    "tsc":    { "enabled": true },             // TypeScript language server
-    "pyrefly": { "enabled": true },             // Python language server
-    "gopls":   { "enabled": true }              // Go; also enable runtimes.go above
+  "version": 2,
+  "tools": {
+    "gopls":      { "disabled": true },   // Go — set false to install (pulls the Go toolchain)
+    "tsc-native": { "disabled": false },  // TypeScript 7 native LSP: enabled, installs on restart
+    "pyrefly":    { "disabled": true },   // Python
+    "gh":         { "disabled": true }    // GitHub CLI
   }
 }
 ```
 
-Language servers are picked up by kiro-cli's code intelligence automatically. `gopls` needs the Go toolchain, so enable both `lsp.gopls` and `runtimes.go`.
+Install knowledge (download URLs, checksums, shims, dependencies) comes from a
+catalog of ~700 tools compiled into the image from the mise and aqua registries —
+a template carries no install commands, so it never goes stale. Language servers
+are picked up by kiro-cli's code intelligence automatically; the boot log warns
+when none is enabled. While tools install, the web UI and health endpoint stay
+reachable and only new-session creation waits, so the first session always sees
+the finished PATH.
 
-**Add your own tool.** Add an entry under a section (`binary`, `custom`, `lsp`, `runtimes`) with an `install` shell command that drops the tool into `${BIN}` (`/config/tools/bin`, which is on `PATH`):
+**Add more tools by name.** Any catalog name works as a bare entry — the engine
+fills in the rest:
 
 ```jsonc
-{
-  "custom": {
-    "ripgrep": {
-      "enabled": true,
-      "version": "14.1.1",
-      "install": "curl -fsSL https://github.com/BurntSushi/ripgrep/releases/download/${VERSION}/ripgrep-${VERSION}-x86_64-unknown-linux-musl.tar.gz | tar -xz -C ${BIN} --strip-components=1 ripgrep-${VERSION}-x86_64-unknown-linux-musl/rg"
-    }
+"tools": {
+  "ripgrep": {},                            // installed at the latest version, then auto-updated
+  "shellcheck": { "pin": true },            // pinned: installed once, never auto-bumped
+  "jq-custom": {                            // full manual escape hatch
+    "source": "manual",
+    "version": "1.8.1",
+    "install": "curl -fsSL -o ${BIN}/jq https://github.com/jqlang/jq/releases/download/jq-${VERSION}/jq-linux-${ARCH_AMD64_OR_ARM64} && chmod 755 ${BIN}/jq"
   }
 }
 ```
 
-`${VERSION}` and `${BIN}` are substituted at install time. The shipped `gh` and `golangci-lint` entries are good templates; they show the architecture placeholders for multi-arch downloads and the optional integrity check: add a `url` plus a per-arch `sha256` map (`{"amd64": "…", "arm64": "…"}`) and Web Terminal for Kiro verifies the download before installing (pin the entry with `"auto_update": false` so the checksum keeps matching).
+Sources cover `aqua:owner/repo` binaries (checksum-verified when upstream
+publishes checksums), `npm:`, `pip:`, `cargo:`, `go:` modules, and `manual`
+shell commands with `${VERSION}`/`${BIN}`/`${ARCH_*}` placeholders.
 
-Editing this repo's `tools.json` only seeds a fresh `/config` volume; on an existing install, edit the manifest inside `/config`.
+**From inside a session** (agents included), the same engine answers on
+loopback only:
+
+```bash
+curl -s localhost:9848/api/tools | jq '.tools[] | {name, installed}'
+curl -s -X PATCH localhost:9848/api/tools/gopls -d '{"disabled": false}'   # enable + install
+curl -s -X POST  localhost:9848/api/tools -d '{"name": "ripgrep"}'         # add from the catalog
+```
+
+OS packages are not manifest entries: set `APT_PACKAGES="gcc python3 ..."` on
+the container and the entrypoint installs them at each start.
+
+Migrating from a pre-v1.3.0 volume: the old manifest is backed up as
+`tools.json.v1.bak` automatically, and `scripts/migrate-v1-manifest.py`
+rebuilds it as a v2 manifest with your versions and pins preserved.
 
 ## How it fits together
 
