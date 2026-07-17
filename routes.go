@@ -11,8 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/cplieger/toolbelt"
-	"github.com/cplieger/toolbelt/httpapi"
+	"github.com/cplieger/toolbelt/v2"
+	"github.com/cplieger/toolbelt/v2/httpapi"
 	"github.com/cplieger/web-terminal-engine/v2/terminal"
 	"github.com/cplieger/webhttp"
 )
@@ -230,9 +230,11 @@ func kiroCacheControl(assetPath string) string {
 // SAME policy shape as web-terminal-server's (both apps serve the same
 // engine/UI bundle, so their needs are identical):
 //
-//	style-src 'unsafe-inline'  the terminal renderer sets dynamic per-cell
-//	                           inline style attributes (and index.html carries
-//	                           an inline loading-overlay <style>)
+//	style-src 'unsafe-inline'  bound by index.html's inline loading-overlay
+//	                           <style> (hashable if ever tightened). The
+//	                           terminal renderer itself needs no relaxation:
+//	                           it styles via CSSOM property setters, which
+//	                           style-src does not govern
 //	img-src 'self' data:        favicon/icon data URIs
 //	connect-src 'self'          same-origin HTTP + the /ws WebSocket PTY
 //	frame-ancestors 'none'      blocks clickjacking of the interactive terminal
