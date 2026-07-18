@@ -94,7 +94,7 @@ COPY . ./
 # renovate: datasource=github-releases depName=jdx/mise
 ARG MISE_REGISTRY_REF=v2026.7.7
 # renovate: datasource=github-releases depName=aquaproj/aqua-registry
-ARG AQUA_REGISTRY_REF=v4.538.1
+ARG AQUA_REGISTRY_REF=v4.539.0
 # renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog/v2
 ARG TOOLBELT_TOOLCATALOG_VERSION=v2.0.6
 # hadolint ignore=DL3062
