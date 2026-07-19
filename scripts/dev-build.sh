@@ -22,8 +22,11 @@ TSC="static-src/node_modules/.bin/tsc"
 }
 
 echo "[1/6] go.work -> local engine (replace; engine module is unpublished)"
-cat >go.work <<'EOF'
-go 1.26.4
+# Mirror go.mod's go directive so the two never drift (a hardcoded version
+# here broke the build when go.mod moved to a newer patch).
+GO_DIRECTIVE="$(sed -n 's/^go /go /p' go.mod | head -n1)"
+cat >go.work <<EOF
+${GO_DIRECTIVE}
 
 use .
 
