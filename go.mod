@@ -3,15 +3,15 @@ module github.com/cplieger/web-terminal-kiro
 go 1.26.5
 
 require (
-	github.com/cplieger/slogx v1.2.0
-	github.com/cplieger/toolbelt/v2 v2.0.0
+	github.com/cplieger/slogx v1.3.0
+	github.com/cplieger/toolbelt/v2 v2.0.3
 	github.com/cplieger/web-terminal-engine/v2 v2.8.0
-	github.com/cplieger/webhttp v1.9.0
+	github.com/cplieger/webhttp v1.10.0
 )
 
 require (
 	github.com/cplieger/atomicfile/v2 v2.2.0 // indirect
-	github.com/cplieger/httpx/v3 v3.0.0 // indirect
+	github.com/cplieger/httpx/v3 v3.1.1 // indirect
 	github.com/cplieger/ssrf/v3 v3.0.0 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
