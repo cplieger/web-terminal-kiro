@@ -96,7 +96,7 @@ ARG MISE_REGISTRY_REF=v2026.7.7
 # renovate: datasource=github-releases depName=aquaproj/aqua-registry
 ARG AQUA_REGISTRY_REF=v4.538.1
 # renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog/v2
-ARG TOOLBELT_TOOLCATALOG_VERSION=v2.0.0
+ARG TOOLBELT_TOOLCATALOG_VERSION=v2.0.6
 # hadolint ignore=DL3062
 RUN mkdir -p /tmp/registries && \
     curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" \
