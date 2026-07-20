@@ -92,7 +92,7 @@ COPY . ./
 # job on the box. The catalog freezes per image tag; tool versions still
 # resolve live at install time.
 # renovate: datasource=github-releases depName=jdx/mise
-ARG MISE_REGISTRY_REF=v2026.7.7
+ARG MISE_REGISTRY_REF=v2026.7.11
 # renovate: datasource=github-releases depName=aquaproj/aqua-registry
 ARG AQUA_REGISTRY_REF=v4.540.0
 # renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog/v2
