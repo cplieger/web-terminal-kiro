@@ -14,7 +14,9 @@ BIN="$TOOLS/bin/kiro-cli"
 # so the three call sites (install verify, drift check, readiness marker)
 # share one parse if kiro-cli ever reworks its --version output.
 kiro_cli_version() {
-  timeout 10 "$1" --version 2>/dev/null | awk '{print $NF}'
+  # --kill-after gives a TERM-resistant binary a hard second-stage deadline;
+  # without it GNU timeout waits forever on a child that traps/ignores TERM.
+  timeout --signal=TERM --kill-after=5s 10s "$1" --version 2>/dev/null | awk '{print $NF}'
 }
 
 # kiro-cli is pinned via Renovate against the public install manifest at
@@ -51,6 +53,30 @@ mkdir -p "$TOOLS/bin" "$HOME/.local/bin" "$HOME/.ssh" "$HOME/.kiro" \
     sleep 10
     exit 1
   }
+
+# mkdir -p succeeds when the directories already exist — even on a read-only
+# bind mount — so it is NOT proof that /config is writable. Prove it with a
+# create+remove probe and fail fast (the documented behavior for an
+# unwritable persistent volume) instead of limping into an install that
+# cannot update the readiness marker.
+if ! probe=$(mktemp "$TOOLS/.write-probe.XXXXXX") || ! rm -f "$probe"; then
+  printf 'level=error msg="/config/tools is not writable (read-only bind mount?)" component=entrypoint\n' >&2
+  sleep 10
+  exit 1
+fi
+
+# Readiness marker consumed by the Go server's /api/health (main.go reads
+# KIRO_CLI_READY_MARKER; routes.go Stats it). Initialized BEFORE any fallible
+# provisioning work and cleared here so a marker left by a previous boot can
+# never survive a failed upgrade: it is re-published only after the final
+# version check below.
+KIRO_CLI_READY_MARKER="$TOOLS/.kiro-cli-ready"
+export KIRO_CLI_READY_MARKER
+if ! rm -f "$KIRO_CLI_READY_MARKER"; then
+  printf 'level=error msg="failed to clear stale kiro-cli readiness marker" marker="%s" component=entrypoint\n' "$KIRO_CLI_READY_MARKER" >&2
+  sleep 10
+  exit 1
+fi
 
 install_kiro_cli() {
   printf 'level=info msg="installing kiro-cli" version=%s component=entrypoint\n' "$KIRO_CLI_VERSION" >&2
@@ -122,9 +148,15 @@ install_kiro_cli() {
     rm -rf "$tmpdir"
     return 1
   }
-  timeout 120 "$tmpdir/kirocli/install.sh" --no-confirm </dev/null >"$install_log" 2>&1
+  timeout --signal=TERM --kill-after=15s 120s "$tmpdir/kirocli/install.sh" --no-confirm </dev/null >"$install_log" 2>&1
   install_rc=$?
   rm -rf "$tmpdir"
+  # 124 = TERM deadline hit, 137 = the --kill-after SIGKILL fallback fired.
+  # Log deadline exhaustion distinctly so Loki shows a wedged installer
+  # rather than a generic install failure.
+  if [ "$install_rc" -eq 124 ] || [ "$install_rc" -eq 137 ]; then
+    printf 'level=warn msg="install.sh exceeded its 120s deadline and was terminated" rc=%d component=entrypoint\n' "$install_rc" >&2
+  fi
 
   if [ ! -f "$HOME/.local/bin/kiro-cli" ]; then
     printf 'level=error msg="install.sh did not produce kiro-cli binary" path="%s/.local/bin/kiro-cli" rc=%d component=entrypoint\n' \
@@ -185,16 +217,16 @@ fi
 # manifest. Letting kiro-cli silently replace itself would invalidate
 # the pinned SHA and break image-tag reproducibility.
 if [ -x "$BIN" ]; then
-  timeout 10 "$BIN" settings telemetry.enabled false >/dev/null 2>&1 || true
-  timeout 10 "$BIN" settings app.disableAutoupdates true >/dev/null 2>&1 || true
+  timeout --signal=TERM --kill-after=5s 10s "$BIN" settings telemetry.enabled false >/dev/null 2>&1 || true
+  timeout --signal=TERM --kill-after=5s 10s "$BIN" settings app.disableAutoupdates true >/dev/null 2>&1 || true
   # Enable kiro-cli's OSC 9 desktop-notification escape so web-terminal-kiro's tab
   # activity monitor can classify turn-end ("Response complete") and
   # tool-approval ("Permission required") into per-tab status dots. osc9 emits
   # the notification inline in the PTY stream (the only method that reaches a
   # browser terminal); the server holds each session "unfocused" so kiro-cli's
   # focus-gated notifier keeps firing even with no focused browser tab.
-  timeout 10 "$BIN" settings chat.enableNotifications true >/dev/null 2>&1 || true
-  timeout 10 "$BIN" settings chat.notificationMethod osc9 >/dev/null 2>&1 || true
+  timeout --signal=TERM --kill-after=5s 10s "$BIN" settings chat.enableNotifications true >/dev/null 2>&1 || true
+  timeout --signal=TERM --kill-after=5s 10s "$BIN" settings chat.notificationMethod osc9 >/dev/null 2>&1 || true
   # Explicitly disable kiro-cli's dynamic terminal title. Its OSC 0 title only
   # reflects the cwd for a live session (it reloads its session title just on a
   # session-id change, not per turn). The web-terminal-ui tabs feature PREFERS
@@ -203,11 +235,11 @@ if [ -x "$BIN" ]; then
   # (not merely unset) so a container that previously persisted it true gets it
   # turned off on restart. With it off, the tabs feature titles each tab from
   # the user's last submitted line instead.
-  timeout 10 "$BIN" settings chat.terminalTitle false >/dev/null 2>&1 || true
+  timeout --signal=TERM --kill-after=5s 10s "$BIN" settings chat.terminalTitle false >/dev/null 2>&1 || true
 fi
 
-# Readiness marker consumed by the Go server's /api/health (main.go reads
-# KIRO_CLI_READY_MARKER; routes.go Stats it). kiro-cli is web-terminal-kiro's core
+# Publish the readiness marker (declared + cleared before provisioning above).
+# kiro-cli is web-terminal-kiro's core
 # dependency, yet the HTTP listener comes up even when the first-boot install
 # failed (degraded-not-dead start, per the install WARNING above). Record here
 # whether a runnable, correctly-versioned binary is present so the health signal
@@ -218,12 +250,10 @@ fi
 # so a broken kiro-cli shows as `unhealthy` in `docker ps` + the monitoring
 # probe with no restart loop. If ever run under Swarm/k8s, wire /api/health to a
 # readinessProbe, not a livenessProbe, to keep it loop-free.
-KIRO_CLI_READY_MARKER="$TOOLS/.kiro-cli-ready"
-export KIRO_CLI_READY_MARKER
 if [ -x "$BIN" ] && [ "$(kiro_cli_version "$BIN")" = "$KIRO_CLI_VERSION" ]; then
-  touch "$KIRO_CLI_READY_MARKER"
-else
-  rm -f "$KIRO_CLI_READY_MARKER"
+  if ! touch "$KIRO_CLI_READY_MARKER"; then
+    printf 'level=warn msg="failed to write kiro-cli readiness marker; /api/health will report kiro-cli unavailable" marker="%s" component=entrypoint\n' "$KIRO_CLI_READY_MARKER" >&2
+  fi
 fi
 
 # OS packages (APT_PACKAGES env, e.g. "python3 gcc libc6-dev"). apt state
@@ -250,8 +280,17 @@ if [ -n "${APT_PACKAGES:-}" ]; then
   done
   if [ "${#apt_pkgs[@]}" -gt 0 ]; then
     printf 'level=info msg="installing OS packages" packages="%s" component=entrypoint\n' "${apt_pkgs[*]}" >&2
-    if ! timeout 600 bash -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends -- "$@"' _ "${apt_pkgs[@]}"; then
-      printf 'level=warn msg="APT_PACKAGES install failed; container continues without them" component=entrypoint\n' >&2
+    timeout --signal=TERM --kill-after=30s 600s bash -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends -- "$@"' _ "${apt_pkgs[@]}"
+    apt_rc=$?
+    if [ "$apt_rc" -ne 0 ]; then
+      # 124/137 = the 600s deadline (TERM, then the --kill-after SIGKILL
+      # fallback); logged distinctly so Loki shows deadline exhaustion
+      # rather than a generic apt failure.
+      if [ "$apt_rc" -eq 124 ] || [ "$apt_rc" -eq 137 ]; then
+        printf 'level=warn msg="APT_PACKAGES install exceeded its 600s deadline and was terminated; container continues without them" rc=%d component=entrypoint\n' "$apt_rc" >&2
+      else
+        printf 'level=warn msg="APT_PACKAGES install failed; container continues without them" rc=%d component=entrypoint\n' "$apt_rc" >&2
+      fi
     fi
     rm -rf /var/lib/apt/lists/*
   fi

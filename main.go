@@ -50,7 +50,7 @@ func isExposedBind(addr string) bool {
 	if err != nil {
 		return false
 	}
-	if host == "localhost" {
+	if strings.EqualFold(host, "localhost") {
 		return false
 	}
 	ip := net.ParseIP(host)
@@ -331,6 +331,12 @@ func main() {
 			slog.Info("shutting down", "cause", context.Cause(ctx))
 		})); err != nil {
 		slog.Error("http server exited", "error", err)
+		// Clear readiness before shutting sessions down: the fast-death Warn
+		// in registerRoutes keys on it to distinguish app-initiated process
+		// cancellation from a spontaneous early child failure (the normal
+		// SIGTERM path clears it in the pre-drain hook; this fatal path must
+		// do the same or a teardown would emit a false broken-install alert).
+		ready.Store(false)
 		mgr.Shutdown()
 		tools.close()
 		os.Exit(1) //nolint:gocritic // exitAfterDefer: a failed Serve must exit non-zero; the deferred stop()/cancelBase() only release signal+context state the process exit reclaims anyway.

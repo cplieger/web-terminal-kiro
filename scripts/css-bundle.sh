@@ -6,8 +6,15 @@
 set -eu
 css_dir="${1:?usage: css-bundle.sh <ui-css-dir> <out-file>}"
 out="${2:?usage: css-bundle.sh <ui-css-dir> <out-file>}"
-: >"$out"
+# Assemble beside the destination and rename only after every manifest member
+# was read, so a missing/unreadable CSS split fails the build without
+# replacing the previously usable bundle with a partial file. mktemp in the
+# output directory keeps the rename atomic.
+tmp=$(mktemp "${out}.XXXXXX")
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in '' | \#*) continue ;; esac
-  cat "${css_dir}/${line}" >>"$out"
+  cat "${css_dir}/${line}" >>"$tmp"
 done <"${css_dir}/MANIFEST"
+mv "$tmp" "$out"
+trap - EXIT HUP INT TERM

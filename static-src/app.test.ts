@@ -87,6 +87,23 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     expect(createTerminalMock).not.toHaveBeenCalled();
   });
 
+  it("offers a working reload action when startup fails", async () => {
+    const reload = vi.spyOn(window.location, "reload").mockImplementation(() => undefined);
+    const overlay = document.createElement("div");
+    overlay.id = "loading";
+    document.body.appendChild(overlay);
+
+    await expect(import("./app.js")).rejects.toThrow(
+      "web-terminal-kiro: missing #terminal root element",
+    );
+
+    const reloadButton = overlay.querySelector("button");
+    expect(reloadButton?.type).toBe("button");
+    expect(reloadButton?.textContent).toBe("Reload");
+    reloadButton?.click();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it("reveals the #loading overlay with an error message and rethrows when createTerminal throws", async () => {
     const root = document.createElement("div");
     root.id = "terminal";

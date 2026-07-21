@@ -20,6 +20,18 @@ TSC="static-src/node_modules/.bin/tsc"
   echo "error: $TSC not found — run 'cd static-src && npm install' first" >&2
   exit 1
 }
+# Validate every required checkout input BEFORE go.work is written or the
+# destructive node_modules overlay below starts, so a missing sibling checkout
+# or a typo'd ENGINE_DIR/UI_DIR override fails cleanly instead of half-deleting
+# the installed packages (repaired only by a fresh npm install).
+for required in \
+  "$ENGINE_DIR/web/package.json" "$ENGINE_DIR/web/src" \
+  "$UI_DIR/package.json" "$UI_DIR/src" "$UI_DIR/css/MANIFEST"; do
+  [ -e "$required" ] || {
+    printf 'error: required local checkout input not found: %s\n' "$required" >&2
+    exit 1
+  }
+done
 
 echo "[1/6] go.work -> local engine (replace published module with ${ENGINE_DIR})"
 # Mirror go.mod's go directive and engine module path so neither can drift (a
@@ -77,12 +89,24 @@ FONT_VER="$(sed -n 's/^ARG NERDFONT_VERSION=//p' Dockerfile)"
 FONT_SHA256="$(sed -n 's/^ARG NERDFONT_SHA256=//p' Dockerfile)"
 : "${FONT_VER:?failed to parse NERDFONT_VERSION from Dockerfile}"
 : "${FONT_SHA256:?failed to parse NERDFONT_SHA256 from Dockerfile}"
-# Version the cache dir so a NERDFONT_VERSION bump misses the cache instead of
-# silently reusing stale fonts (the existence-only guard below never re-checks;
-# old version dirs are tiny and rare enough to leave behind).
-FONT_CACHE="${HOME}/.cache/web-terminal-kiro-fonts/${FONT_VER}"
+# Key the cache dir by version AND integrity pin so a NERDFONT_VERSION bump —
+# or a same-version NERDFONT_SHA256 correction — misses the cache instead of
+# silently reusing stale fonts, and validate every face so an interrupted
+# extraction self-heals instead of copying a partial family (old cache dirs
+# are tiny and rare enough to leave behind).
+FONT_CACHE="${HOME}/.cache/web-terminal-kiro-fonts/${FONT_VER}-${FONT_SHA256}"
+fonts=(
+  MonaspiceNeNerdFontMono-Regular.otf
+  MonaspiceNeNerdFontMono-Bold.otf
+  MonaspiceNeNerdFontMono-Italic.otf
+  MonaspiceNeNerdFontMono-BoldItalic.otf
+)
 mkdir -p "$FONT_CACHE" static/vendor/fonts
-if [ ! -f "$FONT_CACHE/MonaspiceNeNerdFontMono-Regular.otf" ]; then
+need_fonts=0
+for font in "${fonts[@]}"; do
+  [ -f "$FONT_CACHE/$font" ] || need_fonts=1
+done
+if [ "$need_fonts" = 1 ]; then
   echo "  downloading Monaspace ${FONT_VER}..."
   mona_tmp="$(mktemp)"
   trap 'rm -f "$mona_tmp"' EXIT
@@ -90,14 +114,12 @@ if [ ! -f "$FONT_CACHE/MonaspiceNeNerdFontMono-Regular.otf" ]; then
     "https://github.com/ryanoasis/nerd-fonts/releases/download/${FONT_VER}/Monaspace.tar.xz" \
     -o "$mona_tmp"
   printf '%s  %s\n' "$FONT_SHA256" "$mona_tmp" | sha256sum -c -
-  tar -xJ -C "$FONT_CACHE" -f "$mona_tmp" \
-    MonaspiceNeNerdFontMono-Regular.otf \
-    MonaspiceNeNerdFontMono-Bold.otf \
-    MonaspiceNeNerdFontMono-Italic.otf \
-    MonaspiceNeNerdFontMono-BoldItalic.otf
+  tar -xJ -C "$FONT_CACHE" -f "$mona_tmp" "${fonts[@]}"
   rm -f "$mona_tmp"
 fi
-cp "$FONT_CACHE"/MonaspiceNeNerdFontMono-*.otf static/vendor/fonts/
+for font in "${fonts[@]}"; do
+  cp "$FONT_CACHE/$font" static/vendor/fonts/
+done
 
 sh scripts/css-bundle.sh "$UI_DIR/css" static/style.css
 

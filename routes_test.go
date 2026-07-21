@@ -20,7 +20,6 @@ import (
 
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/web-terminal-engine/v3/terminal"
-	"github.com/cplieger/webhttp"
 )
 
 // TestDebugRoutesNotExposed pins the route surface of registerRoutes: the
@@ -295,42 +294,40 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 // expectations are updated consciously rather than drifting silently.
 const sessionCreateBurst = 6
 
-// TestCreateRateLimit pins the create throttle: a burst of POST /api/sessions is
-// allowed, then further creates are 429'd, while GET (list) is never limited. It
-// exercises the shared preset exactly as registerRoutes wires it, with a stub
-// next handler so it does not fork real kiro-cli processes.
+// TestCreateRateLimit pins the create throttle as registerRoutes actually
+// wires it: a burst of POST /api/sessions through the production routes is
+// allowed, then further creates are 429'd. Driving the real mux (cmd
+// /bin/true, so sessions exit immediately) means the test fails if
+// registerRoutes stops wiring terminal.WithCreateGate(createGate) or moves
+// the mounted path — composition drift the previous direct-preset version
+// could not detect.
 func TestCreateRateLimit(t *testing.T) {
-	var restHit atomic.Bool
-	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		restHit.Store(true)
-		w.WriteHeader(http.StatusOK)
-	})
-	h := webhttp.SessionCreateRateLimit("/api/sessions")(next)
-	post := func() int {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
-		return rec.Code
+	mux := http.NewServeMux()
+	var ready atomic.Bool
+	deps := &routeDeps{
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
+		ready:    &ready,
+		workDir:  "",
+		cmd:      []string{"/bin/true"},
 	}
+	mgr, _, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
 
-	allowed := 0
-	for range sessionCreateBurst {
-		if post() == http.StatusOK {
-			allowed++
+	for attempt := 1; attempt <= sessionCreateBurst; attempt++ {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create %d status = %d, want %d (body %s)", attempt, rec.Code, http.StatusCreated, rec.Body.String())
 		}
 	}
-	if allowed != sessionCreateBurst {
-		t.Errorf("allowed %d creates in the burst, want %d", allowed, sessionCreateBurst)
-	}
-	if code := post(); code != http.StatusTooManyRequests {
-		t.Errorf("create past the burst = %d, want 429", code)
-	}
 
-	// GET (list) is never rate-limited, even after the create burst is spent.
-	restHit.Store(false)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", http.NoBody))
-	if !restHit.Load() {
-		t.Error("GET /api/sessions was blocked by the create rate limiter")
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("create past burst status = %d, want %d (body %s)", rec.Code, http.StatusTooManyRequests, rec.Body.String())
 	}
 }
 

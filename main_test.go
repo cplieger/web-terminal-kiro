@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/toolbelt/v2"
 )
 
@@ -205,6 +204,7 @@ func TestIsExposedBind(t *testing.T) {
 		{name: "ipv4 loopback subnet is safe", addr: "127.0.0.2:9848", want: false},
 		{name: "ipv6 loopback is safe", addr: "[::1]:9848", want: false},
 		{name: "localhost name is safe", addr: "localhost:9848", want: false},
+		{name: "localhost name is case-insensitive", addr: "LOCALHOST:9848", want: false},
 		{name: "unparseable addr is not flagged", addr: "9848", want: false},
 	}
 	for _, tc := range cases {
@@ -223,10 +223,7 @@ func TestIsExposedBind(t *testing.T) {
 // value must be a safe no-op. This test mutates the process-global default
 // logger, so it runs serially (no t.Parallel).
 func TestStartTools_configDirMissing(t *testing.T) {
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	records := capture.Default(t)
 
 	rt := startTools(baseTools{
 		configDir:   filepath.Join(t.TempDir(), "absent"),
@@ -240,8 +237,8 @@ func TestStartTools_configDirMissing(t *testing.T) {
 		t.Error("syncing/state funcs are non-nil; registerRoutes keys the /api/tools mount and the health tools field on nil")
 	}
 	rt.close() // zero-runtime close must not panic
-	if !strings.Contains(buf.String(), "tools engine disabled") {
-		t.Errorf("log = %q, want the config-dir-missing Warn", buf.String())
+	if !records.Contains("tools engine disabled") {
+		t.Errorf("log = %q, want the config-dir-missing Warn", records.Messages())
 	}
 }
 
@@ -250,10 +247,7 @@ func TestStartTools_configDirMissing(t *testing.T) {
 // and startTools logs the Error and continues with the zero runtime instead of
 // taking the server down. Serial: mutates the global default logger.
 func TestStartTools_engineStartFailure(t *testing.T) {
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	records := capture.Default(t)
 
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "tools.json"),
@@ -267,8 +261,8 @@ func TestStartTools_engineStartFailure(t *testing.T) {
 		t.Fatal("engine is non-nil despite a failed toolbelt.New; want the zero runtime (degraded-not-dead)")
 	}
 	rt.close()
-	if !strings.Contains(buf.String(), "tools engine failed to start") {
-		t.Errorf("log = %q, want the failed-to-start Error", buf.String())
+	if !records.Contains("tools engine failed to start") {
+		t.Errorf("log = %q, want the failed-to-start Error", records.Messages())
 	}
 }
 
@@ -396,6 +390,30 @@ func TestHostAllowlist(t *testing.T) {
 	})
 }
 
+// TestHostAllowlist_blankConfigurationStaysPermissive drives a configured but
+// blank KWEB_ALLOWED_HOSTS (only commas and whitespace) through the real
+// parseAllowedHosts into the middleware: the parser's blank-entry filtering
+// plus the final empty-map-to-nil branch must yield the documented permissive
+// state. Accidentally retaining an empty-string map key would turn a blank
+// configuration into a deny-all outage.
+func TestHostAllowlist_blankConfigurationStaysPermissive(t *testing.T) {
+	t.Setenv("KWEB_ALLOWED_HOSTS", "  ,  , ")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	rec := httptest.NewRecorder()
+	buildHandler(mux, nil, "default-src 'self'", parseAllowedHosts()).ServeHTTP(
+		rec,
+		httptest.NewRequest(http.MethodGet, "http://anything.example:9848/probe", http.NoBody),
+	)
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("blank KWEB_ALLOWED_HOSTS: GET /probe status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
 // TestStartTools_reconcileFailureLiftsGateDegraded pins the degraded-not-dead
 // contract on the FAILURE path, which the happy-path convergence test cannot
 // reach: a manifest with an enabled tool the (absent) catalog cannot resolve
@@ -485,23 +503,14 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 		t.Cleanup(eng.Close)
 		return eng, dir
 	}
-	capture := func(t *testing.T) *bytes.Buffer {
-		t.Helper()
-		var buf bytes.Buffer
-		prev := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-		t.Cleanup(func() { slog.SetDefault(prev) })
-		return &buf
-	}
-
 	t.Run("enabled catalog-marked LSP silences the warn", func(t *testing.T) {
 		eng, _ := newEngine(t,
 			`{"version":2,"tools":{"gopls":{}}}`,
 			`{"entries":{"gopls":{"name":"gopls","source":"go:golang.org/x/tools/gopls","lsp":true}}}`)
-		buf := capture(t)
+		records := capture.Default(t)
 		warnIfNoLSPEnabled(eng)
-		if strings.Contains(buf.String(), warnMsg) {
-			t.Errorf("log = %q; an enabled Lsp-marked tool must silence the nudge", buf.String())
+		if records.Contains(warnMsg) {
+			t.Errorf("log = %q; an enabled Lsp-marked tool must silence the nudge", records.Messages())
 		}
 	})
 
@@ -510,10 +519,10 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 		eng, _ := newEngine(t,
 			`{"version":2,"tools":{"gopls":{"disabled":true}}}`,
 			`{"entries":{"gopls":{"name":"gopls","source":"go:golang.org/x/tools/gopls","lsp":true}}}`)
-		buf := capture(t)
+		records := capture.Default(t)
 		warnIfNoLSPEnabled(eng)
-		if !strings.Contains(buf.String(), warnMsg) {
-			t.Errorf("log = %q, want the %q Warn (no enabled language server)", buf.String(), warnMsg)
+		if !records.Contains(warnMsg) {
+			t.Errorf("log = %q, want the %q Warn (no enabled language server)", records.Messages(), warnMsg)
 		}
 	})
 
@@ -525,10 +534,10 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "tools.json"), []byte("{not json"), 0o644); err != nil {
 			t.Fatalf("corrupt manifest: %v", err)
 		}
-		buf := capture(t)
+		records := capture.Default(t)
 		warnIfNoLSPEnabled(eng)
-		if strings.Contains(buf.String(), warnMsg) {
-			t.Errorf("log = %q; an inventory failure must not produce the LSP Warn", buf.String())
+		if records.Contains(warnMsg) {
+			t.Errorf("log = %q; an inventory failure must not produce the LSP Warn", records.Messages())
 		}
 	})
 }

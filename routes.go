@@ -84,21 +84,38 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	// Code). Anything the engine can't render (inline images) is consumed silently.
 	factory := func(id string) *terminal.Handler {
 		start := time.Now()
+		// The session id doubles as the WebSocket routing/resume capability
+		// token (the engine's manager truncates it in its own logs for the
+		// same reason), so only a correlation-safe truncated form may reach
+		// the log stream: the full value would hand terminal access to
+		// anyone with log-read access and network reach.
+		safeID := id
+		if len(safeID) > 8 {
+			safeID = safeID[:8] + "…"
+		}
+		sessionLogger := slog.Default().With("session", safeID)
 		return terminal.NewHandler(deps.cmd,
 			terminal.WithWorkDir(deps.workDir),
 			terminal.WithScrollbackCapacity(5000),
 			terminal.WithKeepUnfocused(),
-			terminal.WithLogger(slog.Default().With("session", id)),
+			terminal.WithLogger(sessionLogger),
 			// A session whose process dies within seconds of spawn is the
 			// kiro-cli-missing/broken signature (the sign-in guard exits 1
 			// when the binary is absent or login fails instantly). The
 			// engine logs child exit at Info by design; this app-level hook
 			// raises the fast-death case to Warn so a broken install on the
 			// persistent volume is visible to operators, not only in the PTY.
+			// Gated on deps.ready: an app-initiated shutdown (SIGTERM
+			// pre-drain, or the Serve-error path) clears readiness before
+			// mgr.Shutdown cancels the child processes, whose killed/canceled
+			// wait errors would otherwise fire this warning as a false
+			// broken-install alert on every deploy. Only spontaneous early
+			// exits while still serving are promoted to Warn; intentional
+			// shutdowns keep the engine's normal INFO exit record.
 			terminal.WithOnProcessExit(func(err error) {
-				if err != nil && time.Since(start) < 10*time.Second {
-					slog.Warn("session process exited almost immediately after start; kiro-cli may be missing or broken",
-						"session", id, "error", err,
+				if err != nil && deps.ready.Load() && time.Since(start) < 10*time.Second {
+					sessionLogger.Warn("session process exited almost immediately after start; kiro-cli may be missing or broken",
+						"error", err,
 						"hint", "check /api/health and the kiro-cli install under /config/tools/bin")
 				}
 			}),

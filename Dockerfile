@@ -337,15 +337,20 @@ COPY --chmod=755 entrypoint.sh /opt/web-terminal-kiro/entrypoint.sh
 WORKDIR /workspace
 EXPOSE 9848
 
-# start-period covers the first-boot kiro-cli download window only. The
-# server binds BEFORE tool installs (the toolbelt engine converges in
-# the background; only session creation waits on it), so /api/health is
-# reachable throughout even a long install window — it reports the
+# start-period covers the entrypoint's worst-case FOREGROUND path before the
+# server binds: kiro-cli download (curl --max-time 300) + install.sh (120) +
+# version/settings probes (~60) + optional APT_PACKAGES (600) ≈ 1080s, so 20m
+# with headroom. The same derived budget drives tests/image-smoke.conf's
+# SMOKE_TIMEOUT and scripts/dev-deploy.sh's DEPLOY_TIMEOUT (both 1260) — move
+# all three together whenever a foreground timeout changes. Tool installs
+# converge in the background AFTER bind (only session creation waits on
+# them), so /api/health is reachable throughout that window — it reports the
 # install state in the informational "tools" field without going
-# unhealthy. Under `restart: unless-stopped` a transient unhealthy
-# self-heals; under a liveness-acting orchestrator, wire /api/health to
-# a readinessProbe.
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=180s \
+# unhealthy. Under `restart: unless-stopped`, health failures are reported
+# but do not restart the container (restart policies react to process exit,
+# not health status); under a liveness-acting orchestrator, wire /api/health
+# to a readinessProbe.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20m \
     CMD curl -sf --max-time 4 http://127.0.0.1:9848/api/health || exit 1
 
 ENTRYPOINT ["/opt/web-terminal-kiro/entrypoint.sh"]

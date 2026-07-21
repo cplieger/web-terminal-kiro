@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/slogx/capture"
 )
 
 // trustedContains reports whether ip is inside any of the parsed trusted nets.
@@ -78,10 +80,7 @@ func TestParseTrustedProxies(t *testing.T) {
 	})
 
 	t.Run("malformed entries are warned and skipped, valid subset kept", func(t *testing.T) {
-		var buf bytes.Buffer
-		prev := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-		t.Cleanup(func() { slog.SetDefault(prev) })
+		records := capture.Default(t)
 
 		t.Setenv("TRUSTED_PROXIES", "10.0.0.0/8, not-an-ip, 999.999.999.999")
 		nets := parseTrustedProxies()
@@ -93,14 +92,24 @@ func TestParseTrustedProxies(t *testing.T) {
 		if !trustedContains(nets, "10.1.2.3") {
 			t.Error("kept net does not contain 10.1.2.3; want the 10.0.0.0/8 entry retained")
 		}
-		// A Warn line naming each malformed entry was emitted.
-		log := buf.String()
-		if log == "" {
-			t.Fatal("no slog output; want a Warn naming the malformed entries")
+		// The Warn was emitted, naming each malformed entry in its
+		// `invalid` attr (a structured assertion, not a rendered-logfmt
+		// substring match that could pass on the wrong level or field).
+		if !records.Contains("ignoring malformed") {
+			t.Fatalf("log = %q; want the Warn naming the malformed entries", records.Messages())
+		}
+		var invalid string
+		for _, r := range records.Records() {
+			r.Attrs(func(a slog.Attr) bool {
+				if a.Key == "invalid" {
+					invalid = a.Value.String()
+				}
+				return true
+			})
 		}
 		for _, bad := range []string{"not-an-ip", "999.999.999.999"} {
-			if !strings.Contains(log, bad) {
-				t.Errorf("warn log %q does not name malformed entry %q", log, bad)
+			if !strings.Contains(invalid, bad) {
+				t.Errorf("warn attr invalid=%q does not name malformed entry %q", invalid, bad)
 			}
 		}
 	})
