@@ -11,3 +11,7 @@ static/*.test.js
 # does not exist in the container.
 go.work
 go.work.sum
+# Dev-time installs / generated vendor tree; the image build fetches pinned
+# tarballs itself and must never see local copies.
+static-src/node_modules/
+static/vendor/

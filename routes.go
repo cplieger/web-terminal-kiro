@@ -272,14 +272,17 @@ func buildCSPPolicy(sub fs.FS) (string, error) {
 }
 
 // composeGate wraps the session-create gate with the tools-syncing
-// check: while the boot convergence pass runs, session creation answers
-// 503 so kiro-cli never spawns before the manifest's tools are on PATH.
-// The inner gate (the create rate limit) applies once syncing is over.
+// check: while the boot convergence pass runs, only SESSION CREATION
+// (POST terminal.SessionsPath) answers 503, so kiro-cli never spawns
+// before the manifest's tools are on PATH; list/close/title requests
+// routed through the same doubly-mounted handler pass through, matching
+// the engine's WithCreateGate contract. The inner gate (the create rate
+// limit) applies once syncing is over.
 func composeGate(inner func(http.Handler) http.Handler, syncing func() bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		gated := inner(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if syncing() {
+			if syncing() && r.Method == http.MethodPost && r.URL.Path == terminal.SessionsPath {
 				webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
 					"error":  "tools installing",
 					"reason": "tools installing",

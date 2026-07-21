@@ -14,7 +14,7 @@ BIN="$TOOLS/bin/kiro-cli"
 # so the three call sites (install verify, drift check, readiness marker)
 # share one parse if kiro-cli ever reworks its --version output.
 kiro_cli_version() {
-  "$1" --version 2>/dev/null | awk '{print $NF}'
+  timeout 10 "$1" --version 2>/dev/null | awk '{print $NF}'
 }
 
 # kiro-cli is pinned via Renovate against the public install manifest at
@@ -44,13 +44,16 @@ KIRO_CLI_SHA256_ARM64="95972602568c2065b7d8cc28924730304d40e612c0984ee0144d8ba45
 
 mkdir -p "$TOOLS/bin" "$HOME/.local/bin" "$HOME/.ssh" "$HOME/.kiro" \
   || {
-    printf 'ERROR: failed to create config directories (is /config mounted and writable?)\n' >&2
+    printf 'level=error msg="failed to create config directories (is /config mounted and writable?)" component=entrypoint\n' >&2
+    # Throttle the restart:unless-stopped crash loop: without a mounted,
+    # writable /config every boot fails instantly, and an immediate exit
+    # would hot-spin the container.
     sleep 10
     exit 1
   }
 
 install_kiro_cli() {
-  printf 'Installing kiro-cli %s\n' "$KIRO_CLI_VERSION"
+  printf 'level=info msg="installing kiro-cli" version=%s component=entrypoint\n' "$KIRO_CLI_VERSION" >&2
   printf '  kiro-cli is proprietary AWS Content; by installing you accept\n'
   printf '  the AWS Customer Agreement. License: https://kiro.dev/license/\n'
 
@@ -63,7 +66,7 @@ install_kiro_cli() {
     x86_64) arch="x86_64-linux" ;;
     aarch64) arch="aarch64-linux" ;;
     *)
-      printf 'ERROR: unsupported architecture: %s\n' "$(uname -m)" >&2
+      printf 'level=error msg="unsupported architecture" arch="%s" component=entrypoint\n' "$(uname -m)" >&2
       return 1
       ;;
   esac
@@ -75,12 +78,12 @@ install_kiro_cli() {
   if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
     --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 \
     "$zip_url" -o "$zip"; then
-    printf 'ERROR: failed to download kiro-cli zip from %s\n' "$zip_url" >&2
+    printf 'level=error msg="failed to download kiro-cli zip" url="%s" component=entrypoint\n' "$zip_url" >&2
     rm -rf "$tmpdir"
     return 1
   fi
   if [ ! -s "$zip" ]; then
-    printf 'ERROR: kiro-cli zip is empty (partial download?)\n' >&2
+    printf 'level=error msg="kiro-cli zip is empty (partial download?)" component=entrypoint\n' >&2
     rm -rf "$tmpdir"
     return 1
   fi
@@ -90,23 +93,21 @@ install_kiro_cli() {
   # KIRO_CLI_VERSION by Renovate (one grouped PR moves all three literals).
   local actual expected
   actual=$(sha256sum "$zip" | awk '{print $1}')
-  printf 'kiro-cli zip SHA-256: %s (url=%s)\n' "$actual" "$zip_url"
+  printf 'level=info msg="kiro-cli zip downloaded" sha256=%s url="%s" component=entrypoint\n' "$actual" "$zip_url" >&2
   case "$arch" in
     x86_64-linux) expected="$KIRO_CLI_SHA256" ;;
     aarch64-linux) expected="$KIRO_CLI_SHA256_ARM64" ;;
   esac
   if [ "$actual" != "$expected" ]; then
-    printf 'ERROR: kiro-cli SHA-256 mismatch (%s)\n' "$arch" >&2
-    printf '  expected: %s\n' "$expected" >&2
-    printf '  actual:   %s\n' "$actual" >&2
-    printf '  refusing install; bump KIRO_CLI_VERSION and both KIRO_CLI_SHA256* literals together\n' >&2
+    printf 'level=error msg="kiro-cli SHA-256 mismatch; refusing install (bump KIRO_CLI_VERSION and both KIRO_CLI_SHA256* literals together)" arch=%s expected=%s actual=%s component=entrypoint\n' \
+      "$arch" "$expected" "$actual" >&2
     rm -rf "$tmpdir"
     return 1
   fi
-  printf 'kiro-cli SHA-256 verified against pinned %s hash\n' "$arch"
+  printf 'level=info msg="kiro-cli SHA-256 verified against pinned hash" arch=%s component=entrypoint\n' "$arch" >&2
 
   if ! unzip -q "$zip" -d "$tmpdir"; then
-    printf 'ERROR: failed to extract kiro-cli zip\n' >&2
+    printf 'level=error msg="failed to extract kiro-cli zip" component=entrypoint\n' >&2
     rm -rf "$tmpdir"
     return 1
   fi
@@ -118,13 +119,16 @@ install_kiro_cli() {
   # the version we pinned. Capture install.sh output to a tempfile so
   # we can surface it on failure.
   local install_log install_rc
-  install_log=$(mktemp)
-  "$tmpdir/kirocli/install.sh" --no-confirm </dev/null >"$install_log" 2>&1
+  install_log=$(mktemp) || {
+    rm -rf "$tmpdir"
+    return 1
+  }
+  timeout 120 "$tmpdir/kirocli/install.sh" --no-confirm </dev/null >"$install_log" 2>&1
   install_rc=$?
   rm -rf "$tmpdir"
 
   if [ ! -f "$HOME/.local/bin/kiro-cli" ]; then
-    printf 'ERROR: install.sh did not produce %s/.local/bin/kiro-cli (rc=%d)\n' \
+    printf 'level=error msg="install.sh did not produce kiro-cli binary" path="%s/.local/bin/kiro-cli" rc=%d component=entrypoint\n' \
       "$HOME" "$install_rc" >&2
     printf 'install.sh output:\n' >&2
     cat "$install_log" >&2
@@ -134,7 +138,7 @@ install_kiro_cli() {
   local installed
   installed=$(kiro_cli_version "$HOME/.local/bin/kiro-cli")
   if [ "$installed" != "$KIRO_CLI_VERSION" ]; then
-    printf 'ERROR: installed binary reports version %s, wanted %s (install.sh rc=%d)\n' \
+    printf 'level=error msg="installed kiro-cli reports wrong version" installed=%s wanted=%s rc=%d component=entrypoint\n' \
       "${installed:-unknown}" "$KIRO_CLI_VERSION" "$install_rc" >&2
     printf 'install.sh output:\n' >&2
     cat "$install_log" >&2
@@ -162,8 +166,8 @@ needs_kiro_cli_install() {
   local current
   current=$(kiro_cli_version "$BIN")
   if [ "$current" != "$KIRO_CLI_VERSION" ]; then
-    printf 'kiro-cli version drift: installed=%s pinned=%s; reinstalling\n' \
-      "${current:-unknown}" "$KIRO_CLI_VERSION"
+    printf 'level=info msg="kiro-cli version drift; reinstalling" installed=%s pinned=%s component=entrypoint\n' \
+      "${current:-unknown}" "$KIRO_CLI_VERSION" >&2
     return 0
   fi
   return 1
@@ -182,16 +186,16 @@ fi
 # manifest. Letting kiro-cli silently replace itself would invalidate
 # the pinned SHA and break image-tag reproducibility.
 if [ -x "$BIN" ]; then
-  "$BIN" settings telemetry.enabled false >/dev/null 2>&1 || true
-  "$BIN" settings "app.disableAutoupdates" "true" >/dev/null 2>&1 || true
+  timeout 10 "$BIN" settings telemetry.enabled false >/dev/null 2>&1 || true
+  timeout 10 "$BIN" settings "app.disableAutoupdates" "true" >/dev/null 2>&1 || true
   # Enable kiro-cli's OSC 9 desktop-notification escape so web-terminal-kiro's tab
   # activity monitor can classify turn-end ("Response complete") and
   # tool-approval ("Permission required") into per-tab status dots. osc9 emits
   # the notification inline in the PTY stream (the only method that reaches a
   # browser terminal); the server holds each session "unfocused" so kiro-cli's
   # focus-gated notifier keeps firing even with no focused browser tab.
-  "$BIN" settings chat.enableNotifications true >/dev/null 2>&1 || true
-  "$BIN" settings chat.notificationMethod osc9 >/dev/null 2>&1 || true
+  timeout 10 "$BIN" settings chat.enableNotifications true >/dev/null 2>&1 || true
+  timeout 10 "$BIN" settings chat.notificationMethod osc9 >/dev/null 2>&1 || true
   # Explicitly disable kiro-cli's dynamic terminal title. Its OSC 0 title only
   # reflects the cwd for a live session (it reloads its session title just on a
   # session-id change, not per turn). The web-terminal-ui tabs feature PREFERS
@@ -200,7 +204,7 @@ if [ -x "$BIN" ]; then
   # (not merely unset) so a container that previously persisted it true gets it
   # turned off on restart. With it off, the tabs feature titles each tab from
   # the user's last submitted line instead.
-  "$BIN" settings chat.terminalTitle false >/dev/null 2>&1 || true
+  timeout 10 "$BIN" settings chat.terminalTitle false >/dev/null 2>&1 || true
 fi
 
 # Readiness marker consumed by the Go server's /api/health (main.go reads
@@ -246,7 +250,7 @@ if [ -n "${APT_PACKAGES:-}" ]; then
     fi
   done
   if [ "${#apt_pkgs[@]}" -gt 0 ]; then
-    printf 'Installing OS packages: %s\n' "${apt_pkgs[*]}"
+    printf 'level=info msg="installing OS packages" packages="%s" component=entrypoint\n' "${apt_pkgs[*]}" >&2
     if ! { apt-get update -qq && apt-get install -y -qq --no-install-recommends -- "${apt_pkgs[@]}"; }; then
       printf 'level=warn msg="APT_PACKAGES install failed; container continues without them" component=entrypoint\n' >&2
     fi

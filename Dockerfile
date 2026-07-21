@@ -39,8 +39,8 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # apps/vibekit's approach. Now that TS7 shipped stable, the native compiler is
 # the `typescript` package's per-platform `tsc`
 # (@typescript/typescript-linux-<arch>, published in lockstep with the
-# metapackage). Runtime LSPs are not baked — they install on-demand via
-# setup-tools.sh from /config/tools.json.
+# metapackage). Runtime LSPs are not baked — the toolbelt engine installs
+# them on demand from the /config/tools.json manifest.
 # renovate: datasource=npm depName=typescript
 ARG TS_VERSION=7.0.2
 # sha256 of the platform-specific tsc tarball, per arch. npm publishes SHA-512
@@ -66,9 +66,9 @@ RUN ARCH=$(dpkg --print-architecture) && \
 # glyphs (line markers, file-type icons). System monospace fonts
 # don't carry these, so they render as tofu (black squares) in
 # the terminal display. Bundling one Mono-width Nerd Font + serving
-# it via @font-face fixes that. JetBrainsMono is ~3.8 MB
-# uncompressed; with go:embed it grows the web-terminal-kiro binary by that
-# much and ships gzipped over the wire (~900 KB to the browser).
+# it via @font-face fixes that. The four MonaspiceNe Nerd Font Mono
+# faces grow the web-terminal-kiro binary via go:embed and ship gzipped
+# over the wire.
 # renovate: datasource=github-releases depName=ryanoasis/nerd-fonts
 ARG NERDFONT_VERSION=v3.4.0
 # sha256 of Monaspace.tar.xz for this tag. GitHub release assets are MUTABLE (a
@@ -78,8 +78,11 @@ ARG NERDFONT_SHA256=5fdb97828e1a23fd28ea5ed0e7d15cdebb77ef079aaa48b93f1526764b40
 
 WORKDIR /build
 COPY go.mod go.sum ./
-RUN go mod download
-COPY . ./
+RUN --mount=type=cache,target=/root/go/pkg/mod go mod download
+# Only the files the network-heavy steps below actually need are copied
+# before them, so a source edit doesn't invalidate the catalog compile,
+# font fetch, or npm vendor fetch layers. The full tree lands after.
+COPY required-tools.txt ./
 
 # Compile the tool catalog: install knowledge for ~700 tools joined from
 # the mise registry (names, descriptions; MIT) and the aqua registry
@@ -93,16 +96,31 @@ COPY . ./
 # resolve live at install time.
 # renovate: datasource=github-releases depName=jdx/mise
 ARG MISE_REGISTRY_REF=v2026.7.11
+# sha256 of the codeload tar.gz for MISE_REGISTRY_REF. Git tags are MUTABLE (a
+# retag can swap the bytes under a fixed ref), so this gate is the integrity
+# anchor — same rationale as NERDFONT_SHA256. Update alongside the ref. If a
+# spurious mismatch ever fires (codeload tarball bytes are not guaranteed
+# byte-stable across GitHub infra changes, unlike release assets), pin the
+# immutable commit SHA as the ref instead.
+ARG MISE_REGISTRY_SHA256=608a12c8243ce424c3ea70054d7bb38f638b189e5d1c66074d436aeb91e9a658
 # renovate: datasource=github-releases depName=aquaproj/aqua-registry
 ARG AQUA_REGISTRY_REF=v4.540.0
+# sha256 of the codeload tar.gz for AQUA_REGISTRY_REF. Same mutable-tag
+# rationale and fallback as MISE_REGISTRY_SHA256 above; update alongside the ref.
+ARG AQUA_REGISTRY_SHA256=0e8d0cdb8e57687694b573d1a59224cf45c0145fcd1bfa37505c2e7ce560a7a8
 # renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog/v2
 ARG TOOLBELT_TOOLCATALOG_VERSION=v2.0.8
 # hadolint ignore=DL3062
-RUN mkdir -p /tmp/registries && \
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" \
-      | tar -xz -C /tmp/registries && \
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "https://codeload.github.com/aquaproj/aqua-registry/tar.gz/refs/tags/${AQUA_REGISTRY_REF}" \
-      | tar -xz -C /tmp/registries && \
+RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    mkdir -p /tmp/registries && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/mise.tgz "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" && \
+    printf '%s  /tmp/mise.tgz\n' "$MISE_REGISTRY_SHA256" | sha256sum -c - && \
+    tar -xz -C /tmp/registries -f /tmp/mise.tgz && \
+    rm /tmp/mise.tgz && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/aqua.tgz "https://codeload.github.com/aquaproj/aqua-registry/tar.gz/refs/tags/${AQUA_REGISTRY_REF}" && \
+    printf '%s  /tmp/aqua.tgz\n' "$AQUA_REGISTRY_SHA256" | sha256sum -c - && \
+    tar -xz -C /tmp/registries -f /tmp/aqua.tgz && \
+    rm /tmp/aqua.tgz && \
     go run "github.com/cplieger/toolbelt/cmd/toolcatalog/v2@${TOOLBELT_TOOLCATALOG_VERSION}" \
       -mise "/tmp/registries/mise-${MISE_REGISTRY_REF#v}/registry" \
       -aqua "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/pkgs" \
@@ -161,6 +179,7 @@ ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=4.1.1
 # suite), not a version-string equality. Renovate moves the ARG+package.json
 # pins in one grouped PR on the routine path; this gate catches the human
 # bypass.
+COPY static-src/package.json static-src/package.json
 RUN ENGINE_NPM=$(sed -n 's|.*"@cplieger/web-terminal-engine": "\([^"]*\)".*|\1|p' static-src/package.json) && \
     UI_NPM=$(sed -n 's|.*"@cplieger/web-terminal-ui": "\([^"]*\)".*|\1|p' static-src/package.json) && \
     : "${ENGINE_NPM:?pin-gate: no @cplieger/web-terminal-engine pin found in static-src/package.json}" && \
@@ -178,6 +197,12 @@ RUN ENGINE_NPM=$(sed -n 's|.*"@cplieger/web-terminal-engine": "\([^"]*\)".*|\1|p
     curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/ui.tgz "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" && \
     tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1 -f /tmp/ui.tgz && \
     rm /tmp/ui.tgz
+
+# Full source tree, after every network fetch above so source edits reuse
+# those layers. .dockerignore excludes static-src/node_modules/ and
+# static/vendor/, so the pinned fetches above are never overlaid by local
+# dev copies.
+COPY . ./
 
 # Compile client TypeScript and the engine + UI libs in a single layer.
 # Must run before the binary build because main.go's `//go:embed static`
@@ -226,7 +251,8 @@ RUN set -eu; \
 
 # Build the Go binary with static assets embedded via go:embed.
 # CGO disabled so the binary runs on any glibc.
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /web-terminal-kiro .
+RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /web-terminal-kiro .
 
 # --- Final stage: minimal runtime with kiro-cli + git ---
 FROM debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
@@ -253,7 +279,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 #     shared object file". Surfaced once kiro-cli >= 2.6 started
 #     exercising the code path.
 #
-# Session persistence is handled by the shared web-terminal-engine/v2
+# Session persistence is handled by the shared web-terminal-engine
 # vt package — the server keeps an authoritative cell buffer and
 # replays the current snapshot on each WS reconnect. No external
 # multiplexer (tmux/dtach) is required.
@@ -274,9 +300,10 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 # Language servers and developer tools (gh, linters, runtimes) are NOT
 # baked into the image: the server's toolbelt engine installs them from
 # the /config/tools.json manifest (schema v2) against the image-baked
-# catalog. First boot seeds disabled templates (gopls, tsc-native,
-# pyrefly, gh) — enable one by flipping "disabled": false and
-# restarting, or through the loopback tools API. This keeps the image
+# catalog. First boot seeds disabled templates (gopls,
+# typescript-language-server, pyright, gh) — enable one by flipping
+# "disabled": false and restarting, or through the loopback tools API.
+# This keeps the image
 # ~32 MB slimmer and free of the daily LSP-bump rebuild churn.
 
 # kiro-cli installs under $HOME/.local. Home is under /config so the
@@ -319,6 +346,6 @@ EXPOSE 9848
 # self-heals; under a liveness-acting orchestrator, wire /api/health to
 # a readinessProbe.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=180s \
-    CMD curl -sf http://127.0.0.1:9848/api/health || exit 1
+    CMD curl -sf --max-time 4 http://127.0.0.1:9848/api/health || exit 1
 
 ENTRYPOINT ["/opt/web-terminal-kiro/entrypoint.sh"]

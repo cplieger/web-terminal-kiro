@@ -182,12 +182,12 @@ func TestKiroCacheControl(t *testing.T) {
 	}
 }
 
-// TestStaticETagRevalidation pins the embedded-bundle revalidation contract
-// promised by cacheHeaders' godoc: embed.FS reports a zero ModTime, so
-// http.FileServer emits no validator on its own and every full load would
-// re-download the body. buildETags precomputes a content-hash ETag that
-// cacheHeaders sets on the default (non-font) branch, so GET / returns a quoted
-// ETag and a conditional GET with a matching If-None-Match answers 304 with an
+// TestStaticETagRevalidation pins the embedded-bundle revalidation contract:
+// embed.FS reports a zero ModTime, so a bare http.FileServer emits no
+// validator and every full load would re-download the body.
+// webhttp.StaticHandler precomputes a content-hash ETag (served on the
+// default, non-font cache branch), so GET / returns a quoted ETag and a
+// conditional GET with a matching If-None-Match answers 304 with an
 // empty body instead of re-sending the bundle. Mirrors the sibling
 // web-terminal-server's TestStaticHandlerETagAndRevalidation.
 func TestStaticETagRevalidation(t *testing.T) {
@@ -269,7 +269,7 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/sessions/events", http.NoBody)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET /api/sessions/events: %v", err)
 	}
@@ -341,8 +341,9 @@ func TestCreateRateLimit(t *testing.T) {
 // baseline: X-Content-Type-Options nosniff, X-Frame-Options DENY, and
 // Referrer-Policy strict-origin-when-cross-origin on a normal 200. It also pins
 // the two deliberate choices -- X-Frame-Options is the DENY default because
-// web-terminal-kiro is never embedded in a frame, and NO Content-Security-Policy is set,
-// because a wrong CSP would silently break the terminal UI's fonts + WebSocket.
+// web-terminal-kiro is never embedded in a frame, and the Content-Security-Policy is the
+// hash-pinned policy buildCSPPolicy assembles from the embedded index.html
+// (asserted below: script-src pins sha256 tokens, never 'unsafe-inline').
 // Driven through the full production chain (buildHandler) so the assertion
 // tracks what the server actually sends.
 func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
@@ -805,5 +806,23 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 	gated.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
 	if rec.Code != http.StatusServiceUnavailable || inner != 1 {
 		t.Fatalf("re-gated create: status %d inner %d, want 503 and no inner call", rec.Code, inner)
+	}
+}
+
+// TestRegisterRoutes_failsLoudOnMalformedStatic pins the error propagation of
+// the fail-loud CSP build through registerRoutes: an embedded index.html with
+// no inline <script> (a malformed build) must abort route registration with an
+// error, never register routes with a silently-degraded CSP.
+func TestRegisterRoutes_failsLoudOnMalformedStatic(t *testing.T) {
+	mux := http.NewServeMux()
+	var ready atomic.Bool
+	deps := &routeDeps{
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(`<script src="/app.js"></script>`)}},
+		ready:    &ready,
+		workDir:  "",
+		cmd:      []string{"/bin/cat"},
+	}
+	if _, _, err := registerRoutes(mux, deps); err == nil {
+		t.Fatal("registerRoutes returned nil error for an index.html with no inline script; the hash-pinned CSP must abort startup, not degrade silently")
 	}
 }

@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeCLI writes an executable shell stub standing in for kiro-cli. Its whoami
@@ -22,7 +26,7 @@ func fakeCLI(t *testing.T, dir string, whoamiRC int) (cliPath, loginMarker, chat
 	chatMarker = filepath.Join(dir, "chat-args")
 	stub := `#!/bin/sh
 case "$1" in
-whoami) exit ` + map[bool]string{true: "0", false: "1"}[whoamiRC == 0] + ` ;;
+whoami) exit ` + strconv.Itoa(whoamiRC) + ` ;;
 login) shift; printf '%s' "$*" > ` + "'" + loginMarker + "'" + `; exit 0 ;;
 chat) shift; printf '%s\n' "$@" > ` + "'" + chatMarker + "'" + `; echo CHAT_STARTED ;;
 esac
@@ -205,5 +209,88 @@ func TestIsExposedBind(t *testing.T) {
 				t.Errorf("isExposedBind(%q) = %v, want %v", tc.addr, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestStartTools_configDirMissing pins the out-of-container shape: a missing
+// config dir disables the tools engine (bare `go run` / tests), returning the
+// zero toolsRuntime whose nil funcs make registerRoutes skip /api/tools and
+// the health tools field, with a Warn naming the fix. close() on the zero
+// value must be a safe no-op. This test mutates the process-global default
+// logger, so it runs serially (no t.Parallel).
+func TestStartTools_configDirMissing(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	rt := startTools(baseTools{
+		configDir:   filepath.Join(t.TempDir(), "absent"),
+		catalogPath: filepath.Join(t.TempDir(), "absent-catalog.json"),
+	})
+
+	if rt.engine != nil {
+		t.Fatal("engine is non-nil for a missing config dir; want the zero runtime (no tools surface outside the container)")
+	}
+	if rt.syncing != nil || rt.state != nil {
+		t.Error("syncing/state funcs are non-nil; registerRoutes keys the /api/tools mount and the health tools field on nil")
+	}
+	rt.close() // zero-runtime close must not panic
+	if !strings.Contains(buf.String(), "tools engine disabled") {
+		t.Errorf("log = %q, want the config-dir-missing Warn", buf.String())
+	}
+}
+
+// TestStartTools_engineStartFailure pins degraded-not-dead: a config dir whose
+// tools.json is the retired v1 format fails toolbelt.New (strict v2 schema),
+// and startTools logs the Error and continues with the zero runtime instead of
+// taking the server down. Serial: mutates the global default logger.
+func TestStartTools_engineStartFailure(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tools.json"),
+		[]byte(`{"runtimes":{"node":{"enabled":false}}}`), 0o644); err != nil {
+		t.Fatalf("write retired manifest: %v", err)
+	}
+
+	rt := startTools(baseTools{configDir: dir, catalogPath: filepath.Join(dir, "absent-catalog.json")})
+
+	if rt.engine != nil {
+		t.Fatal("engine is non-nil despite a failed toolbelt.New; want the zero runtime (degraded-not-dead)")
+	}
+	rt.close()
+	if !strings.Contains(buf.String(), "tools engine failed to start") {
+		t.Errorf("log = %q, want the failed-to-start Error", buf.String())
+	}
+}
+
+// TestStartTools_bootConvergenceLiftsGate pins the bind-first boot contract on
+// the happy path: with a real (empty) config dir the engine seeds the default
+// all-disabled manifest, the boot reconcile has nothing to install, and the
+// syncing gate LIFTS with verdict "ok" -- the property that keeps session
+// creation from answering 503 "tools installing" forever. All seeded entries
+// are disabled, so the pass is offline and fast; the poll is a bounded
+// eventually-check on the atomic-backed funcs (race-free).
+func TestStartTools_bootConvergenceLiftsGate(t *testing.T) {
+	dir := t.TempDir()
+	rt := startTools(baseTools{configDir: dir, catalogPath: filepath.Join(dir, "absent-catalog.json")})
+	if rt.engine == nil {
+		t.Fatal("engine is nil for an existing config dir; want a running tools engine")
+	}
+	t.Cleanup(rt.close)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for rt.syncing() {
+		if time.Now().After(deadline) {
+			t.Fatal("boot convergence gate never lifted; session creation would 503 forever")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := rt.state(); got != "ok" {
+		t.Errorf("state after convergence = %q, want %q (all seeded templates are disabled: nothing to install)", got, "ok")
 	}
 }

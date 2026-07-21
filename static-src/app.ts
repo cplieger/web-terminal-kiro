@@ -28,6 +28,9 @@ import { presetAgentTabbed } from "@cplieger/web-terminal-ui/presets";
 // path createTerminal never ran, so the remove is a harmless no-op.
 function showFatal(overlay: HTMLElement, message: string): void {
   overlay.classList.remove("fade");
+  // index.html names the overlay "Loading" (aria-label); drop it so the
+  // alert's accessible name doesn't contradict the fatal message it now shows.
+  overlay.removeAttribute("aria-label");
   overlay.setAttribute("role", "alert");
   overlay.setAttribute("aria-live", "assertive");
   overlay.textContent = message;

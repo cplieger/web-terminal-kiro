@@ -73,7 +73,7 @@ func isExposedBind(addr string) bool {
 // the var to the proxy's CIDR(s) so the access log records the real client.
 func parseTrustedProxies() []*net.IPNet {
 	const key = "TRUSTED_PROXIES"
-	v := os.Getenv(key)
+	v := envx.String(key, "")
 	if v == "" {
 		return nil
 	}
@@ -110,7 +110,11 @@ func parseTrustedProxies() []*net.IPNet {
 // e.g. --v3) are appended to the chat invocation only — login and whoami never
 // see them.
 func sessionCommand(cliPath string, chatArgs ...string) []string {
-	const script = `if ! "$0" whoami >/dev/null 2>&1; then
+	const script = `if ! command -v "$0" >/dev/null 2>&1; then
+printf '%s\n' 'kiro-cli is not installed or not on PATH. The first-boot install may have failed; check the container logs and /api/health.'
+exit 1
+fi
+if ! "$0" whoami >/dev/null 2>&1; then
 printf '%s\n' 'kiro-cli is not signed in. Starting the device-flow sign-in:' 'open the URL it prints (tap or click it), confirm the code there, and the chat starts here on its own.' ''
 "$0" login --use-device-flow || exit 1
 fi
@@ -188,6 +192,7 @@ func main() {
 	})
 	if err != nil {
 		slog.Error("route registration failed", "error", err)
+		tools.close()
 		os.Exit(1)
 	}
 
@@ -198,6 +203,7 @@ func main() {
 	ln, err := lc.Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		slog.Error("listen failed", "addr", addr, "error", err)
+		tools.close()
 		os.Exit(1)
 	}
 
@@ -356,6 +362,7 @@ func startTools(cfg baseTools) toolsRuntime {
 func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 	inv, err := e.Inventory()
 	if err != nil {
+		slog.Debug("tools: inventory read failed; skipping the language-server nudge", "error", err)
 		return
 	}
 	for i := range inv.Tools {
