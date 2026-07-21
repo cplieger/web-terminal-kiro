@@ -47,11 +47,26 @@ ssh "$HOST" "trap 'rm -f ${REMOTE_TMP}' EXIT; sudo docker cp ${REMOTE_TMP} web-t
 # read true on every sample; a growing .RestartCount is the reliable exit
 # signal), and otherwise waits through transient starting/unhealthy states.
 DEPLOY_TIMEOUT="${DEPLOY_TIMEOUT:-1260}"
+if [[ ! "$DEPLOY_TIMEOUT" =~ ^[0-9]{1,9}$ ]]; then
+  printf 'error: DEPLOY_TIMEOUT must be a non-negative decimal integer (at most 9 digits), got %q\n' "$DEPLOY_TIMEOUT" >&2
+  exit 1
+fi
 echo "waiting for web-terminal-kiro-dev health (timeout ${DEPLOY_TIMEOUT}s)"
 # Baseline the restart count right after the explicit docker restart: any
 # later increase means the entrypoint died and the restart policy relaunched it.
-base_restarts=$(ssh "$HOST" "sudo docker inspect -f '{{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null || echo "unknown")
-deadline=$(($(date +%s) + DEPLOY_TIMEOUT))
+# The baseline is mandatory — synthesizing it from a later sample would adopt a
+# post-crash count as normal and blind the restart-growth crash detector.
+if ! base_restarts=$(ssh "$HOST" "sudo docker inspect -f '{{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null); then
+  printf 'deploy verification failed: could not establish restart-count baseline\n' >&2
+  exit 1
+fi
+case "$base_restarts" in
+  '' | *[!0-9]*)
+    printf 'deploy verification failed: invalid restart-count baseline: %s\n' "$base_restarts" >&2
+    exit 1
+    ;;
+esac
+deadline=$(($(date +%s) + 10#$DEPLOY_TIMEOUT))
 code="ERR"
 while [ "$(date +%s)" -lt "$deadline" ]; do
   state=$(ssh "$HOST" "sudo docker inspect -f '{{.State.Running}} {{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null || echo "unknown unknown")
@@ -61,17 +76,13 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     echo "deploy verification failed: container exited during startup" >&2
     exit 1
   fi
-  case "${restarts}${base_restarts}" in
-    *[!0-9]*)
-      # An inspect failed this sample. If only the BASELINE is non-numeric (the
-      # post-restart inspect blipped), adopt the first numeric sample as the
-      # baseline so a single blip doesn't disable the restart-growth crash
-      # detector for the entire poll.
-      case "$restarts" in '' | *[!0-9]*) : ;; *) base_restarts="$restarts" ;; esac
-      ;;
+  case "$restarts" in
+    # An inspect failed this sample; skip it. The baseline is always numeric
+    # (established mandatorily above), so a blip never disables the detector.
+    '' | *[!0-9]*) : ;;
     *)
       if [ "$restarts" -gt "$base_restarts" ]; then
-        echo "deploy verification failed: container restarted during startup (restart count ${base_restarts} -> ${restarts})" >&2
+        printf 'deploy verification failed: container restarted during startup (restart count %s -> %s)\n' "$base_restarts" "$restarts" >&2
         exit 1
       fi
       ;;

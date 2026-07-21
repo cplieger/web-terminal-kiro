@@ -277,7 +277,7 @@ func main() {
 	cmd := sessionCommand(cliPath, chatArgs...)
 
 	mux := http.NewServeMux()
-	var ready atomic.Bool
+	var ready webhttp.Ready
 
 	mgr, cspPolicy, err := registerRoutes(mux, &routeDeps{
 		staticFS:        staticFS,
@@ -324,7 +324,7 @@ func main() {
 	defer stop()
 
 	slog.Info("web-terminal-kiro listening", "addr", addr, "cli_path", cliPath, "work_dir", workDir)
-	ready.Store(true)
+	ready.Set(true)
 
 	// The pre-drain hook flips readiness false and cancels in-flight request
 	// contexts before webhttp.Run drains, so /api/health reports 503 during the
@@ -335,7 +335,7 @@ func main() {
 	if err := webhttp.Run(ctx, srv, ln, func(context.Context) { mgr.Shutdown() },
 		webhttp.WithShutdownGrace(5*time.Second),
 		webhttp.WithPreDrain(func(context.Context) {
-			ready.Store(false)
+			ready.Set(false)
 			cancelBase()
 			slog.Info("shutting down", "cause", context.Cause(ctx))
 		})); err != nil {
@@ -345,7 +345,7 @@ func main() {
 		// cancellation from a spontaneous early child failure (the normal
 		// SIGTERM path clears it in the pre-drain hook; this fatal path must
 		// do the same or a teardown would emit a false broken-install alert).
-		ready.Store(false)
+		ready.Set(false)
 		mgr.Shutdown()
 		tools.close()
 		os.Exit(1) //nolint:gocritic // exitAfterDefer: a failed Serve must exit non-zero; the deferred stop()/cancelBase() only release signal+context state the process exit reclaims anyway.
@@ -406,7 +406,12 @@ func startTools(cfg baseTools) toolsRuntime {
 	})
 	if err != nil {
 		slog.Error("tools engine failed to start; continuing without it", "error", err)
-		return toolsRuntime{}
+		// Unlike the missing-config-dir path (an intentionally disabled
+		// subsystem: zero runtime, no health detail), a FAILED production
+		// subsystem must stay visible: report state "degraded" so
+		// /api/health carries the documented informational tools field.
+		// engine and syncing stay nil so sessions remain ungated.
+		return toolsRuntime{state: func() string { return "degraded" }}
 	}
 
 	var syncing atomic.Bool

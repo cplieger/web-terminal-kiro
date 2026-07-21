@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
 
 	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/webhttp"
 )
 
 // TestSessionFastDeathWarn pins the operator-facing fast-death signal wired in
@@ -39,8 +39,8 @@ func TestSessionFastDeathWarn(t *testing.T) {
 		t.Helper()
 		records := capture.Default(t) // before registerRoutes: the factory derives its logger from slog.Default()
 		mux := http.NewServeMux()
-		var r atomic.Bool
-		r.Store(ready)
+		var r webhttp.Ready
+		r.Set(ready)
 		deps := &routeDeps{
 			staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 			ready:    &r,

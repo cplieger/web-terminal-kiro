@@ -20,6 +20,7 @@ import (
 
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/web-terminal-engine/v3/terminal"
+	"github.com/cplieger/webhttp"
 )
 
 // TestDebugRoutesNotExposed pins the route surface of registerRoutes: the
@@ -32,7 +33,7 @@ import (
 // silently.
 func TestDebugRoutesNotExposed(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
+	var ready webhttp.Ready
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -65,7 +66,7 @@ func TestDebugRoutesNotExposed(t *testing.T) {
 // returns 200. The atomic flag is the only thing that flips the branch.
 func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
+	var ready webhttp.Ready
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -88,7 +89,7 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 		t.Errorf("before ready: status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
 	}
 
-	ready.Store(true)
+	ready.Set(true)
 	if rec := get(); rec.Code != http.StatusOK {
 		t.Errorf("after ready: status = %d, want %d", rec.Code, http.StatusOK)
 	}
@@ -107,8 +108,8 @@ func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
 
 	newMux := func(markerPath string) *http.ServeMux {
 		mux := http.NewServeMux()
-		var ready atomic.Bool
-		ready.Store(true)
+		var ready webhttp.Ready
+		ready.Set(true)
 		deps := &routeDeps{
 			staticFS:        fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 			ready:           &ready,
@@ -191,7 +192,7 @@ func TestKiroCacheControl(t *testing.T) {
 // web-terminal-server's TestStaticHandlerETagAndRevalidation.
 func TestStaticETagRevalidation(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
+	var ready webhttp.Ready
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -244,8 +245,8 @@ func TestStaticETagRevalidation(t *testing.T) {
 // SSE stream.
 func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
-	ready.Store(true)
+	var ready webhttp.Ready
+	ready.Set(true)
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -303,7 +304,7 @@ const sessionCreateBurst = 6
 // could not detect.
 func TestCreateRateLimit(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
+	var ready webhttp.Ready
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -353,8 +354,8 @@ func TestCreateRateLimit(t *testing.T) {
 // tracks what the server actually sends.
 func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
-	ready.Store(true)
+	var ready webhttp.Ready
+	ready.Set(true)
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -485,8 +486,8 @@ func TestBuildCSPPolicyFailsLoud(t *testing.T) {
 // re-open cross-site WebSocket hijacking. This test fails if that happens.
 func TestWSRejectsCrossOrigin(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
-	ready.Store(true)
+	var ready webhttp.Ready
+	ready.Set(true)
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -534,8 +535,8 @@ func TestWSRejectsCrossOrigin(t *testing.T) {
 // the 403 is specifically the same-origin (CSWSH) check, not a blanket refusal.
 func TestWSAcceptsSameOrigin(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
-	ready.Store(true)
+	var ready webhttp.Ready
+	ready.Set(true)
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -610,8 +611,8 @@ func TestClassifyStatus(t *testing.T) {
 func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
 	newMux := func(ready bool, markerPath string) *http.ServeMux {
 		mux := http.NewServeMux()
-		var r atomic.Bool
-		r.Store(ready)
+		var r webhttp.Ready
+		r.Set(ready)
 		deps := &routeDeps{
 			staticFS:        fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 			ready:           &r,
@@ -661,8 +662,8 @@ func newToolsDeps(t *testing.T) *routeDeps {
 		t.Fatalf("toolbelt.New: %v", err)
 	}
 	t.Cleanup(eng.Close)
-	var ready atomic.Bool
-	ready.Store(true)
+	var ready webhttp.Ready
+	ready.Set(true)
 	return &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -730,7 +731,7 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 // pattern, falling through to the static catch-all.
 func TestToolsAPI_AbsentWithoutEngine(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
+	var ready webhttp.Ready
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -820,7 +821,7 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 // error, never register routes with a silently-degraded CSP.
 func TestRegisterRoutes_failsLoudOnMalformedStatic(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
+	var ready webhttp.Ready
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(`<script src="/app.js"></script>`)}},
 		ready:    &ready,

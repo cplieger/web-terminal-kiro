@@ -10,10 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/toolbelt/v2"
+	"github.com/cplieger/webhttp"
 )
 
 // countLevel reports how many captured records at exactly the given level
@@ -261,8 +263,14 @@ func TestStartTools_configDirMissing(t *testing.T) {
 
 // TestStartTools_engineStartFailure pins degraded-not-dead: a config dir whose
 // tools.json is the retired v1 format fails toolbelt.New (strict v2 schema),
-// and startTools logs the Error and continues with the zero runtime instead of
-// taking the server down. Serial: mutates the global default logger.
+// and startTools logs the Error and continues without an engine instead of
+// taking the server down. Unlike the missing-config-dir path (an intentionally
+// disabled subsystem: zero runtime, health omits the tools field entirely), a
+// FAILED production subsystem must stay visible: the returned runtime carries
+// state "degraded" so /api/health reports {"status":"ok","tools":"degraded"}
+// per the documented tools=syncing|ok|degraded contract, while engine and
+// syncing stay nil so sessions remain ungated. Serial: mutates the global
+// default logger.
 func TestStartTools_engineStartFailure(t *testing.T) {
 	records := capture.Default(t)
 
@@ -275,11 +283,45 @@ func TestStartTools_engineStartFailure(t *testing.T) {
 	rt := startTools(baseTools{configDir: dir, catalogPath: filepath.Join(dir, "absent-catalog.json")})
 
 	if rt.engine != nil {
-		t.Fatal("engine is non-nil despite a failed toolbelt.New; want the zero runtime (degraded-not-dead)")
+		t.Fatal("engine is non-nil despite a failed toolbelt.New; want no engine (degraded-not-dead)")
+	}
+	if rt.syncing != nil {
+		t.Error("syncing is non-nil despite a failed toolbelt.New; sessions must remain ungated")
+	}
+	if rt.state == nil {
+		t.Fatal("state is nil despite a failed toolbelt.New; the health tools field would be omitted, hiding the failure from health consumers")
+	}
+	if got := rt.state(); got != "degraded" {
+		t.Errorf("state after failed engine start = %q, want %q", got, "degraded")
 	}
 	rt.close()
 	if got := countLevel(records, slog.LevelError, "tools engine failed to start"); got != 1 {
 		t.Errorf("log = %q, want exactly one failed-to-start Error (got %d)", records.Messages(), got)
+	}
+
+	// Focused health assertion: an engine-initialization failure surfaces as
+	// {"status":"ok","tools":"degraded"} — readiness is unaffected (kiro-cli
+	// is the only core dependency) but the dependency failure is visible.
+	mux := http.NewServeMux()
+	var ready webhttp.Ready
+	ready.Set(true)
+	deps := &routeDeps{
+		staticFS:   fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
+		ready:      &ready,
+		workDir:    "",
+		cmd:        []string{"/bin/cat"},
+		tools:      rt.engine,
+		toolsState: rt.state,
+	}
+	mgr, _, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tools":"degraded"`) {
+		t.Errorf("health after failed engine start = %d %s, want 200 with tools:degraded", rec.Code, rec.Body.String())
 	}
 }
 

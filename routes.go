@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/toolbelt/v2"
@@ -20,7 +19,7 @@ import (
 
 type routeDeps struct {
 	staticFS fs.FS
-	ready    *atomic.Bool
+	ready    *webhttp.Ready
 	// tools, when non-nil, mounts the toolbelt httpapi projection at
 	// /api/tools behind the loopback gate; toolsSyncing gates session
 	// creation on the boot convergence pass; toolsState feeds the
@@ -39,12 +38,17 @@ type routeDeps struct {
 	cmd             []string
 }
 
-// registerRoutes wires the full route table on mux and returns the session
-// manager (for shutdown) plus the hash-pinned CSP policy string built from the
-// embedded index.html (for buildHandler's SecurityHeaders layer) — both derive
-// from the same static tree, so they are assembled together, fail-loud.
-func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManager, string, error) {
-	sub, err := fs.Sub(deps.staticFS, "static")
+// buildStaticSurface assembles the embedded-static serving surface: the
+// static handler and the hash-pinned CSP policy string built from the same
+// static tree, fail-loud on a malformed embed. webhttp.StaticHandler supplies
+// the embedded-static mechanism (per-file content-hash ETags — embed.FS
+// reports a zero ModTime, so a bare http.FileServer emits no validator and
+// every load re-downloads the bundle — plus precomputed gzip and
+// Vary: Accept-Encoding); the per-path cache POLICY stays this app's
+// (kiroCacheControl below). Same helper as web-terminal-server, so the two
+// family shells cannot drift on the mechanism again.
+func buildStaticSurface(staticFS fs.FS) (http.Handler, string, error) {
+	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		return nil, "", err
 	}
@@ -52,14 +56,19 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	if err != nil {
 		return nil, "", err
 	}
-	// webhttp.StaticHandler supplies the embedded-static mechanism (per-file
-	// content-hash ETags — embed.FS reports a zero ModTime, so a bare
-	// http.FileServer emits no validator and every load re-downloads the
-	// bundle — plus precomputed gzip and Vary: Accept-Encoding); the per-path
-	// cache POLICY stays this app's (kiroCacheControl below). Same helper as
-	// web-terminal-server, so the two family shells cannot drift on the
-	// mechanism again.
 	staticSrv, err := webhttp.StaticHandler(sub, webhttp.WithStaticCacheControl(kiroCacheControl))
+	if err != nil {
+		return nil, "", err
+	}
+	return staticSrv, cspPolicy, nil
+}
+
+// registerRoutes wires the full route table on mux and returns the session
+// manager (for shutdown) plus the hash-pinned CSP policy string built from the
+// embedded index.html (for buildHandler's SecurityHeaders layer) — both derive
+// from the same static tree, so they are assembled together, fail-loud.
+func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManager, string, error) {
+	staticSrv, cspPolicy, err := buildStaticSurface(deps.staticFS)
 	if err != nil {
 		return nil, "", err
 	}
@@ -113,7 +122,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 			// exits while still serving are promoted to Warn; intentional
 			// shutdowns keep the engine's normal INFO exit record.
 			terminal.WithOnProcessExit(func(err error) {
-				if err != nil && deps.ready.Load() && time.Since(start) < 10*time.Second {
+				if err != nil && deps.ready.Ready() && time.Since(start) < 10*time.Second {
 					sessionLogger.Warn("session process exited almost immediately after start; kiro-cli may be missing or broken",
 						"error", err,
 						"hint", "check /api/health and the kiro-cli install under /config/tools/bin")
@@ -181,7 +190,7 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 				"reason": reason,
 			})
 		}
-		if !deps.ready.Load() {
+		if !deps.ready.Ready() {
 			unready("starting up or shutting down")
 			return
 		}
@@ -218,8 +227,9 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 // status for the tab activity dots: "Response complete" at the end of an agent
 // turn latches the done (green) state, and "Permission required" when a tool
 // call is blocked on approval latches the needs-input (amber) state (confirmed
-// against the 2.11.0 build; the pin has since moved — re-verify both strings
-// after every kiro-cli bump). A new working phase (the OSC 9;4 progress
+// against the pinned 2.13.0 build's notifier call sites — re-verify both
+// strings after every kiro-cli bump, in the same PR as the pin move). A new
+// working phase (the OSC 9;4 progress
 // signal, enabled by the factory's TERM_PROGRAM) clears the latch. Any other
 // message is ignored. This mapping is the only kiro-cli-specific coupling; the
 // engine stays generic (a plain shell server sets no classifier and derives

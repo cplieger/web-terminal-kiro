@@ -78,7 +78,7 @@ if ! rm -f "$KIRO_CLI_READY_MARKER"; then
   exit 1
 fi
 
-install_kiro_cli() {
+install_kiro_cli() (
   printf 'level=info msg="installing kiro-cli" version=%s component=entrypoint\n' "$KIRO_CLI_VERSION" >&2
   printf 'level=info msg="kiro-cli is proprietary AWS Content; by installing you accept the AWS Customer Agreement" license=https://kiro.dev/license/ component=entrypoint\n' >&2
 
@@ -86,7 +86,7 @@ install_kiro_cli() {
   # https://kiro.dev/docs/cli/installation/ ("With a zip file" section).
   # We pin the version (not /latest/) so a given image tag is reproducible,
   # and verify the sha256 before running install.sh.
-  local arch zip_url tmpdir zip
+  local arch zip_url tmpdir='' zip install_log=''
   case "$(uname -m)" in
     x86_64) arch="x86_64-linux" ;;
     aarch64) arch="aarch64-linux" ;;
@@ -98,18 +98,20 @@ install_kiro_cli() {
   zip_url="https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-${arch}.zip"
 
   tmpdir=$(mktemp -d) || return 1
+  # Single cleanup owner for both temp resources: the function body runs in a
+  # subshell (note the `(` after the function name), so this EXIT trap fires
+  # once per invocation on every return path — no per-branch rm bookkeeping.
+  trap 'rm -rf "$tmpdir"; [ -z "$install_log" ] || rm -f "$install_log"' EXIT
   zip="$tmpdir/kirocli.zip"
 
   if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
     --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 \
     "$zip_url" -o "$zip"; then
     printf 'level=error msg="failed to download kiro-cli zip" url="%s" component=entrypoint\n' "$zip_url" >&2
-    rm -rf "$tmpdir"
     return 1
   fi
   if [ ! -s "$zip" ]; then
     printf 'level=error msg="kiro-cli zip is empty (partial download?)" component=entrypoint\n' >&2
-    rm -rf "$tmpdir"
     return 1
   fi
 
@@ -126,14 +128,12 @@ install_kiro_cli() {
   if [ "$actual" != "$expected" ]; then
     printf 'level=error msg="kiro-cli SHA-256 mismatch; refusing install (bump KIRO_CLI_VERSION and both KIRO_CLI_SHA256* literals together)" arch=%s expected=%s actual=%s component=entrypoint\n' \
       "$arch" "$expected" "$actual" >&2
-    rm -rf "$tmpdir"
     return 1
   fi
   printf 'level=info msg="kiro-cli SHA-256 verified against pinned hash" arch=%s component=entrypoint\n' "$arch" >&2
 
   if ! unzip -q "$zip" -d "$tmpdir"; then
     printf 'level=error msg="failed to extract kiro-cli zip" component=entrypoint\n' >&2
-    rm -rf "$tmpdir"
     return 1
   fi
 
@@ -143,14 +143,10 @@ install_kiro_cli() {
   # whether the binary it drops at $HOME/.local/bin/kiro-cli reports
   # the version we pinned. Capture install.sh output to a tempfile so
   # we can surface it on failure.
-  local install_log install_rc
-  install_log=$(mktemp) || {
-    rm -rf "$tmpdir"
-    return 1
-  }
+  local install_rc
+  install_log=$(mktemp) || return 1
   timeout --signal=TERM --kill-after=15s 120s "$tmpdir/kirocli/install.sh" --no-confirm </dev/null >"$install_log" 2>&1
   install_rc=$?
-  rm -rf "$tmpdir"
   # 124 = TERM deadline hit, 137 = the --kill-after SIGKILL fallback fired.
   # Log deadline exhaustion distinctly so Loki shows a wedged installer
   # rather than a generic install failure.
@@ -163,7 +159,6 @@ install_kiro_cli() {
       "$HOME" "$install_rc" >&2
     printf 'install.sh output:\n' >&2
     cat "$install_log" >&2
-    rm -f "$install_log"
     return 1
   fi
   local installed
@@ -173,10 +168,8 @@ install_kiro_cli() {
       "${installed:-unknown}" "$KIRO_CLI_VERSION" "$install_rc" >&2
     printf 'install.sh output:\n' >&2
     cat "$install_log" >&2
-    rm -f "$install_log"
     return 1
   fi
-  rm -f "$install_log"
 
   # Promote to the canonical /config/tools/bin/ location so PATH
   # ordering (which puts /config/tools/bin first) and any in-process
@@ -187,7 +180,7 @@ install_kiro_cli() {
   }
   mv -f "$HOME/.local/bin/kiro-cli-chat" "$TOOLS/bin/kiro-cli-chat" 2>/dev/null || true
   mv -f "$HOME/.local/bin/kiro-cli-term" "$TOOLS/bin/kiro-cli-term" 2>/dev/null || true
-}
+)
 
 # Reinstall when either the binary is missing or the on-disk version
 # drifts from KIRO_CLI_VERSION. The binary lives on the persistent
