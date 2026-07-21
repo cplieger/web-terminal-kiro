@@ -103,6 +103,17 @@ func parseAllowedHosts() map[string]struct{} {
 		if entry == "" {
 			continue
 		}
+		// A Host header never contains "/", so an entry carrying one (a
+		// pasted URL like http://host, a path, or a CIDR confused with
+		// TRUSTED_PROXIES's format) canonicalizes to a value that cannot
+		// match the operator's intended hostname: every request then 403s
+		// with no hint why. Warn (named, like parseTrustedProxies) but keep
+		// the entry — acceptance is unchanged.
+		if strings.Contains(entry, "/") {
+			slog.Warn("KWEB_ALLOWED_HOSTS entry is not a bare hostname/IP and will not match the intended host",
+				"entry", entry,
+				"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.168.1.5,webterm.example.com")
+		}
 		allowed[canonicalHost(entry)] = struct{}{}
 	}
 	if len(allowed) == 0 {
@@ -247,7 +258,7 @@ func main() {
 	// README's "keep it loopback" mitigation does not cover it. Warn.
 	allowedHosts := parseAllowedHosts()
 	if allowedHosts == nil {
-		slog.Warn("KWEB_ALLOWED_HOSTS is unset; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
+		slog.Warn("KWEB_ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
 			"hint", "set KWEB_ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,webterm.example.com)")
 	}
 
@@ -303,11 +314,9 @@ func main() {
 	// (ReadHeaderTimeout 10s, IdleTimeout 120s, Read/WriteTimeout unset) that the
 	// hijacked /ws stream needs.
 	srv := webhttp.NewServer(buildHandler(mux, trustedProxies, cspPolicy, allowedHosts))
-	// BaseContext hands every request a context we can cancel on shutdown (see
-	// the shutdown goroutine): the always-open /api/sessions/events SSE handler
-	// returns only on r.Context().Done(), and srv.Shutdown does not interrupt an
-	// active stream, so cancelling baseCtx is what unblocks the drain instead of
-	// blocking the full grace window whenever a browser tab is open.
+	// BaseContext hands every request a context that the WithPreDrain hook below
+	// cancels on shutdown; see that hook's comment for why cancelling baseCtx
+	// (not srv.Shutdown) is what unblocks the always-open SSE stream.
 	srv.BaseContext = func(net.Listener) context.Context { return baseCtx }
 
 	ctx, stop := signal.NotifyContext(context.Background(),
@@ -472,8 +481,8 @@ func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 // buildHandler wraps the route mux in web-terminal-kiro's middleware stack via
 // webhttp.Chain. Chain(h, A, B, C, D) == A(B(C(D(h)))), so the first entry is
 // the outermost wrapper; a request flows Logging -> Recoverer ->
-// SecurityHeaders -> CrossOriginProtection -> mux, and the response unwinds the
-// other way.
+// SecurityHeaders -> hostAllowlist -> CrossOriginProtection -> mux, and the
+// response unwinds the other way.
 //
 //   - Logging — webhttp's access logger. Outermost so it observes every final
 //     status, including a recovered 500 and a cross-origin 403. WithClientIP is

@@ -128,7 +128,7 @@ assert at least once (`expect.requireAssertions`) and `.only` is forbidden.
   `webhttp.WriteJSON`, `webhttp.WriteJSONStatus`, `webhttp.Ok`, and
   `webhttp.WriteError` (the JSON error envelope).
 - **Client-local vs library code.** `static-src/app.ts` is the only client
-  source Web Terminal for Kiro owns — a single `createTerminal(root, { features: presetAgentTabbed(), theme })` call (the theme is Web Terminal for Kiro's purple token set; `presetAgentTabbed` pulls in tabs, the activity monitor, touch toolbar, context menu, clipboard, scroll-to-bottom, predictive echo, connection banner, and animations). The input model,
+  source Web Terminal for Kiro owns — a `createTerminal(root, { features: presetAgentTabbed(), theme })` call plus a small bootstrap-failure handler (`showFatal`, which surfaces a missing `#terminal` root or a `createTerminal` throw on the pre-JS `#loading` overlay as a `role="alert"` message with a Reload button) (the theme is Web Terminal for Kiro's purple token set; `presetAgentTabbed` pulls in tabs, the activity monitor, touch toolbar, context menu, clipboard, scroll-to-bottom, predictive echo, connection banner, and animations). The input model,
   IME/composition, predictive echo, viewport, mobile key toolbar, and status
   banner, plus the render / keyboard / scroll / connection layers, all live in
   `@cplieger/web-terminal-ui` (built on `@cplieger/web-terminal-engine`);

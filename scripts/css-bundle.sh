@@ -14,6 +14,12 @@ tmp=$(mktemp "${out}.XXXXXX")
 trap 'rm -f "$tmp"' EXIT HUP INT TERM
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in '' | \#*) continue ;; esac
+  case "$line" in
+    /* | ../* | */../* | */.. | ..)
+      printf 'css-bundle: MANIFEST entry escapes css dir, refusing: %s\n' "$line" >&2
+      exit 1
+      ;;
+  esac
   cat "${css_dir}/${line}" >>"$tmp"
 done <"${css_dir}/MANIFEST"
 mv "$tmp" "$out"

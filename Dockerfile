@@ -351,6 +351,6 @@ EXPOSE 9848
 # not health status); under a liveness-acting orchestrator, wire /api/health
 # to a readinessProbe.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20m \
-    CMD curl -sf --max-time 4 http://127.0.0.1:9848/api/health || exit 1
+    CMD curl -sf --max-time 4 "http://127.0.0.1:${KWEB_ADDR##*:}/api/health" || exit 1
 
 ENTRYPOINT ["/opt/web-terminal-kiro/entrypoint.sh"]

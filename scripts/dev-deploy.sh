@@ -62,15 +62,22 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     exit 1
   fi
   case "${restarts}${base_restarts}" in
-  *[!0-9]*) : ;; # an inspect failed; skip the restart comparison this sample
-  *)
-    if [ "$restarts" -gt "$base_restarts" ]; then
-      echo "deploy verification failed: container restarted during startup (restart count ${base_restarts} -> ${restarts})" >&2
-      exit 1
-    fi
-    ;;
+    *[!0-9]*)
+      # An inspect failed this sample. If only the BASELINE is non-numeric (the
+      # post-restart inspect blipped), adopt the first numeric sample as the
+      # baseline so a single blip doesn't disable the restart-growth crash
+      # detector for the entire poll.
+      case "$restarts" in '' | *[!0-9]*) : ;; *) base_restarts="$restarts" ;; esac
+      ;;
+    *)
+      if [ "$restarts" -gt "$base_restarts" ]; then
+        echo "deploy verification failed: container restarted during startup (restart count ${base_restarts} -> ${restarts})" >&2
+        exit 1
+      fi
+      ;;
   esac
-  code=$(curl -sf -m5 -o /dev/null -w "%{http_code}" "http://${HOST}:9849/api/health" || echo "ERR")
+  code=$(curl -sf -m5 -o /dev/null -w "%{http_code}" "http://${HOST}:9849/api/health") || true
+  case "$code" in '' | 000) code="ERR" ;; esac
   [ "$code" = "200" ] && break
   sleep 5
 done

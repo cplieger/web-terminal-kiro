@@ -31,6 +31,10 @@
       }
       #loading.fade {
         opacity: 0;
+        /* the kernel removes the node on transitionend (1.5s fallback); until
+           then the invisible full-viewport overlay must not swallow the first
+           tap-to-focus on the freshly rendered terminal */
+        pointer-events: none;
       }
       #loading[role="alert"] {
         flex-direction: column;

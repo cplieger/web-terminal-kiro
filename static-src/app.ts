@@ -64,11 +64,12 @@ try {
     features: presetAgentTabbed(),
     // web-terminal-kiro's purple theme (the consumer "settings"; the UI library ships the
     // neutral defaults). Recolors hovered/active tabs and the accent icons (the
-    // mobile "+", the toggled keyboard button). The active-tab border is set
-    // explicitly because the library resolves its default once at :root, so
-    // overriding the fill alone leaves the border the light-blue default; we
-    // re-declare the same subtle formula (the purple fill lightened + slightly
-    // desaturated) so the edge stays low-saturation, not a vivid outline.
+    // mobile "+", the toggled keyboard button). Since web-terminal-ui v4 all tokens
+    // live on .wt-root -- the element the theme is applied to -- so the library's
+    // --tab-active-border derivation (the fill lightened + slightly desaturated)
+    // already follows an overridden fill; the explicit re-declaration below is a
+    // deliberate pin of that same formula, kept so the edge stays low-saturation
+    // even if the library's derivation formula changes.
     theme: {
       "--accent": "hsl(263.1683 100% 80%)",
       "--tab-hover-bg": "hsl(263.1683 100% 80% / 16%)",

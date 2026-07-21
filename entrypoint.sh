@@ -181,7 +181,10 @@ install_kiro_cli() {
   # Promote to the canonical /config/tools/bin/ location so PATH
   # ordering (which puts /config/tools/bin first) and any in-process
   # absolute-path references resolve to the freshly installed binary.
-  mv -f "$HOME/.local/bin/kiro-cli" "$BIN" || return 1
+  mv -f "$HOME/.local/bin/kiro-cli" "$BIN" || {
+    printf 'level=error msg="failed to promote kiro-cli binary to tools bin" src="%s/.local/bin/kiro-cli" dest="%s" component=entrypoint\n' "$HOME" "$BIN" >&2
+    return 1
+  }
   mv -f "$HOME/.local/bin/kiro-cli-chat" "$TOOLS/bin/kiro-cli-chat" 2>/dev/null || true
   mv -f "$HOME/.local/bin/kiro-cli-term" "$TOOLS/bin/kiro-cli-term" 2>/dev/null || true
 }
@@ -216,17 +219,26 @@ fi
 # of truth, kept current by Renovate against the public install
 # manifest. Letting kiro-cli silently replace itself would invalidate
 # the pinned SHA and break image-tag reproducibility.
+# kiro_setting applies one kiro-cli settings call, logging a structured warn on
+# failure (log-only breadcrumb; exit behavior unchanged — a settings failure
+# must not block boot, but a silent one leaves e.g. auto-update enabled or the
+# OSC 9 notification path off with no trail in Loki).
+kiro_setting() {
+  if ! timeout --signal=TERM --kill-after=5s 10s "$BIN" settings "$1" "$2" >/dev/null 2>&1; then
+    printf 'level=warn msg="kiro-cli settings call failed; dependent feature may misbehave" setting=%s value=%s component=entrypoint\n' "$1" "$2" >&2
+  fi
+}
 if [ -x "$BIN" ]; then
-  timeout --signal=TERM --kill-after=5s 10s "$BIN" settings telemetry.enabled false >/dev/null 2>&1 || true
-  timeout --signal=TERM --kill-after=5s 10s "$BIN" settings app.disableAutoupdates true >/dev/null 2>&1 || true
+  kiro_setting telemetry.enabled false
+  kiro_setting app.disableAutoupdates true
   # Enable kiro-cli's OSC 9 desktop-notification escape so web-terminal-kiro's tab
   # activity monitor can classify turn-end ("Response complete") and
   # tool-approval ("Permission required") into per-tab status dots. osc9 emits
   # the notification inline in the PTY stream (the only method that reaches a
   # browser terminal); the server holds each session "unfocused" so kiro-cli's
   # focus-gated notifier keeps firing even with no focused browser tab.
-  timeout --signal=TERM --kill-after=5s 10s "$BIN" settings chat.enableNotifications true >/dev/null 2>&1 || true
-  timeout --signal=TERM --kill-after=5s 10s "$BIN" settings chat.notificationMethod osc9 >/dev/null 2>&1 || true
+  kiro_setting chat.enableNotifications true
+  kiro_setting chat.notificationMethod osc9
   # Explicitly disable kiro-cli's dynamic terminal title. Its OSC 0 title only
   # reflects the cwd for a live session (it reloads its session title just on a
   # session-id change, not per turn). The web-terminal-ui tabs feature PREFERS
@@ -235,7 +247,7 @@ if [ -x "$BIN" ]; then
   # (not merely unset) so a container that previously persisted it true gets it
   # turned off on restart. With it off, the tabs feature titles each tab from
   # the user's last submitted line instead.
-  timeout --signal=TERM --kill-after=5s 10s "$BIN" settings chat.terminalTitle false >/dev/null 2>&1 || true
+  kiro_setting chat.terminalTitle false
 fi
 
 # Publish the readiness marker (declared + cleared before provisioning above).
@@ -300,7 +312,9 @@ fi
 # added-line bg to #00FF00 through the truecolor path — unreadable.
 # Pinning both baseTheme and diffPreset to "dark" avoids this.
 theme_file="$HOME/.kiro/settings/kiro_cli_theme.json"
-mkdir -p "$(dirname "$theme_file")"
-printf '{"baseTheme":"dark","diffPreset":"dark"}\n' >"$theme_file"
+if ! mkdir -p "$(dirname "$theme_file")" \
+  || ! printf '{"baseTheme":"dark","diffPreset":"dark"}\n' >"$theme_file"; then
+  printf 'level=warn msg="failed to write kiro-cli theme file; diff colors may be unreadable" file="%s" component=entrypoint\n' "$theme_file" >&2
+fi
 
 exec /app/web-terminal-kiro

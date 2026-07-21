@@ -138,7 +138,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	// topology lives in the engine, the throttle policy in webhttp; this app
 	// just composes the two.
 	// The create gate composes two layers: the fleet-standard create
-	// rate limit (outer), and — while the tools boot convergence runs —
+	// rate limit (inner), and — checked before it while the tools boot convergence runs —
 	// a 503 that keeps the FIRST kiro-cli session from spawning before
 	// the manifest's language servers are on PATH (kiro-cli scans PATH
 	// once at session start). Static assets, /api/health, and the tools
@@ -218,7 +218,8 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 // status for the tab activity dots: "Response complete" at the end of an agent
 // turn latches the done (green) state, and "Permission required" when a tool
 // call is blocked on approval latches the needs-input (amber) state (confirmed
-// against the pinned 2.11.0 build). A new working phase (the OSC 9;4 progress
+// against the 2.11.0 build; the pin has since moved — re-verify both strings
+// after every kiro-cli bump). A new working phase (the OSC 9;4 progress
 // signal, enabled by the factory's TERM_PROGRAM) clears the latch. Any other
 // message is ignored. This mapping is the only kiro-cli-specific coupling; the
 // engine stays generic (a plain shell server sets no classifier and derives
