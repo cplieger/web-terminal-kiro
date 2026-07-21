@@ -239,15 +239,9 @@ RUN mapfile -t ui_ts < <(find static-src/node_modules/@cplieger/web-terminal-ui/
         --strict \
         "${ui_ts[@]}"
 
-# Concatenate the UI package's per-feature CSS splits into the served bundle.
-# Behavior: skip blank lines and #-comments, cat each listed file
-# (paths relative to manifest dir) into the output.
-RUN set -eu; \
-    : > static/style.css; \
-    while IFS= read -r line || [ -n "$line" ]; do \
-        case "$line" in ''|\#*) continue ;; esac; \
-        cat "static-src/node_modules/@cplieger/web-terminal-ui/css/${line}" >> static/style.css; \
-    done < static-src/node_modules/@cplieger/web-terminal-ui/css/MANIFEST
+# Concatenate the UI package's per-feature CSS splits into the served bundle
+# (canonical recipe: scripts/css-bundle.sh, shared with scripts/dev-build.sh).
+RUN sh scripts/css-bundle.sh static-src/node_modules/@cplieger/web-terminal-ui/css static/style.css
 
 # Build the Go binary with static assets embedded via go:embed.
 # CGO disabled so the binary runs on any glibc.
@@ -264,6 +258,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # by entrypoint.sh (licensing prevents us from baking it into the
 # image); everything else is stable utility surface web-terminal-kiro or the
 # interactive user needs:
+#   - bash: the entrypoint interpreter (entrypoint.sh is a bash
+#     script; Debian's /bin/sh is dash)
 #   - ca-certificates + curl + unzip: kiro-cli installer + HTTPS trust
 #   - git: source control from inside the terminal (gh is NOT baked; it
 #     is opt-in via /config/tools.json)
@@ -278,6 +274,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 #     "error while loading shared libraries: libasound.so.2: cannot open
 #     shared object file". Surfaced once kiro-cli >= 2.6 started
 #     exercising the code path.
+#   - xz-utils: .tar.xz extraction for tools the toolbelt engine
+#     installs at runtime (several aqua/mise catalog entries ship
+#     .tar.xz archives)
 #
 # Session persistence is handled by the shared web-terminal-engine
 # vt package — the server keeps an authoritative cell buffer and
@@ -327,7 +326,8 @@ ENV KWEB_ADDR=:9848
 # via getpwuid, NOT $HOME) reads and writes ~/.ssh/known_hosts under
 # the persisted volume. Without this, every container recreation wipes
 # the host-key cache.
-RUN sed -i 's|^root:x:0:0:root:/root:|root:x:0:0:root:/config/home:|' /etc/passwd
+RUN sed -i 's|^root:x:0:0:root:/root:|root:x:0:0:root:/config/home:|' /etc/passwd && \
+    grep -q '^root:.*:/config/home:' /etc/passwd
 
 COPY --from=builder /web-terminal-kiro /app/web-terminal-kiro
 COPY --from=builder /tmp/tool-catalog.json /app/tool-catalog.json

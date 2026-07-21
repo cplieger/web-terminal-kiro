@@ -156,7 +156,7 @@ func TestBuildHandlerClientIPThreading(t *testing.T) {
 			// returns, so buf is populated with no goroutine race. The CSP value
 			// is irrelevant to client-IP resolution; a fixed policy keeps the
 			// stack shape production-true.
-			buildHandler(mux, tc.trusted, "default-src 'self'").ServeHTTP(httptest.NewRecorder(), req)
+			buildHandler(mux, tc.trusted, "default-src 'self'", nil).ServeHTTP(httptest.NewRecorder(), req)
 
 			want := "client_ip=" + tc.wantIP
 			if !strings.Contains(buf.String(), want) {

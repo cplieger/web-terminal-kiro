@@ -72,17 +72,21 @@ mapfile -t ui_ts < <(find "$UI_PKG/src" -name '*.ts')
   --rootDir "$UI_PKG/src" --skipLibCheck --strict "${ui_ts[@]}"
 
 echo "[5/6] fonts (Monaspace Nerd Font, cached) + CSS bundle (from UI package)"
-FONT_CACHE="${HOME}/.cache/web-terminal-kiro-fonts"
 # Single source of truth: the Dockerfile's Renovate-managed NERDFONT_* ARGs.
 FONT_VER="$(sed -n 's/^ARG NERDFONT_VERSION=//p' Dockerfile)"
 FONT_SHA256="$(sed -n 's/^ARG NERDFONT_SHA256=//p' Dockerfile)"
 : "${FONT_VER:?failed to parse NERDFONT_VERSION from Dockerfile}"
 : "${FONT_SHA256:?failed to parse NERDFONT_SHA256 from Dockerfile}"
+# Version the cache dir so a NERDFONT_VERSION bump misses the cache instead of
+# silently reusing stale fonts (the existence-only guard below never re-checks;
+# old version dirs are tiny and rare enough to leave behind).
+FONT_CACHE="${HOME}/.cache/web-terminal-kiro-fonts/${FONT_VER}"
 mkdir -p "$FONT_CACHE" static/vendor/fonts
 if [ ! -f "$FONT_CACHE/MonaspiceNeNerdFontMono-Regular.otf" ]; then
   echo "  downloading Monaspace ${FONT_VER}..."
   mona_tmp="$(mktemp)"
-  curl --proto '=https' --tlsv1.2 -fsSL \
+  trap 'rm -f "$mona_tmp"' EXIT
+  curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
     "https://github.com/ryanoasis/nerd-fonts/releases/download/${FONT_VER}/Monaspace.tar.xz" \
     -o "$mona_tmp"
   printf '%s  %s\n' "$FONT_SHA256" "$mona_tmp" | sha256sum -c -
@@ -95,11 +99,7 @@ if [ ! -f "$FONT_CACHE/MonaspiceNeNerdFontMono-Regular.otf" ]; then
 fi
 cp "$FONT_CACHE"/MonaspiceNeNerdFontMono-*.otf static/vendor/fonts/
 
-: >static/style.css
-while IFS= read -r line || [ -n "$line" ]; do
-  case "$line" in '' | \#*) continue ;; esac
-  cat "$UI_DIR/css/${line}" >>static/style.css
-done <"$UI_DIR/css/MANIFEST"
+sh scripts/css-bundle.sh "$UI_DIR/css" static/style.css
 
 echo "[6/6] go build (CGO off, linux/amd64 host = container arch)"
 CGO_ENABLED=0 go build -trimpath -o web-terminal-kiro-dev-bin .

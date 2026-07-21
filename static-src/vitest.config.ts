@@ -24,12 +24,14 @@ export default defineConfig({
     // Test files co-located with source, named *.test.ts
     include: ["**/*.test.ts"],
 
-    // Exclude compiled output, plus Vitest's defaults (node_modules at
-    // any depth, .git). Spreading configDefaults.exclude avoids narrowing
-    // the built-in "**/node_modules/**" to a top-level-only glob.
+    // Vitest's defaults (node_modules at any depth, .git); spreading
+    // configDefaults.exclude avoids narrowing the built-in
+    // "**/node_modules/**" to a top-level-only glob.
     // "**/.code-review/**" keeps stray *.test.ts scratch (e.g. files written under
     // .code-review/tmp by tooling) from being collected and failing the run.
-    exclude: [...configDefaults.exclude, "../static/**", "**/.code-review/**"],
+    // (Compiled output under ../static needs no entry: include/exclude resolve
+    // against this directory, so files outside it are never collected.)
+    exclude: [...configDefaults.exclude, "**/.code-review/**"],
 
     // Forbid .only tests unconditionally — not just in CI.
     allowOnly: false,

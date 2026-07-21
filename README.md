@@ -57,6 +57,7 @@ The image ships working defaults; most setups only pick a port and a volume.
 | `KWEB_WORK_DIR` | `/workspace` | Directory each terminal session starts in (must exist). |
 | `KIRO_CLI_CHAT_ARGS` | _(unset)_ | Extra launch flags appended to every session's `kiro-cli chat` command, whitespace-separated (for example `--effort high` or `--v3`). Handy for opting into kiro-cli features ahead of the image's defaults. |
 | `TRUSTED_PROXIES` | _(unset)_ | Reverse-proxy CIDRs / bare IPs whose `X-Forwarded-For` the access log trusts to resolve `client_ip`. See [Behind a reverse proxy](#behind-a-reverse-proxy). |
+| `KWEB_ALLOWED_HOSTS` | _(unset)_ | Comma-separated exact hostnames/IPs the server answers for (e.g. `localhost,192.168.1.5,webterm.example.com`); a request with any other `Host` header is rejected. This blocks DNS-rebinding attacks, which can reach even a loopback- or LAN-bound terminal through your own browser, so set it for any long-running deployment (unset accepts every `Host` and logs a startup warning). |
 
 - **Port:** `9848` (HTTP + WebSocket).
 - **Volumes:** `/config` persists kiro-cli auth/tokens, installed tools, settings, and `~/.ssh` + git config; `/workspace` is your repositories / working directory.

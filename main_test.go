@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cplieger/toolbelt/v2"
 )
 
 // fakeCLI writes an executable shell stub standing in for kiro-cli. Its whoami
@@ -293,4 +297,238 @@ func TestStartTools_bootConvergenceLiftsGate(t *testing.T) {
 	if got := rt.state(); got != "ok" {
 		t.Errorf("state after convergence = %q, want %q (all seeded templates are disabled: nothing to install)", got, "ok")
 	}
+}
+
+// TestHostAllowlist pins the KWEB_ALLOWED_HOSTS anti-DNS-rebinding gate
+// through the real middleware stack (buildHandler): a rebinding attack makes
+// an attacker-controlled hostname resolve to this server, so Origin and Host
+// AGREE and CrossOriginProtection alone admits both session creation and the
+// /ws upgrade — the exact-host allowlist must reject those requests BEFORE
+// the terminal routes, while an explicitly allowed Host still reaches them.
+// Also pins canonicalization (port/case/trailing dot/IPv6 spelling), that
+// X-Forwarded-Host cannot bypass the check, that the cross-origin guard still
+// runs AFTER an allowed host, and that an unset allowlist stays permissive
+// (backward compatible).
+func TestHostAllowlist(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/sessions", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated) // stands in for REST session creation
+	})
+	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK) // stands in for the WebSocket upgrade route
+	})
+	do := func(h http.Handler, method, url, origin, xfh string) int {
+		req := httptest.NewRequest(method, url, nil)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		if xfh != "" {
+			req.Header.Set("X-Forwarded-Host", xfh)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	t.Setenv("KWEB_ALLOWED_HOSTS", "localhost, 192.168.1.5, ::1, Webterm.Example.COM.")
+	h := buildHandler(mux, nil, "default-src 'self'", parseAllowedHosts())
+
+	cases := []struct {
+		name        string
+		method, url string
+		origin, xfh string
+		want        int
+	}{
+		{
+			name:   "rebound host + matching Origin: session creation rejected",
+			method: "POST", url: "http://attacker.evil:9848/api/sessions",
+			origin: "http://attacker.evil:9848", want: http.StatusForbidden,
+		},
+		{
+			name:   "rebound host: ws upgrade rejected",
+			method: "GET", url: "http://attacker.evil:9848/ws", want: http.StatusForbidden,
+		},
+		{
+			name:   "X-Forwarded-Host cannot smuggle an allowed name",
+			method: "GET", url: "http://attacker.evil:9848/ws",
+			xfh: "localhost", want: http.StatusForbidden,
+		},
+		{
+			name:   "allowed host: session creation passes",
+			method: "POST", url: "http://localhost:9848/api/sessions",
+			origin: "http://localhost:9848", want: http.StatusCreated,
+		},
+		{
+			name:   "allowed host: ws upgrade passes",
+			method: "GET", url: "http://localhost:9848/ws", want: http.StatusOK,
+		},
+		{
+			name:   "allowed IP passes",
+			method: "GET", url: "http://192.168.1.5:9848/ws", want: http.StatusOK,
+		},
+		{
+			name:   "case + trailing dot + port canonicalize",
+			method: "GET", url: "http://WEBTERM.example.com:1234/ws", want: http.StatusOK,
+		},
+		{
+			name:   "IPv6 spelling canonicalizes",
+			method: "GET", url: "http://[0:0:0:0:0:0:0:1]:9848/ws", want: http.StatusOK,
+		},
+		{
+			name:   "allowed host but cross-origin POST still rejected",
+			method: "POST", url: "http://localhost:9848/api/sessions",
+			origin: "http://attacker.evil", want: http.StatusForbidden,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := do(h, tc.method, tc.url, tc.origin, tc.xfh); got != tc.want {
+				t.Errorf("%s %s = %d, want %d", tc.method, tc.url, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("unset allowlist stays permissive", func(t *testing.T) {
+		open := buildHandler(mux, nil, "default-src 'self'", nil)
+		if got := do(open, "GET", "http://anything.example:9848/ws", "", ""); got != http.StatusOK {
+			t.Errorf("GET /ws with nil allowlist = %d, want %d (unset KWEB_ALLOWED_HOSTS must stay backward compatible)", got, http.StatusOK)
+		}
+	})
+}
+
+// TestStartTools_reconcileFailureLiftsGateDegraded pins the degraded-not-dead
+// contract on the FAILURE path, which the happy-path convergence test cannot
+// reach: a manifest with an enabled tool the (absent) catalog cannot resolve
+// makes the boot reconcile job finish failed, and the syncing gate must STILL
+// lift — with verdict "degraded" — so session creation never answers 503
+// "tools installing" forever after a broken install. The install failure is
+// local (no catalog knowledge), so the test is offline and fast.
+func TestStartTools_reconcileFailureLiftsGateDegraded(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tools.json"),
+		[]byte(`{"version":2,"tools":{"no-such-tool-xyz":{}}}`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	rt := startTools(baseTools{configDir: dir, catalogPath: filepath.Join(dir, "absent-catalog.json")})
+	if rt.engine == nil {
+		t.Fatal("engine is nil for an existing config dir; want a running tools engine")
+	}
+	t.Cleanup(rt.close)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for rt.syncing() {
+		if time.Now().After(deadline) {
+			t.Fatal("boot convergence gate never lifted after a failed reconcile; session creation would 503 forever")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := rt.state(); got != "degraded" {
+		t.Errorf("state after failed reconcile = %q, want %q (a failed install must degrade, not stay syncing or report ok)", got, "degraded")
+	}
+}
+
+// TestStartTools_emptyManifestSkipsGate pins the job==nil short-circuit: a
+// pre-existing EMPTY manifest gives the boot reconcile nothing to converge
+// (Reconcile returns a nil job), so the gate must never engage and the verdict
+// is immediately "ok" — session creation is never blocked on a no-op pass.
+func TestStartTools_emptyManifestSkipsGate(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tools.json"),
+		[]byte(`{"version":2,"tools":{}}`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	rt := startTools(baseTools{configDir: dir, catalogPath: filepath.Join(dir, "absent-catalog.json")})
+	if rt.engine == nil {
+		t.Fatal("engine is nil for an existing config dir; want a running tools engine")
+	}
+	t.Cleanup(rt.close)
+
+	if rt.syncing() {
+		t.Error("syncing gate engaged for an empty manifest; want an immediate no-op (nothing to converge)")
+	}
+	if got := rt.state(); got != "ok" {
+		t.Errorf("state for an empty manifest = %q, want %q", got, "ok")
+	}
+}
+
+// TestWarnIfNoLSPEnabled pins both silent branches of the code-intelligence
+// nudge, which the boot-convergence path only exercises on the warning side:
+// an ENABLED catalog-marked language server must silence the Warn (the whole
+// point of the Lsp inventory marker), and an inventory read failure must skip
+// the nudge quietly (Debug only) instead of warning spuriously. Serial:
+// mutates the process-global default logger.
+func TestWarnIfNoLSPEnabled(t *testing.T) {
+	const warnMsg = "no language servers enabled"
+
+	newEngine := func(t *testing.T, manifest, catalog string) (*toolbelt.Engine, string) {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "tools.json"), []byte(manifest), 0o644); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		catalogPath := filepath.Join(dir, "catalog.json")
+		if catalog == "" {
+			catalogPath = filepath.Join(dir, "absent-catalog.json")
+		} else if err := os.WriteFile(catalogPath, []byte(catalog), 0o644); err != nil {
+			t.Fatalf("write catalog: %v", err)
+		}
+		eng, err := toolbelt.New(&toolbelt.Config{
+			ConfigDir:   dir,
+			ToolsDir:    filepath.Join(dir, "tools"),
+			CatalogPath: catalogPath,
+		})
+		if err != nil {
+			t.Fatalf("toolbelt.New: %v", err)
+		}
+		t.Cleanup(eng.Close)
+		return eng, dir
+	}
+	capture := func(t *testing.T) *bytes.Buffer {
+		t.Helper()
+		var buf bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+		t.Cleanup(func() { slog.SetDefault(prev) })
+		return &buf
+	}
+
+	t.Run("enabled catalog-marked LSP silences the warn", func(t *testing.T) {
+		eng, _ := newEngine(t,
+			`{"version":2,"tools":{"gopls":{}}}`,
+			`{"entries":{"gopls":{"name":"gopls","source":"go:golang.org/x/tools/gopls","lsp":true}}}`)
+		buf := capture(t)
+		warnIfNoLSPEnabled(eng)
+		if strings.Contains(buf.String(), warnMsg) {
+			t.Errorf("log = %q; an enabled Lsp-marked tool must silence the nudge", buf.String())
+		}
+	})
+
+	t.Run("no enabled LSP warns", func(t *testing.T) {
+		// gopls present but disabled (a template), so the nudge must fire.
+		eng, _ := newEngine(t,
+			`{"version":2,"tools":{"gopls":{"disabled":true}}}`,
+			`{"entries":{"gopls":{"name":"gopls","source":"go:golang.org/x/tools/gopls","lsp":true}}}`)
+		buf := capture(t)
+		warnIfNoLSPEnabled(eng)
+		if !strings.Contains(buf.String(), warnMsg) {
+			t.Errorf("log = %q, want the %q Warn (no enabled language server)", buf.String(), warnMsg)
+		}
+	})
+
+	t.Run("inventory failure skips the nudge quietly", func(t *testing.T) {
+		eng, dir := newEngine(t, `{"version":2,"tools":{}}`, "")
+		// Corrupt the manifest AFTER engine start: Inventory re-reads it from
+		// disk, so the read now fails and the nudge must be skipped (Debug
+		// only, no Warn).
+		if err := os.WriteFile(filepath.Join(dir, "tools.json"), []byte("{not json"), 0o644); err != nil {
+			t.Fatalf("corrupt manifest: %v", err)
+		}
+		buf := capture(t)
+		warnIfNoLSPEnabled(eng)
+		if strings.Contains(buf.String(), warnMsg) {
+			t.Errorf("log = %q; an inventory failure must not produce the LSP Warn", buf.String())
+		}
+	})
 }

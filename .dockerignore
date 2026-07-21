@@ -15,3 +15,5 @@ go.work.sum
 # tarballs itself and must never see local copies.
 static-src/node_modules/
 static/vendor/
+# Local dev binary from scripts/dev-build.sh; never part of the image build.
+web-terminal-kiro-dev-bin

@@ -23,7 +23,7 @@ stream. This guide covers the things the codebase won't tell you at a glance.
   not the manifest.
 
 Web Terminal for Kiro is a thin consumer of the first-party web-terminal libraries: the
-terminal engine `web-terminal-engine` (`github.com/cplieger/web-terminal-engine/v2`
+terminal engine `web-terminal-engine` (`github.com/cplieger/web-terminal-engine/v3`
 server-side, `@cplieger/web-terminal-engine` client-side) and the reference UI
 `@cplieger/web-terminal-ui`. Most of "what the terminal does" lives in those
 repos, not here. The Go server and TS client share a binary wire protocol, not
@@ -56,15 +56,12 @@ Web Terminal for Kiro ships no local CSS: the bundle is assembled from the vendo
 concatenates the files listed in that package's `css/MANIFEST` into
 `static/style.css`. For a local `go run .`, install the package first
 (`cd static-src && npm install`), then reproduce the bundle from the repo
-root in MANIFEST order:
+root with the canonical script (skips blanks + `#`-comments, handles a
+missing trailing newline — the same recipe the Dockerfile and
+`scripts/dev-build.sh` run):
 
 ```sh
-UI=static-src/node_modules/@cplieger/web-terminal-ui/css
-: > static/style.css
-while IFS= read -r f; do
-  case "$f" in ''|\#*) continue ;; esac   # skip blanks + comments
-  cat "$UI/$f" >> static/style.css
-done < "$UI/MANIFEST"
+sh scripts/css-bundle.sh static-src/node_modules/@cplieger/web-terminal-ui/css static/style.css
 ```
 
 ## Local dev setup
@@ -116,7 +113,7 @@ Frontend (from `static-src/`):
 npm run typecheck       # tsc -project tsconfig.json
 npm run test            # vitest --run (node + happy-dom; *.test.ts)
 npm run lint:eslint     # eslint .
-npm run lint:prettier   # prettier --check ../..
+npm run lint:prettier   # prettier --check .
 npm run lint:knip       # unused-export / dependency check
 ```
 

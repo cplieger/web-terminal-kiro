@@ -25,7 +25,9 @@
         --accent: hsl(263.1683 100% 80%);
         background: #000;
         color: var(--accent);
-        transition: opacity 0.3s ease;
+        /* easing matches the UI bundle's --ease-exit; tokens are scoped to .wt-root
+           and unreachable here, so the value is inlined like the --accent literal. */
+        transition: opacity 0.3s cubic-bezier(0.4, 0, 1, 1);
       }
       #loading.fade {
         opacity: 0;

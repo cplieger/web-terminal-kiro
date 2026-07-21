@@ -86,6 +86,82 @@ func parseTrustedProxies() []*net.IPNet {
 	return nets
 }
 
+// parseAllowedHosts reads the comma-separated KWEB_ALLOWED_HOSTS list of exact
+// hostnames / IPs this server answers for, canonicalized via canonicalHost so
+// the runtime comparison is exact-match (no wildcards, no suffix logic). It
+// returns nil when the var is unset or empty — "any Host accepted", the
+// backward-compatible default; main warns about the DNS-rebinding exposure
+// that default leaves open (see hostAllowlist).
+func parseAllowedHosts() map[string]struct{} {
+	v := envx.String("KWEB_ALLOWED_HOSTS", "")
+	if v == "" {
+		return nil
+	}
+	allowed := make(map[string]struct{})
+	for entry := range strings.SplitSeq(v, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		allowed[canonicalHost(entry)] = struct{}{}
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	return allowed
+}
+
+// canonicalHost normalizes an HTTP Host header value (or a configured
+// allowlist entry) for exact comparison: strip an optional :port, strip
+// IPv6 brackets, lowercase, trim a trailing FQDN dot, and canonicalize IP
+// literals through net.ParseIP so textually different spellings of the same
+// address (e.g. ::1 vs 0:0:0:0:0:0:0:1) compare equal.
+func canonicalHost(hostport string) string {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.TrimPrefix(host, "[")
+	host = strings.TrimSuffix(host, "]")
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String()
+	}
+	return host
+}
+
+// hostAllowlist rejects any request whose Host header does not canonicalize
+// to a configured entry, closing the DNS-rebinding hole that same-origin
+// checks alone leave open: a rebinding attack makes an attacker-controlled
+// hostname resolve to this server, so Origin and Host AGREE (both carry the
+// attacker's name) and http.CrossOriginProtection plus the WebSocket
+// same-origin check both pass — same-origin proves only that the two headers
+// match, never that the hostname is authorized for this remote-shell service
+// (CWE-346). Comparing r.Host against an exact allowlist breaks that chain:
+// the attacker's hostname is not on it.
+//
+// Only r.Host is consulted — X-Forwarded-Host is deliberately ignored (it is
+// client-controlled and this check must hold on the direct-exposure path).
+// A nil/empty allowlist disables the check entirely (backward compatible;
+// main warns). Runs before CrossOriginProtection so an unauthorized host is
+// rejected before any terminal route, session creation included.
+func hostAllowlist(allowed map[string]struct{}) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if len(allowed) == 0 {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := allowed[canonicalHost(r.Host)]; !ok {
+				webhttp.WriteJSONStatus(w, http.StatusForbidden, map[string]string{
+					errorField: "host not allowed; add it to KWEB_ALLOWED_HOSTS to serve this hostname",
+				})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // sessionCommand builds the per-session PTY command: `kiro-cli chat` behind a
 // sign-in guard. When no identity is present (`whoami` exits non-zero, verified
 // against the pinned build: 0 logged in, 1 not), the guard first runs
@@ -163,6 +239,18 @@ func main() {
 	// spoof-safe default for a directly-exposed deployment). See parseTrustedProxies.
 	trustedProxies := parseTrustedProxies()
 
+	// KWEB_ALLOWED_HOSTS names the exact hostnames/IPs this server answers
+	// for; anything else is rejected before the terminal routes (see
+	// hostAllowlist for the DNS-rebinding rationale). Unset ⇒ permissive
+	// (backward compatible), but that leaves rebinding open even on a
+	// loopback/private bind — the attack rides the victim's browser, so the
+	// README's "keep it loopback" mitigation does not cover it. Warn.
+	allowedHosts := parseAllowedHosts()
+	if allowedHosts == nil {
+		slog.Warn("KWEB_ALLOWED_HOSTS is unset; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
+			"hint", "set KWEB_ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,webterm.example.com)")
+	}
+
 	// KIRO_CLI_CHAT_ARGS appends extra launch flags to the per-session
 	// `kiro-cli chat` command (whitespace-separated, e.g. "--v3" or
 	// "--agent-engine v3 --effort high"). Empty ⇒ no extra flags. The values
@@ -198,7 +286,7 @@ func main() {
 
 	// Bind the listener before building the base context + server so the
 	// listen-failure os.Exit(1) runs with no pending defer (gocritic
-	// exitAfterDefer). srv.Addr == addr, so use addr directly here.
+	// exitAfterDefer).
 	var lc net.ListenConfig
 	ln, err := lc.Listen(context.Background(), "tcp", addr)
 	if err != nil {
@@ -214,8 +302,7 @@ func main() {
 	// ordering rationale). webhttp.NewServer supplies the streaming-safe defaults
 	// (ReadHeaderTimeout 10s, IdleTimeout 120s, Read/WriteTimeout unset) that the
 	// hijacked /ws stream needs.
-	srv := webhttp.NewServer(buildHandler(mux, trustedProxies, cspPolicy))
-	srv.Addr = addr
+	srv := webhttp.NewServer(buildHandler(mux, trustedProxies, cspPolicy, allowedHosts))
 	// BaseContext hands every request a context we can cancel on shutdown (see
 	// the shutdown goroutine): the always-open /api/sessions/events SSE handler
 	// returns only on r.Context().Done(), and srv.Shutdown does not interrupt an
@@ -320,8 +407,10 @@ func startTools(cfg baseTools) toolsRuntime {
 	case rerr != nil:
 		slog.Warn("tools: boot reconcile not enqueued", "error", rerr)
 		finish("degraded")
+		warnIfNoLSPEnabled(eng)
 	case job == nil: // empty manifest: nothing to converge
 		finish("ok")
+		warnIfNoLSPEnabled(eng)
 	default:
 		syncing.Store(true)
 		go func() {
@@ -405,10 +494,16 @@ func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 //     web-terminal-kiro is never embedded in a frame. Placed outside
 //     CrossOriginProtection so even a rejected cross-origin request still
 //     carries the headers.
+//   - hostAllowlist — the KWEB_ALLOWED_HOSTS exact-host check (see its doc
+//     comment for the DNS-rebinding rationale). Placed before
+//     CrossOriginProtection because rebinding makes Origin and Host agree, so
+//     the origin check alone cannot reject it; kept inside SecurityHeaders so
+//     even a rejected host gets the baseline headers and an access-log line.
+//     A nil allowlist (env unset) collapses to a pass-through.
 //   - CrossOriginProtection — the stdlib cross-origin/CSRF guard, kept
 //     innermost (its long-standing position directly in front of the routes) so
 //     it rejects a forged cross-origin unsafe request with 403.
-func buildHandler(mux http.Handler, trustedProxies []*net.IPNet, csp string) http.Handler {
+func buildHandler(mux http.Handler, trustedProxies []*net.IPNet, csp string, allowedHosts map[string]struct{}) http.Handler {
 	return webhttp.Chain(mux,
 		webhttp.Logging(
 			webhttp.WithLogger(slog.Default()),
@@ -417,6 +512,7 @@ func buildHandler(mux http.Handler, trustedProxies []*net.IPNet, csp string) htt
 		),
 		webhttp.Recoverer(webhttp.WithRecoverLogger(slog.Default())),
 		webhttp.SecurityHeaders(webhttp.WithCSP(csp)),
+		hostAllowlist(allowedHosts),
 		http.NewCrossOriginProtection().Handler,
 	)
 }

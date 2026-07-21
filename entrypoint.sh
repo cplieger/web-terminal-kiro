@@ -54,8 +54,7 @@ mkdir -p "$TOOLS/bin" "$HOME/.local/bin" "$HOME/.ssh" "$HOME/.kiro" \
 
 install_kiro_cli() {
   printf 'level=info msg="installing kiro-cli" version=%s component=entrypoint\n' "$KIRO_CLI_VERSION" >&2
-  printf '  kiro-cli is proprietary AWS Content; by installing you accept\n'
-  printf '  the AWS Customer Agreement. License: https://kiro.dev/license/\n'
+  printf 'level=info msg="kiro-cli is proprietary AWS Content; by installing you accept the AWS Customer Agreement" license=https://kiro.dev/license/ component=entrypoint\n' >&2
 
   # Direct download from the AWS-hosted zip per the docs:
   # https://kiro.dev/docs/cli/installation/ ("With a zip file" section).
@@ -187,7 +186,7 @@ fi
 # the pinned SHA and break image-tag reproducibility.
 if [ -x "$BIN" ]; then
   timeout 10 "$BIN" settings telemetry.enabled false >/dev/null 2>&1 || true
-  timeout 10 "$BIN" settings "app.disableAutoupdates" "true" >/dev/null 2>&1 || true
+  timeout 10 "$BIN" settings app.disableAutoupdates true >/dev/null 2>&1 || true
   # Enable kiro-cli's OSC 9 desktop-notification escape so web-terminal-kiro's tab
   # activity monitor can classify turn-end ("Response complete") and
   # tool-approval ("Permission required") into per-tab status dots. osc9 emits
@@ -251,7 +250,7 @@ if [ -n "${APT_PACKAGES:-}" ]; then
   done
   if [ "${#apt_pkgs[@]}" -gt 0 ]; then
     printf 'level=info msg="installing OS packages" packages="%s" component=entrypoint\n' "${apt_pkgs[*]}" >&2
-    if ! { apt-get update -qq && apt-get install -y -qq --no-install-recommends -- "${apt_pkgs[@]}"; }; then
+    if ! timeout 600 bash -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends -- "$@"' _ "${apt_pkgs[@]}"; then
       printf 'level=warn msg="APT_PACKAGES install failed; container continues without them" component=entrypoint\n' >&2
     fi
     rm -rf /var/lib/apt/lists/*

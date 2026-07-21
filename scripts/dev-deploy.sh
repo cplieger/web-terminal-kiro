@@ -25,7 +25,11 @@ echo "docker cp + restart web-terminal-kiro-dev"
 # client-side into the remote command is intentional — SC2029's
 # client-vs-server caveat is moot here.
 # shellcheck disable=SC2029
-ssh "$HOST" "sudo docker cp ${REMOTE_TMP} web-terminal-kiro-dev:/app/web-terminal-kiro && sudo docker restart web-terminal-kiro-dev && rm -f ${REMOTE_TMP}"
+ssh "$HOST" "trap 'rm -f ${REMOTE_TMP}' EXIT; sudo docker cp ${REMOTE_TMP} web-terminal-kiro-dev:/app/web-terminal-kiro && sudo docker restart web-terminal-kiro-dev"
 sleep 6
 code=$(curl -sf -m5 -o /dev/null -w "%{http_code}" "http://${HOST}:9849/api/health" || echo "ERR")
 echo "web-terminal-kiro-dev health: $code  (UI: http://${HOST}:9849/)"
+[ "$code" = "200" ] || {
+  echo "deploy verification failed (health=$code)" >&2
+  exit 1
+}

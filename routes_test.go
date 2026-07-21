@@ -263,7 +263,7 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	srv := httptest.NewServer(buildHandler(mux, nil, csp))
+	srv := httptest.NewServer(buildHandler(mux, nil, csp, nil))
 	t.Cleanup(srv.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -363,7 +363,7 @@ func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 	t.Cleanup(mgr.Shutdown)
 
 	rec := httptest.NewRecorder()
-	buildHandler(mux, nil, csp).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+	buildHandler(mux, nil, csp, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/health: status = %d, want %d", rec.Code, http.StatusOK)
@@ -502,7 +502,7 @@ func TestWSRejectsCrossOrigin(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	srv := httptest.NewServer(buildHandler(mux, nil, csp))
+	srv := httptest.NewServer(buildHandler(mux, nil, csp, nil))
 	t.Cleanup(srv.Close)
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/ws?session="+id, http.NoBody)
@@ -547,7 +547,7 @@ func TestWSAcceptsSameOrigin(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	srv := httptest.NewServer(buildHandler(mux, nil, csp))
+	srv := httptest.NewServer(buildHandler(mux, nil, csp, nil))
 	t.Cleanup(srv.Close)
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/ws?session="+id, http.NoBody)
@@ -824,5 +824,44 @@ func TestRegisterRoutes_failsLoudOnMalformedStatic(t *testing.T) {
 	}
 	if _, _, err := registerRoutes(mux, deps); err == nil {
 		t.Fatal("registerRoutes returned nil error for an index.html with no inline script; the hash-pinned CSP must abort startup, not degrade silently")
+	}
+}
+
+// TestComposeGate_narrowsToCreateOnly pins the narrowing contract the gate's
+// doc comment states but no test asserts: while tools are syncing, ONLY
+// session creation (POST terminal.SessionsPath) is 503'd — list (GET on the
+// same path) and requests to other paths pass through to the inner chain,
+// matching the engine's WithCreateGate contract (list/close/title flow
+// through the same doubly-mounted handler).
+func TestComposeGate_narrowsToCreateOnly(t *testing.T) {
+	syncing := func() bool { return true }
+	identity := func(next http.Handler) http.Handler { return next }
+
+	cases := []struct {
+		name     string
+		method   string
+		path     string
+		wantCode int
+		wantNext bool
+	}{
+		{name: "POST create is gated", method: http.MethodPost, path: terminal.SessionsPath, wantCode: http.StatusServiceUnavailable, wantNext: false},
+		{name: "GET list passes through", method: http.MethodGet, path: terminal.SessionsPath, wantCode: http.StatusCreated, wantNext: true},
+		{name: "DELETE close passes through", method: http.MethodDelete, path: terminal.SessionsPath + "/abc", wantCode: http.StatusCreated, wantNext: true},
+		{name: "POST to another path passes through", method: http.MethodPost, path: "/api/health", wantCode: http.StatusCreated, wantNext: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			nextHit := false
+			gated := composeGate(identity, syncing)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				nextHit = true
+				w.WriteHeader(http.StatusCreated)
+			}))
+			rec := httptest.NewRecorder()
+			gated.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, http.NoBody))
+			if rec.Code != tc.wantCode || nextHit != tc.wantNext {
+				t.Errorf("%s %s during sync = (status %d, next %v), want (%d, %v)",
+					tc.method, tc.path, rec.Code, nextHit, tc.wantCode, tc.wantNext)
+			}
+		})
 	}
 }

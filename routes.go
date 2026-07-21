@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/toolbelt/v2/httpapi"
@@ -82,11 +83,25 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	// unlock kiro-cli, and iTerm.app additionally covers other agents like Claude
 	// Code). Anything the engine can't render (inline images) is consumed silently.
 	factory := func(id string) *terminal.Handler {
+		start := time.Now()
 		return terminal.NewHandler(deps.cmd,
 			terminal.WithWorkDir(deps.workDir),
 			terminal.WithScrollbackCapacity(5000),
 			terminal.WithKeepUnfocused(),
 			terminal.WithLogger(slog.Default().With("session", id)),
+			// A session whose process dies within seconds of spawn is the
+			// kiro-cli-missing/broken signature (the sign-in guard exits 1
+			// when the binary is absent or login fails instantly). The
+			// engine logs child exit at Info by design; this app-level hook
+			// raises the fast-death case to Warn so a broken install on the
+			// persistent volume is visible to operators, not only in the PTY.
+			terminal.WithOnProcessExit(func(err error) {
+				if err != nil && time.Since(start) < 10*time.Second {
+					slog.Warn("session process exited almost immediately after start; kiro-cli may be missing or broken",
+						"session", id, "error", err,
+						"hint", "check /api/health and the kiro-cli install under /config/tools/bin")
+				}
+			}),
 		)
 	}
 
@@ -132,7 +147,17 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 		mux.Handle("/api/tools/", toolsAPI)
 	}
 
-	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/health", handleHealth(deps))
+
+	return mgr, cspPolicy, nil
+}
+
+// handleHealth returns the /api/health readiness handler. It reflects, in
+// order: listener readiness (deps.ready), the env-gated kiro-cli readiness
+// marker (deps.kiroReadyMarker; see the entrypoint), and the INFORMATIONAL
+// tools field (deps.toolsState) — tool convergence never gates readiness.
+func handleHealth(deps *routeDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
 		unready := func(reason string) {
 			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
 				"status": "unready",
@@ -169,9 +194,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 			body["tools"] = deps.toolsState()
 		}
 		webhttp.WriteJSON(w, body)
-	})
-
-	return mgr, cspPolicy, nil
+	}
 }
 
 // classifyStatus maps kiro-cli's OSC 9 notification text to a latched session
@@ -271,6 +294,10 @@ func buildCSPPolicy(sub fs.FS) (string, error) {
 	return fmt.Sprintf(cspTemplate, strings.Join(hashes, " ")), nil
 }
 
+// errorField is the JSON key carrying the human-readable failure reason in
+// the hand-rolled ad-hoc error bodies below and in main.go's hostAllowlist.
+const errorField = "error"
+
 // composeGate wraps the session-create gate with the tools-syncing
 // check: while the boot convergence pass runs, only SESSION CREATION
 // (POST terminal.SessionsPath) answers 503, so kiro-cli never spawns
@@ -284,8 +311,8 @@ func composeGate(inner func(http.Handler) http.Handler, syncing func() bool) fun
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if syncing() && r.Method == http.MethodPost && r.URL.Path == terminal.SessionsPath {
 				webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
-					"error":  "tools installing",
-					"reason": "tools installing",
+					errorField: "tools installing",
+					"reason":   "tools installing",
 				})
 				return
 			}
@@ -305,7 +332,7 @@ func loopbackOnly(next http.Handler) http.Handler {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil || !net.ParseIP(host).IsLoopback() {
 			webhttp.WriteJSONStatus(w, http.StatusForbidden, map[string]string{
-				"error": "tools API is loopback-only; call it from inside the container (curl localhost:9848)",
+				errorField: "tools API is loopback-only; call it from inside the container (curl localhost:9848)",
 			})
 			return
 		}
