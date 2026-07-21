@@ -103,16 +103,19 @@ func parseTrustedProxies() []*net.IPNet {
 // selection stays interactive inside the TUI — nothing org-specific is baked
 // into the image.
 //
-// The script never interpolates cliPath: it is passed as $0 (the argument after
-// -c's script), so a path with spaces or shell metacharacters cannot break or
-// inject into the script.
-func sessionCommand(cliPath string) []string {
+// The script never interpolates cliPath or chatArgs: cliPath is passed as $0
+// (the argument after -c's script) and chatArgs ride the positional params
+// (`"$@"`), so a path or flag with spaces or shell metacharacters cannot break
+// or inject into the script. chatArgs (operator flags from KIRO_CLI_CHAT_ARGS,
+// e.g. --v3) are appended to the chat invocation only — login and whoami never
+// see them.
+func sessionCommand(cliPath string, chatArgs ...string) []string {
 	const script = `if ! "$0" whoami >/dev/null 2>&1; then
 printf '%s\n' 'kiro-cli is not signed in. Starting the device-flow sign-in:' 'open the URL it prints (tap or click it), confirm the code there, and the chat starts here on its own.' ''
 "$0" login --use-device-flow || exit 1
 fi
-exec "$0" chat`
-	return []string{"/bin/sh", "-c", script, cliPath}
+exec "$0" chat "$@"`
+	return append([]string{"/bin/sh", "-c", script, cliPath}, chatArgs...)
 }
 
 func main() {
@@ -156,9 +159,19 @@ func main() {
 	// spoof-safe default for a directly-exposed deployment). See parseTrustedProxies.
 	trustedProxies := parseTrustedProxies()
 
+	// KIRO_CLI_CHAT_ARGS appends extra launch flags to the per-session
+	// `kiro-cli chat` command (whitespace-separated, e.g. "--v3" or
+	// "--agent-engine v3 --effort high"). Empty ⇒ no extra flags. The values
+	// reach chat as positional shell params (see sessionCommand), never via
+	// string splicing.
+	chatArgs := strings.Fields(envx.String("KIRO_CLI_CHAT_ARGS", ""))
+	if len(chatArgs) > 0 {
+		slog.Info("appending extra kiro-cli chat flags", "chat_args", chatArgs)
+	}
+
 	// Concurrent kiro-cli chat sessions (browser tabs) are uncapped, like a
 	// browser: managing tabs is the user's job.
-	cmd := sessionCommand(cliPath)
+	cmd := sessionCommand(cliPath, chatArgs...)
 
 	mux := http.NewServeMux()
 	var ready atomic.Bool

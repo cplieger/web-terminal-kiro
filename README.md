@@ -55,6 +55,7 @@ The image ships working defaults; most setups only pick a port and a volume.
 | --- | --- | --- |
 | `KWEB_ADDR` | `:9848` | Listen address (`host:port`). |
 | `KWEB_WORK_DIR` | `/workspace` | Directory each terminal session starts in (must exist). |
+| `KIRO_CLI_CHAT_ARGS` | _(unset)_ | Extra launch flags appended to every session's `kiro-cli chat` command, whitespace-separated (for example `--effort high` or `--v3`). Handy for opting into kiro-cli features ahead of the image's defaults. |
 | `TRUSTED_PROXIES` | _(unset)_ | Reverse-proxy CIDRs / bare IPs whose `X-Forwarded-For` the access log trusts to resolve `client_ip`. See [Behind a reverse proxy](#behind-a-reverse-proxy). |
 
 - **Port:** `9848` (HTTP + WebSocket).

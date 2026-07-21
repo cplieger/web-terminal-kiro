@@ -10,24 +10,27 @@ import (
 
 // fakeCLI writes an executable shell stub standing in for kiro-cli. Its whoami
 // exits with whoamiRC (mirroring the real binary: 0 logged in, 1 not); login
-// records its argv to a marker file and succeeds; chat prints a sentinel. The
-// stub lets the sessionCommand wrapper be executed for real, so the guard's
-// actual runtime behavior is pinned, not just the script text.
-func fakeCLI(t *testing.T, dir string, whoamiRC int) (cliPath, loginMarker string) {
+// records its argv to a marker file and succeeds; chat records its argv
+// (newline-separated, so a space inside one arg is distinguishable from two
+// args) and prints a sentinel. The stub lets the sessionCommand wrapper be
+// executed for real, so the guard's actual runtime behavior is pinned, not
+// just the script text.
+func fakeCLI(t *testing.T, dir string, whoamiRC int) (cliPath, loginMarker, chatMarker string) {
 	t.Helper()
 	cliPath = filepath.Join(dir, "fake kiro-cli") // space: pins the $0 quoting
 	loginMarker = filepath.Join(dir, "login-args")
+	chatMarker = filepath.Join(dir, "chat-args")
 	stub := `#!/bin/sh
 case "$1" in
 whoami) exit ` + map[bool]string{true: "0", false: "1"}[whoamiRC == 0] + ` ;;
 login) shift; printf '%s' "$*" > ` + "'" + loginMarker + "'" + `; exit 0 ;;
-chat) echo CHAT_STARTED ;;
+chat) shift; printf '%s\n' "$@" > ` + "'" + chatMarker + "'" + `; echo CHAT_STARTED ;;
 esac
 `
 	if err := os.WriteFile(cliPath, []byte(stub), 0o755); err != nil { // #nosec G306 -- test stub must be executable
 		t.Fatalf("write fake cli: %v", err)
 	}
-	return cliPath, loginMarker
+	return cliPath, loginMarker, chatMarker
 }
 
 // TestSessionCommand_loginGuard executes the wrapper against a fake kiro-cli
@@ -48,7 +51,7 @@ func TestSessionCommand_loginGuard(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			cliPath, loginMarker := fakeCLI(t, dir, tc.whoamiRC)
+			cliPath, loginMarker, _ := fakeCLI(t, dir, tc.whoamiRC)
 
 			argv := sessionCommand(cliPath)
 			out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput() // #nosec G204 -- test executes its own wrapper
@@ -80,6 +83,66 @@ func TestSessionCommand_loginGuard(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSessionCommand_extraChatArgs pins the KIRO_CLI_CHAT_ARGS contract: extra
+// launch flags (e.g. --v3) are appended to the chat invocation as separate,
+// LITERAL argv entries — an arg carrying shell metacharacters or spaces must
+// arrive verbatim (positional-param passing, not string splicing into the
+// script) — and they never leak into the login call. Without extra args, chat
+// runs with an empty argv tail (no stray empty-string argument).
+func TestSessionCommand_extraChatArgs(t *testing.T) {
+	t.Run("args reach chat verbatim, login unaffected", func(t *testing.T) {
+		dir := t.TempDir()
+		cliPath, loginMarker, chatMarker := fakeCLI(t, dir, 1) // logged out: login runs too
+
+		injection := `$(touch ` + filepath.Join(dir, "pwned") + `); two words`
+		argv := sessionCommand(cliPath, "--v3", "--effort", "high", injection)
+		out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput() // #nosec G204 -- test executes its own wrapper
+		if err != nil {
+			t.Fatalf("wrapper run: %v\noutput: %s", err, out)
+		}
+
+		got, readErr := os.ReadFile(chatMarker) // #nosec G304 -- test-owned temp path
+		if readErr != nil {
+			t.Fatalf("chat was not invoked (marker missing): %v", readErr)
+		}
+		want := "--v3\n--effort\nhigh\n" + injection + "\n"
+		if string(got) != want {
+			t.Errorf("chat argv = %q, want %q (args must pass as literal positional params)", got, want)
+		}
+
+		login, readErr := os.ReadFile(loginMarker) // #nosec G304 -- test-owned temp path
+		if readErr != nil {
+			t.Fatalf("login was not invoked (marker missing): %v", readErr)
+		}
+		if string(login) != "--use-device-flow" {
+			t.Errorf("login args = %q, want %q (chat args must not leak into login)", login, "--use-device-flow")
+		}
+		if _, statErr := os.Stat(filepath.Join(dir, "pwned")); statErr == nil {
+			t.Error("injection canary fired: a chat arg was shell-evaluated instead of passed literally")
+		}
+	})
+
+	t.Run("no args: chat argv tail is empty", func(t *testing.T) {
+		dir := t.TempDir()
+		cliPath, _, chatMarker := fakeCLI(t, dir, 0)
+
+		argv := sessionCommand(cliPath)
+		out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput() // #nosec G204 -- test executes its own wrapper
+		if err != nil {
+			t.Fatalf("wrapper run: %v\noutput: %s", err, out)
+		}
+		got, readErr := os.ReadFile(chatMarker) // #nosec G304 -- test-owned temp path
+		if readErr != nil {
+			t.Fatalf("chat was not invoked (marker missing): %v", readErr)
+		}
+		// `printf '%s\n' "$@"` with zero params still prints one empty line;
+		// anything beyond that means a stray argument reached chat.
+		if string(got) != "\n" {
+			t.Errorf("chat argv tail = %q, want none (a stray empty arg would become kiro-cli's [INPUT])", got)
+		}
+	})
 }
 
 // TestSessionCommand_loginFailureAborts pins the guard's failure mode: when the
