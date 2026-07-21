@@ -329,6 +329,14 @@ func TestCreateRateLimit(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Errorf("create past burst status = %d, want %d (body %s)", rec.Code, http.StatusTooManyRequests, rec.Body.String())
 	}
+
+	// Listing sessions remains available after the create burst is spent: the
+	// gate throttles only creation, never the whole sessions subtree.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", http.NoBody))
+	if rec.Code != http.StatusOK {
+		t.Errorf("list after create burst status = %d, want %d (body %s)", rec.Code, http.StatusOK, rec.Body.String())
+	}
 }
 
 // TestSecurityHeaders_presentOnNormalResponse pins the baseline response

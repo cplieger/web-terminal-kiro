@@ -91,10 +91,14 @@ FONT_SHA256="$(sed -n 's/^ARG NERDFONT_SHA256=//p' Dockerfile)"
 : "${FONT_SHA256:?failed to parse NERDFONT_SHA256 from Dockerfile}"
 # Key the cache dir by version AND integrity pin so a NERDFONT_VERSION bump —
 # or a same-version NERDFONT_SHA256 correction — misses the cache instead of
-# silently reusing stale fonts, and validate every face so an interrupted
-# extraction self-heals instead of copying a partial family (old cache dirs
-# are tiny and rare enough to leave behind).
+# silently reusing stale fonts (old cache dirs are tiny and rare enough to
+# leave behind). A .complete marker inside the keyed dir gates reuse: it is
+# written only after every face extracted non-empty, so a tar interrupted
+# mid-face (which can leave all four pathnames present, the last truncated)
+# self-heals with a full retry on the next build instead of embedding a
+# corrupt face.
 FONT_CACHE="${HOME}/.cache/web-terminal-kiro-fonts/${FONT_VER}-${FONT_SHA256}"
+FONT_CACHE_MARKER="$FONT_CACHE/.complete"
 fonts=(
   MonaspiceNeNerdFontMono-Regular.otf
   MonaspiceNeNerdFontMono-Bold.otf
@@ -103,11 +107,13 @@ fonts=(
 )
 mkdir -p "$FONT_CACHE" static/vendor/fonts
 need_fonts=0
+[ -f "$FONT_CACHE_MARKER" ] || need_fonts=1
 for font in "${fonts[@]}"; do
-  [ -f "$FONT_CACHE/$font" ] || need_fonts=1
+  [ -s "$FONT_CACHE/$font" ] || need_fonts=1
 done
 if [ "$need_fonts" = 1 ]; then
   echo "  downloading Monaspace ${FONT_VER}..."
+  rm -f "$FONT_CACHE_MARKER"
   mona_tmp="$(mktemp)"
   trap 'rm -f "$mona_tmp"' EXIT
   curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
@@ -116,6 +122,13 @@ if [ "$need_fonts" = 1 ]; then
   printf '%s  %s\n' "$FONT_SHA256" "$mona_tmp" | sha256sum -c -
   tar -xJ -C "$FONT_CACHE" -f "$mona_tmp" "${fonts[@]}"
   rm -f "$mona_tmp"
+  for font in "${fonts[@]}"; do
+    [ -s "$FONT_CACHE/$font" ] || {
+      printf 'error: extracted font is missing or empty: %s\n' "$FONT_CACHE/$font" >&2
+      exit 1
+    }
+  done
+  : >"$FONT_CACHE_MARKER"
 fi
 for font in "${fonts[@]}"; do
   cp "$FONT_CACHE/$font" static/vendor/fonts/

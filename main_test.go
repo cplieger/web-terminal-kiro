@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,22 @@ import (
 	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/toolbelt/v2"
 )
+
+// countLevel reports how many captured records at exactly the given level
+// carry sub in their message. capture.Recorder records EVERY level (its
+// Enabled always returns true), so a level-blind Contains would keep passing
+// if a production Warn/Error were silently demoted to Debug; counting at the
+// asserted level keeps these tests level-sensitive like the old
+// HandlerOptions{Level}-threshold handler was.
+func countLevel(records *capture.Recorder, level slog.Level, sub string) int {
+	n := 0
+	for _, r := range records.Records() {
+		if r.Level == level && strings.Contains(r.Message, sub) {
+			n++
+		}
+	}
+	return n
+}
 
 // fakeCLI writes an executable shell stub standing in for kiro-cli. Its whoami
 // exits with whoamiRC (mirroring the real binary: 0 logged in, 1 not); login
@@ -237,8 +254,8 @@ func TestStartTools_configDirMissing(t *testing.T) {
 		t.Error("syncing/state funcs are non-nil; registerRoutes keys the /api/tools mount and the health tools field on nil")
 	}
 	rt.close() // zero-runtime close must not panic
-	if !records.Contains("tools engine disabled") {
-		t.Errorf("log = %q, want the config-dir-missing Warn", records.Messages())
+	if got := countLevel(records, slog.LevelWarn, "tools engine disabled"); got != 1 {
+		t.Errorf("log = %q, want exactly one config-dir-missing Warn (got %d)", records.Messages(), got)
 	}
 }
 
@@ -261,8 +278,8 @@ func TestStartTools_engineStartFailure(t *testing.T) {
 		t.Fatal("engine is non-nil despite a failed toolbelt.New; want the zero runtime (degraded-not-dead)")
 	}
 	rt.close()
-	if !records.Contains("tools engine failed to start") {
-		t.Errorf("log = %q, want the failed-to-start Error", records.Messages())
+	if got := countLevel(records, slog.LevelError, "tools engine failed to start"); got != 1 {
+		t.Errorf("log = %q, want exactly one failed-to-start Error (got %d)", records.Messages(), got)
 	}
 }
 
@@ -509,8 +526,8 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 			`{"entries":{"gopls":{"name":"gopls","source":"go:golang.org/x/tools/gopls","lsp":true}}}`)
 		records := capture.Default(t)
 		warnIfNoLSPEnabled(eng)
-		if records.Contains(warnMsg) {
-			t.Errorf("log = %q; an enabled Lsp-marked tool must silence the nudge", records.Messages())
+		if got := countLevel(records, slog.LevelWarn, warnMsg); got != 0 {
+			t.Errorf("log = %q; an enabled Lsp-marked tool must silence the nudge (got %d Warns)", records.Messages(), got)
 		}
 	})
 
@@ -521,8 +538,8 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 			`{"entries":{"gopls":{"name":"gopls","source":"go:golang.org/x/tools/gopls","lsp":true}}}`)
 		records := capture.Default(t)
 		warnIfNoLSPEnabled(eng)
-		if !records.Contains(warnMsg) {
-			t.Errorf("log = %q, want the %q Warn (no enabled language server)", records.Messages(), warnMsg)
+		if got := countLevel(records, slog.LevelWarn, warnMsg); got != 1 {
+			t.Errorf("log = %q, want exactly one %q Warn (no enabled language server; got %d)", records.Messages(), warnMsg, got)
 		}
 	})
 
@@ -536,8 +553,8 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 		}
 		records := capture.Default(t)
 		warnIfNoLSPEnabled(eng)
-		if records.Contains(warnMsg) {
-			t.Errorf("log = %q; an inventory failure must not produce the LSP Warn", records.Messages())
+		if got := countLevel(records, slog.LevelWarn, warnMsg); got != 0 {
+			t.Errorf("log = %q; an inventory failure must not produce the LSP Warn (got %d)", records.Messages(), got)
 		}
 	})
 }

@@ -41,18 +41,35 @@ ssh "$HOST" "trap 'rm -f ${REMOTE_TMP}' EXIT; sudo docker cp ${REMOTE_TMP} web-t
 # fail a normally progressing boot. DEPLOY_TIMEOUT defaults to the same
 # derived budget as the image HEALTHCHECK start-period (20m) and
 # tests/image-smoke.conf SMOKE_TIMEOUT — keep the three in lockstep. The
-# poll succeeds on HTTP 200, fails immediately if the container exits, and
-# otherwise waits through transient starting/unhealthy states.
+# poll succeeds on HTTP 200, fails immediately if the container exits OR is
+# restarted by the restart policy (under `restart: unless-stopped` a crashing
+# entrypoint is relaunched between 5s samples, so .State.Running alone can
+# read true on every sample; a growing .RestartCount is the reliable exit
+# signal), and otherwise waits through transient starting/unhealthy states.
 DEPLOY_TIMEOUT="${DEPLOY_TIMEOUT:-1260}"
 echo "waiting for web-terminal-kiro-dev health (timeout ${DEPLOY_TIMEOUT}s)"
+# Baseline the restart count right after the explicit docker restart: any
+# later increase means the entrypoint died and the restart policy relaunched it.
+base_restarts=$(ssh "$HOST" "sudo docker inspect -f '{{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null || echo "unknown")
 deadline=$(($(date +%s) + DEPLOY_TIMEOUT))
 code="ERR"
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  running=$(ssh "$HOST" "sudo docker inspect -f '{{.State.Running}}' web-terminal-kiro-dev" 2>/dev/null || echo "unknown")
+  state=$(ssh "$HOST" "sudo docker inspect -f '{{.State.Running}} {{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null || echo "unknown unknown")
+  running=${state%% *}
+  restarts=${state##* }
   if [ "$running" = "false" ]; then
     echo "deploy verification failed: container exited during startup" >&2
     exit 1
   fi
+  case "${restarts}${base_restarts}" in
+  *[!0-9]*) : ;; # an inspect failed; skip the restart comparison this sample
+  *)
+    if [ "$restarts" -gt "$base_restarts" ]; then
+      echo "deploy verification failed: container restarted during startup (restart count ${base_restarts} -> ${restarts})" >&2
+      exit 1
+    fi
+    ;;
+  esac
   code=$(curl -sf -m5 -o /dev/null -w "%{http_code}" "http://${HOST}:9849/api/health" || echo "ERR")
   [ "$code" = "200" ] && break
   sleep 5

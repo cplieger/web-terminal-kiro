@@ -92,20 +92,25 @@ func TestParseTrustedProxies(t *testing.T) {
 		if !trustedContains(nets, "10.1.2.3") {
 			t.Error("kept net does not contain 10.1.2.3; want the 10.0.0.0/8 entry retained")
 		}
-		// The Warn was emitted, naming each malformed entry in its
-		// `invalid` attr (a structured assertion, not a rendered-logfmt
-		// substring match that could pass on the wrong level or field).
-		if !records.Contains("ignoring malformed") {
-			t.Fatalf("log = %q; want the Warn naming the malformed entries", records.Messages())
-		}
+		// The Warn was emitted at LevelWarn, naming each malformed entry in
+		// its `invalid` attr (a structured level+attr assertion, not a
+		// rendered-logfmt substring match).
+		sawWarn := false
 		var invalid string
 		for _, r := range records.Records() {
+			if r.Level != slog.LevelWarn || !strings.Contains(r.Message, "ignoring malformed") {
+				continue
+			}
+			sawWarn = true
 			r.Attrs(func(a slog.Attr) bool {
 				if a.Key == "invalid" {
 					invalid = a.Value.String()
 				}
 				return true
 			})
+		}
+		if !sawWarn {
+			t.Fatalf("log = %q; want the Warn naming the malformed entries", records.Messages())
 		}
 		for _, bad := range []string{"not-an-ip", "999.999.999.999"} {
 			if !strings.Contains(invalid, bad) {
