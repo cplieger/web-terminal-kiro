@@ -177,6 +177,10 @@
           reload.textContent = "Reload";
           reload.addEventListener("click", () => window.location.reload());
           overlay.append(" ", reload);
+          // Match showFatal (app.ts): move focus to the recovery CTA; the
+          // page content never loaded and Reload is the only actionable
+          // element left (same APG alert rationale as l-f11).
+          reload.focus();
         },
         true,
       );

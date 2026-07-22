@@ -492,8 +492,8 @@ func startTools(cfg baseTools) toolsRuntime {
 }
 
 // awaitBootConvergence blocks on the boot reconcile job, records the verdict
-// (lifting the session-create gate via finish), then runs the same post-boot
-// tail the enqueue-failure paths run inline: the freshness pass for unpinned
+// (lifting the session-create gate via finish), then runs the original
+// goroutine's post-convergence tail: the freshness pass for unpinned
 // entries (off the boot path — version-check network never holds the session
 // gate) and the language-server nudge.
 func awaitBootConvergence(eng *toolbelt.Engine, jobID string, finish func(string)) {
