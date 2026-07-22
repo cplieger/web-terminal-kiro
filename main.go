@@ -114,7 +114,17 @@ func parseAllowedHosts() map[string]struct{} {
 				"entry", entry,
 				"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.168.1.5,webterm.example.com")
 		}
-		allowed[canonicalHost(entry)] = struct{}{}
+		key := canonicalHost(entry)
+		// A lone ":port" (a pasted KWEB_ADDR value), ".", or "[]" canonicalizes
+		// to an empty key that no browser-sent Host can match: every request would
+		// 403 with no hint why. Warn (named, like the slash-entry case above) but
+		// keep the entry -- acceptance is unchanged.
+		if key == "" {
+			slog.Warn("KWEB_ALLOWED_HOSTS entry canonicalizes to an empty host and cannot match any browser request",
+				"entry", entry,
+				"hint", "use bare hostnames or IPs; a lone port like :9848 belongs in KWEB_ADDR, not the allowlist")
+		}
+		allowed[key] = struct{}{}
 	}
 	if len(allowed) == 0 {
 		return nil

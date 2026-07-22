@@ -28,7 +28,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
       arm64) GO_SHA256="$GO_SHA256_ARM64" ;; \
       *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" && \
     printf '%s  /tmp/go.tar.gz\n' "$GO_SHA256" | sha256sum -c - && \
     tar -C /usr/local -xzf /tmp/go.tar.gz && \
     rm /tmp/go.tar.gz
@@ -56,7 +56,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
       arm64) TS_ARCH="arm64"; TS_SHA256="$TS_SHA256_ARM64" ;; \
       *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/tsc.tgz \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/tsc.tgz \
       "https://registry.npmjs.org/@typescript/typescript-linux-${TS_ARCH}/-/typescript-linux-${TS_ARCH}-${TS_VERSION}.tgz" && \
     printf '%s  /tmp/tsc.tgz\n' "$TS_SHA256" | sha256sum -c - && \
     tar -xz -C /tmp -f /tmp/tsc.tgz && \
@@ -113,11 +113,11 @@ ARG TOOLBELT_TOOLCATALOG_VERSION=v2.0.8
 # hadolint ignore=DL3062
 RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     mkdir -p /tmp/registries && \
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/mise.tgz "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/mise.tgz "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" && \
     printf '%s  /tmp/mise.tgz\n' "$MISE_REGISTRY_SHA256" | sha256sum -c - && \
     tar -xz -C /tmp/registries -f /tmp/mise.tgz && \
     rm /tmp/mise.tgz && \
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/aqua.tgz "https://codeload.github.com/aquaproj/aqua-registry/tar.gz/refs/tags/${AQUA_REGISTRY_REF}" && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/aqua.tgz "https://codeload.github.com/aquaproj/aqua-registry/tar.gz/refs/tags/${AQUA_REGISTRY_REF}" && \
     printf '%s  /tmp/aqua.tgz\n' "$AQUA_REGISTRY_SHA256" | sha256sum -c - && \
     tar -xz -C /tmp/registries -f /tmp/aqua.tgz && \
     rm /tmp/aqua.tgz && \
@@ -138,7 +138,7 @@ RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.
 
 # Fetch Nerd Font for the monospace terminal display.
 RUN mkdir -p static/vendor/fonts && \
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/mona.tar.xz \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/mona.tar.xz \
       "https://github.com/ryanoasis/nerd-fonts/releases/download/${NERDFONT_VERSION}/Monaspace.tar.xz" && \
     printf '%s  /tmp/mona.tar.xz\n' "$NERDFONT_SHA256" | sha256sum -c - && \
     tar -xJ -C static/vendor/fonts -f /tmp/mona.tar.xz \
@@ -191,10 +191,10 @@ RUN ENGINE_NPM=$(sed -n 's|.*"@cplieger/web-terminal-engine": "\([^"]*\)".*|\1|p
       echo "ERROR ui-pin-mismatch: static-src/package.json pins @cplieger/web-terminal-ui ${UI_NPM} but Dockerfile ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=${CPLIEGER_WEB_TERMINAL_UI_VERSION}" >&2; exit 1; \
     fi && \
     mkdir -p static-src/node_modules/@cplieger/web-terminal-engine static-src/node_modules/@cplieger/web-terminal-ui && \
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/engine.tgz "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/engine.tgz "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" && \
     tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1 -f /tmp/engine.tgz && \
     rm /tmp/engine.tgz && \
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /tmp/ui.tgz "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/ui.tgz "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" && \
     tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1 -f /tmp/ui.tgz && \
     rm /tmp/ui.tgz
 
@@ -351,6 +351,6 @@ EXPOSE 9848
 # not health status); under a liveness-acting orchestrator, wire /api/health
 # to a readinessProbe.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20m \
-    CMD curl -sf --max-time 4 "http://127.0.0.1:${KWEB_ADDR##*:}/api/health" || exit 1
+    CMD curl -sfS --max-time 4 "http://127.0.0.1:${KWEB_ADDR##*:}/api/health" || exit 1
 
 ENTRYPOINT ["/opt/web-terminal-kiro/entrypoint.sh"]

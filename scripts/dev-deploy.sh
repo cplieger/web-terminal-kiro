@@ -8,21 +8,32 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 HOST="${DEPLOY_HOST:?set DEPLOY_HOST to your dev box (ssh host or IP)}"
+# DEPLOY_HOST may be an ssh config alias (documented above), which curl/DNS
+# cannot resolve. ssh -G prints the effective HostName for an alias and
+# echoes a bare IP/hostname unchanged, so this is a no-op for direct values.
+PROBE_HOST=$(ssh -G "$HOST" | awk '/^hostname /{print $2; exit}')
+: "${PROBE_HOST:?failed to resolve DEPLOY_HOST via ssh -G}"
+# Bound every ssh/scp connection attempt the same way the health curl is
+# bounded (-m5): without a ConnectTimeout a dev box that stops answering TCP
+# mid-poll blocks a single ssh on the kernel's SYN retry schedule, hanging
+# the script past its own DEPLOY_TIMEOUT budget. (No BatchMode=yes — that
+# would change behavior for password-auth dev boxes.)
+SSH_OPTS=(-o ConnectTimeout=10)
 BIN="web-terminal-kiro-dev-bin"
 [ -f "$BIN" ] || {
-  echo "missing $BIN — run scripts/dev-build.sh first" >&2
+  printf 'missing %s — run scripts/dev-build.sh first\n' "$BIN" >&2
   exit 1
 }
 
 # Stage into a remote mktemp path owned by the ssh user (mode 0600, random
 # suffix) so no other local user on the dev box can pre-create or swap the
 # binary between scp and docker cp.
-REMOTE_TMP=$(ssh "$HOST" "mktemp /tmp/web-terminal-kiro-dev-bin.XXXXXX")
+REMOTE_TMP=$(ssh "${SSH_OPTS[@]}" "$HOST" "mktemp /tmp/web-terminal-kiro-dev-bin.XXXXXX")
 echo "scp -> ${HOST}:${REMOTE_TMP}"
-if ! scp -q "$BIN" "${HOST}:${REMOTE_TMP}"; then
+if ! scp "${SSH_OPTS[@]}" -q "$BIN" "${HOST}:${REMOTE_TMP}"; then
   # REMOTE_TMP came from remote mktemp and is intentionally expanded locally.
   # shellcheck disable=SC2029
-  ssh "$HOST" "rm -f ${REMOTE_TMP}" >/dev/null 2>&1 || true
+  ssh "${SSH_OPTS[@]}" "$HOST" "rm -f ${REMOTE_TMP}" >/dev/null 2>&1 || true
   exit 1
 fi
 echo "docker cp + restart web-terminal-kiro-dev"
@@ -34,7 +45,7 @@ echo "docker cp + restart web-terminal-kiro-dev"
 # atomically rename over the live binary so a failed copy never leaves a
 # partial or non-executable /app/web-terminal-kiro behind.
 # shellcheck disable=SC2029
-ssh "$HOST" "trap 'rm -f ${REMOTE_TMP}' EXIT; sudo docker cp ${REMOTE_TMP} web-terminal-kiro-dev:/app/web-terminal-kiro.new && sudo docker exec web-terminal-kiro-dev sh -c 'chmod 0755 /app/web-terminal-kiro.new && mv -f /app/web-terminal-kiro.new /app/web-terminal-kiro' && sudo docker restart web-terminal-kiro-dev"
+ssh "${SSH_OPTS[@]}" "$HOST" "trap 'rm -f ${REMOTE_TMP}' EXIT; sudo docker cp ${REMOTE_TMP} web-terminal-kiro-dev:/app/web-terminal-kiro.new && sudo docker exec web-terminal-kiro-dev sh -c 'chmod 0755 /app/web-terminal-kiro.new && mv -f /app/web-terminal-kiro.new /app/web-terminal-kiro' && sudo docker restart web-terminal-kiro-dev"
 # Bounded health poll. The entrypoint's foreground work before the server
 # binds can legally take up to ~1080s on a cold volume (kiro-cli download +
 # install + probes + optional APT_PACKAGES), so a single early probe would
@@ -56,7 +67,7 @@ echo "waiting for web-terminal-kiro-dev health (timeout ${DEPLOY_TIMEOUT}s)"
 # later increase means the entrypoint died and the restart policy relaunched it.
 # The baseline is mandatory — synthesizing it from a later sample would adopt a
 # post-crash count as normal and blind the restart-growth crash detector.
-if ! base_restarts=$(ssh "$HOST" "sudo docker inspect -f '{{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null); then
+if ! base_restarts=$(ssh "${SSH_OPTS[@]}" "$HOST" "sudo docker inspect -f '{{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null); then
   printf 'deploy verification failed: could not establish restart-count baseline\n' >&2
   exit 1
 fi
@@ -69,11 +80,11 @@ esac
 deadline=$(($(date +%s) + 10#$DEPLOY_TIMEOUT))
 code="ERR"
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  state=$(ssh "$HOST" "sudo docker inspect -f '{{.State.Running}} {{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null || echo "unknown unknown")
+  state=$(ssh "${SSH_OPTS[@]}" "$HOST" "sudo docker inspect -f '{{.State.Running}} {{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null || echo "unknown unknown")
   running=${state%% *}
   restarts=${state##* }
   if [ "$running" = "false" ]; then
-    echo "deploy verification failed: container exited during startup" >&2
+    printf 'deploy verification failed: container exited during startup\n' >&2
     exit 1
   fi
   case "$restarts" in
@@ -87,13 +98,13 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
       fi
       ;;
   esac
-  code=$(curl -sf -m5 -o /dev/null -w "%{http_code}" "http://${HOST}:9849/api/health") || true
+  code=$(curl -sf -m5 -o /dev/null -w "%{http_code}" "http://${PROBE_HOST}:9849/api/health") || true
   case "$code" in '' | 000) code="ERR" ;; esac
   [ "$code" = "200" ] && break
   sleep 5
 done
-echo "web-terminal-kiro-dev health: $code  (UI: http://${HOST}:9849/)"
+echo "web-terminal-kiro-dev health: $code  (UI: http://${PROBE_HOST}:9849/)"
 [ "$code" = "200" ] || {
-  echo "deploy verification failed (health=$code after ${DEPLOY_TIMEOUT}s)" >&2
+  printf 'deploy verification failed (health=%s after %ss)\n' "$code" "$DEPLOY_TIMEOUT" >&2
   exit 1
 }

@@ -371,7 +371,7 @@ func TestHostAllowlist(t *testing.T) {
 		w.WriteHeader(http.StatusOK) // stands in for the WebSocket upgrade route
 	})
 	do := func(h http.Handler, method, url, origin, xfh string) int {
-		req := httptest.NewRequest(method, url, nil)
+		req := httptest.NewRequest(method, url, http.NoBody)
 		if origin != "" {
 			req.Header.Set("Origin", origin)
 		}
@@ -599,4 +599,69 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 			t.Errorf("log = %q; an inventory failure must not produce the LSP Warn (got %d)", records.Messages(), got)
 		}
 	})
+}
+
+// TestParseAllowedHosts unit-tests the KWEB_ALLOWED_HOSTS parser directly,
+// covering the two branches TestHostAllowlist's middleware-level driving
+// cannot reach: an unset/empty var must return nil (the permissive
+// backward-compatible default main keys its rebinding warning on), and a
+// URL-shaped entry (scheme/path/CIDR pasted where a bare hostname belongs)
+// must emit exactly one named Warn while KEEPING the entry -- acceptance is
+// unchanged, the Warn exists because such an entry canonicalizes to a value
+// no browser Host header ever matches, silently 403-ing every request.
+// Serial: capture.Default mutates the process-global default logger.
+func TestParseAllowedHosts(t *testing.T) {
+	t.Run("unset env yields nil (any Host accepted)", func(t *testing.T) {
+		t.Setenv("KWEB_ALLOWED_HOSTS", "")
+		if got := parseAllowedHosts(); got != nil {
+			t.Errorf("parseAllowedHosts() = %v, want nil when KWEB_ALLOWED_HOSTS is unset/empty (the permissive backward-compatible default)", got)
+		}
+	})
+
+	t.Run("URL-shaped entry warns but is kept", func(t *testing.T) {
+		records := capture.Default(t)
+		t.Setenv("KWEB_ALLOWED_HOSTS", "http://webterm.example.com, localhost")
+		allowed := parseAllowedHosts()
+
+		if got := countLevel(records, slog.LevelWarn, "not a bare hostname/IP"); got != 1 {
+			t.Errorf("log = %q, want exactly one not-a-bare-hostname Warn (got %d); a pasted URL silently 403-ing every request with no hint is the misconfiguration this Warn exists for", records.Messages(), got)
+		}
+		if len(allowed) != 2 {
+			t.Fatalf("parseAllowedHosts() kept %d entries, want 2 (acceptance is unchanged: the malformed entry is kept, only warned about)", len(allowed))
+		}
+		if _, ok := allowed["localhost"]; !ok {
+			t.Error("valid entry localhost missing from the allowlist")
+		}
+		if _, ok := allowed[canonicalHost("http://webterm.example.com")]; !ok {
+			t.Error("the warned URL-shaped entry was dropped; the documented contract keeps it (acceptance unchanged)")
+		}
+	})
+}
+
+// TestSessionCommand_missingBinaryAborts pins the guard script's first
+// branch, which the fakeCLI-based tests never reach (their stub always
+// exists): when the configured kiro-cli path does not resolve (a failed
+// first-boot install on the persistent volume), the wrapper exits non-zero
+// with the operator-facing install hint -- naming /api/health -- and never
+// falls through to the device-flow login or chat. Without this branch the
+// user would instead see the misleading "not signed in" explainer followed
+// by a shell command-not-found error (verified by running the script with
+// the guard removed).
+func TestSessionCommand_missingBinaryAborts(t *testing.T) {
+	cliPath := filepath.Join(t.TempDir(), "no-such-kiro-cli")
+
+	argv := sessionCommand(cliPath)
+	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput() // #nosec G204 -- test executes its own wrapper
+	if err == nil {
+		t.Fatalf("wrapper succeeded despite a missing kiro-cli binary; output: %s", out)
+	}
+	if !strings.Contains(string(out), "kiro-cli is not installed or not on PATH") {
+		t.Errorf("missing the operator-facing install hint; output: %s", out)
+	}
+	if !strings.Contains(string(out), "/api/health") {
+		t.Errorf("hint does not point at /api/health; output: %s", out)
+	}
+	if strings.Contains(string(out), "CHAT_STARTED") || strings.Contains(string(out), "device-flow sign-in") {
+		t.Errorf("guard fell through to login/chat despite a missing binary; output: %s", out)
+	}
 }

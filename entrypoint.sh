@@ -276,6 +276,11 @@ fi
 # degraded-boot posture.
 if [ -n "${APT_PACKAGES:-}" ]; then
   apt_pkgs=()
+  # Word-splitting of $APT_PACKAGES is intentional; glob expansion is not
+  # (cwd is /workspace, so a stray "*" token would expand to repo filenames
+  # and any name matching package grammar would be apt-installed). set -f
+  # keeps such a token literal so the validator below warn-skips it.
+  set -f
   for pkg in $APT_PACKAGES; do
     if [[ "$pkg" =~ ^[a-z0-9][a-z0-9+.-]*$ ]]; then
       apt_pkgs+=("$pkg")
@@ -283,6 +288,7 @@ if [ -n "${APT_PACKAGES:-}" ]; then
       printf 'level=warn msg="skipping invalid APT_PACKAGES token" token="%s" component=entrypoint\n' "$pkg" >&2
     fi
   done
+  set +f
   if [ "${#apt_pkgs[@]}" -gt 0 ]; then
     printf 'level=info msg="installing OS packages" packages="%s" component=entrypoint\n' "${apt_pkgs[*]}" >&2
     timeout --signal=TERM --kill-after=30s 600s bash -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends -- "$@"' _ "${apt_pkgs[@]}"

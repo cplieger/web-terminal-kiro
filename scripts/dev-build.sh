@@ -116,7 +116,7 @@ if [ "$need_fonts" = 1 ]; then
   rm -f "$FONT_CACHE_MARKER"
   mona_tmp="$(mktemp)"
   trap 'rm -f "$mona_tmp"' EXIT
-  curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
+  curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL \
     "https://github.com/ryanoasis/nerd-fonts/releases/download/${FONT_VER}/Monaspace.tar.xz" \
     -o "$mona_tmp"
   printf '%s  %s\n' "$FONT_SHA256" "$mona_tmp" | sha256sum -c -

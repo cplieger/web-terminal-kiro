@@ -22,5 +22,11 @@ while IFS= read -r line || [ -n "$line" ]; do
   esac
   cat "${css_dir}/${line}" >>"$tmp"
 done <"${css_dir}/MANIFEST"
+# An empty or fully-commented MANIFEST (a truncated/mis-published UI tarball)
+# would otherwise install an empty bundle that nothing downstream catches.
+[ -s "$tmp" ] || {
+  printf 'css-bundle: assembled bundle is empty (empty or fully-commented MANIFEST?): %s\n' "${css_dir}/MANIFEST" >&2
+  exit 1
+}
 mv "$tmp" "$out"
 trap - EXIT HUP INT TERM
