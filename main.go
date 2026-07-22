@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/cplieger/envx"
-	"github.com/cplieger/scheduler/v3"
 	"github.com/cplieger/slogx"
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/webhttp"
@@ -260,14 +259,9 @@ func main() {
 		// manual refresh). Every fetched catalog re-verifies the
 		// embedded required-tools list before it replaces the current
 		// one, and the last good catalog stands on any failure.
-		catalogURL: envx.String("TOOL_CATALOG_URL",
-			"https://github.com/cplieger/tool-catalog/releases/latest/download/tool-catalog.json"),
-		refreshInterval: scheduler.ParseInterval(
-			envx.String("TOOL_CATALOG_REFRESH", ""), 24*time.Hour,
-			scheduler.WithName("TOOL_CATALOG_REFRESH"),
-			// Guard interval typos: a sub-hour cadence would hammer the
-			// publisher for a daily artifact (clamped with a warning).
-			scheduler.WithBounds(time.Hour, 30*24*time.Hour)),
+		catalogURL: envx.String("TOOL_CATALOG_URL", toolbelt.DefaultCatalogURL),
+		refreshInterval: toolbelt.ParseCatalogRefresh(
+			envx.String("TOOL_CATALOG_REFRESH", ""), "TOOL_CATALOG_REFRESH"),
 	})
 
 	// TRUSTED_PROXIES names the reverse proxies (CIDRs or bare IPs) whose
@@ -386,11 +380,10 @@ type baseTools struct {
 	catalogPath string
 	// catalogURL is the published catalog the engine refreshes from.
 	catalogURL string
-	// refreshInterval is the parsed TOOL_CATALOG_REFRESH schedule:
-	// ModeBuiltin runs the engine-owned loop at Interval; any other
-	// mode disables the schedule (manual refresh stays available via
-	// the loopback tools API).
-	refreshInterval scheduler.Schedule
+	// refreshInterval is the engine refresh cadence under toolbelt's
+	// canonical policy (default 24h; zero = schedule disabled, manual
+	// refresh stays available via the loopback tools API).
+	refreshInterval time.Duration
 }
 
 // requiredToolsList is the same required-tools.txt the image build
@@ -440,11 +433,9 @@ func startTools(cfg baseTools) toolsRuntime {
 		return toolsRuntime{}
 	}
 	refresh := &toolbelt.CatalogRefresh{
-		URL:     cfg.catalogURL,
-		Require: toolbelt.ParseRequireList(requiredToolsList),
-	}
-	if cfg.refreshInterval.Mode == scheduler.ModeBuiltin {
-		refresh.Interval = cfg.refreshInterval.Interval
+		URL:      cfg.catalogURL,
+		Require:  toolbelt.ParseRequireList(requiredToolsList),
+		Interval: cfg.refreshInterval,
 	}
 	eng, err := toolbelt.New(&toolbelt.Config{
 		ConfigDir:   cfg.configDir,
