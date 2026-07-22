@@ -63,8 +63,9 @@ try {
   createTerminal(root, {
     features: presetAgentTabbed(),
     // web-terminal-kiro's purple theme (the consumer "settings"; the UI library ships the
-    // neutral defaults). Recolors hovered/active tabs and the accent icons (the
-    // mobile "+", the toggled keyboard button). Since web-terminal-ui v4 all tokens
+    // neutral defaults). Recolors hovered/active tabs, the accent icons (the
+    // mobile "+", the toggled keyboard button), and the tab activity dots
+    // (--status-*, below). Since web-terminal-ui v4 all tokens
     // live on .wt-root -- the element the theme is applied to -- so the library's
     // --tab-active-border derivation (the fill lightened + slightly desaturated)
     // already follows an overridden fill; the explicit re-declaration below is a
@@ -76,6 +77,23 @@ try {
       "--tab-active-bg": "hsl(263.1683 100% 80% / 32%)",
       "--tab-active-border": "color-mix(in oklch, var(--tab-active-bg), var(--text) 25%)",
       "--tab-active-fg": "#fff",
+      // Tab activity-dot vocabulary (replaces the library defaults; ui >= the
+      // release that tokenized the dots -- older bundles ignore these and keep
+      // the defaults): violet = thinking, green = done, yellow = action
+      // required. One declared family -- 78% lightness / 0.15 chroma, only the
+      // hue carries the state -- sitting at the pastel accent's own level
+      // (#c099ff is ~oklch(76% 0.13 296deg)). The violet hue's sRGB ceiling at
+      // 78% L is C~0.132, so browsers gamut-map the declared 0.15 down to the
+      // max-chroma pastel violet (~#c4a3ff); that clamp is deliberate ("the
+      // most saturated violet available at the family's lightness"). Green
+      // (~#67d283) and yellow (~#d6b529) are in gamut and render as declared.
+      // Hue alone never carries state (pulse/ring/shape per WCAG 1.4.1):
+      // working and input share one ringed silhouette -- live pulses, blocked
+      // is frozen -- and done stays the bare disc. Both rings derive from
+      // their own token inside the library CSS.
+      "--status-working": "oklch(78% 0.15 300deg)",
+      "--status-done": "oklch(78% 0.15 150deg)",
+      "--status-input": "oklch(78% 0.15 95deg)",
     },
     ...(loading ? { loading } : {}),
   });
