@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/cplieger/envx"
+	"github.com/cplieger/scheduler/v3"
 	"github.com/cplieger/slogx"
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/webhttp"
@@ -252,6 +253,21 @@ func main() {
 	tools := startTools(baseTools{
 		configDir:   envx.String("KWEB_CONFIG_DIR", "/config"),
 		catalogPath: envx.String("TOOL_CATALOG_PATH", "/app/tool-catalog.json"),
+		// Runtime catalog refresh: the baked catalog above is only the
+		// first-boot/offline fallback; the engine fetches the published
+		// catalog at boot and every TOOL_CATALOG_REFRESH (default 24h;
+		// "off"/"0" disables the schedule, keeping the loopback API's
+		// manual refresh). Every fetched catalog re-verifies the
+		// embedded required-tools list before it replaces the current
+		// one, and the last good catalog stands on any failure.
+		catalogURL: envx.String("TOOL_CATALOG_URL",
+			"https://github.com/cplieger/tool-catalog/releases/latest/download/tool-catalog.json"),
+		refreshInterval: scheduler.ParseInterval(
+			envx.String("TOOL_CATALOG_REFRESH", ""), 24*time.Hour,
+			scheduler.WithName("TOOL_CATALOG_REFRESH"),
+			// Guard interval typos: a sub-hour cadence would hammer the
+			// publisher for a daily artifact (clamped with a warning).
+			scheduler.WithBounds(time.Hour, 30*24*time.Hour)),
 	})
 
 	// TRUSTED_PROXIES names the reverse proxies (CIDRs or bare IPs) whose
@@ -363,11 +379,28 @@ func main() {
 	tools.close()
 }
 
-// baseTools carries startTools's inputs (env-resolved paths).
+// baseTools carries startTools's inputs (env-resolved paths + the
+// catalog-refresh knobs).
 type baseTools struct {
 	configDir   string
 	catalogPath string
+	// catalogURL is the published catalog the engine refreshes from.
+	catalogURL string
+	// refreshInterval is the parsed TOOL_CATALOG_REFRESH schedule:
+	// ModeBuiltin runs the engine-owned loop at Interval; any other
+	// mode disables the schedule (manual refresh stays available via
+	// the loopback tools API).
+	refreshInterval scheduler.Schedule
 }
+
+// requiredToolsList is the same required-tools.txt the image build
+// verifies the baked catalog against, embedded so the RUNTIME refresh
+// applies the identical gate to every fetched catalog: one source of
+// truth, two enforcement points. Parsed by toolbelt.ParseRequireList
+// (the same format cmd/toolcatalog verify reads).
+//
+//go:embed required-tools.txt
+var requiredToolsList string
 
 // toolsRuntime is the running tools subsystem handed to the routes: the
 // engine (nil when disabled), the session-create gate predicate, and the
@@ -406,10 +439,18 @@ func startTools(cfg baseTools) toolsRuntime {
 			"hint", "bind-mount the persistent config volume (compose.yaml) or set KWEB_CONFIG_DIR")
 		return toolsRuntime{}
 	}
+	refresh := &toolbelt.CatalogRefresh{
+		URL:     cfg.catalogURL,
+		Require: toolbelt.ParseRequireList(requiredToolsList),
+	}
+	if cfg.refreshInterval.Mode == scheduler.ModeBuiltin {
+		refresh.Interval = cfg.refreshInterval.Interval
+	}
 	eng, err := toolbelt.New(&toolbelt.Config{
 		ConfigDir:   cfg.configDir,
 		ToolsDir:    filepath.Join(cfg.configDir, "tools"),
 		CatalogPath: cfg.catalogPath,
+		Refresh:     refresh,
 		Seed:        toolbelt.DefaultSeed(),
 		System:      []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
 		Logger:      slog.Default(),
@@ -464,6 +505,14 @@ func startTools(cfg baseTools) toolsRuntime {
 			}
 			warnIfNoLSPEnabled(eng)
 		}()
+	}
+	// Boot catalog fetch, explicitly AFTER the reconcile enqueue: the
+	// engine's schedule deliberately has no fire-on-start (an immediate
+	// enqueue inside New would land ahead of the boot-critical reconcile
+	// on the single-flight queue and delay the session gate). Failure is
+	// routine before the publisher is reachable; keep-last-good absorbs it.
+	if _, rerr := eng.RefreshCatalog(); rerr != nil {
+		slog.Warn("tools: boot catalog refresh not enqueued", "error", rerr)
 	}
 	return toolsRuntime{
 		engine:  eng,

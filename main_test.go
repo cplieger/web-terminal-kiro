@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -687,5 +688,19 @@ func TestSessionCommand_missingBinaryAborts(t *testing.T) {
 	}
 	if strings.Contains(string(out), "CHAT_STARTED") || strings.Contains(string(out), "device-flow sign-in") {
 		t.Errorf("guard fell through to login/chat despite a missing binary; output: %s", out)
+	}
+}
+
+func TestEmbeddedRequiredToolsNonEmpty(t *testing.T) {
+	names := toolbelt.ParseRequireList(requiredToolsList)
+	if len(names) == 0 {
+		t.Fatal("embedded required-tools.txt parses to zero names")
+	}
+	// The seed templates must stay covered: the runtime refresh gate
+	// protects exactly what the image-build verify gate protects.
+	for _, seed := range []string{"gopls", "typescript-language-server", "pyright", "gh"} {
+		if !slices.Contains(names, seed) {
+			t.Errorf("required-tools.txt missing seed name %q", seed)
+		}
 	}
 }
