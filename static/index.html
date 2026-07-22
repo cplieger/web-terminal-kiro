@@ -36,14 +36,14 @@
            tap-to-focus on the freshly rendered terminal */
         pointer-events: none;
       }
-      #loading[role="alert"] {
+      #loading:is([role="alert"], [role="alertdialog"]) {
         flex-direction: column;
         gap: 1rem;
         padding: 1rem;
         font-family: system-ui, -apple-system, sans-serif;
         text-align: center;
       }
-      #loading[role="alert"] button {
+      #loading:is([role="alert"], [role="alertdialog"]) button {
         min-inline-size: 2.75rem;
         min-block-size: 2.75rem;
         padding-inline: 1rem;
@@ -56,7 +56,7 @@
         cursor: pointer;
         touch-action: manipulation;
       }
-      #loading[role="alert"] button:focus-visible {
+      #loading:is([role="alert"], [role="alertdialog"]) button:focus-visible {
         outline: 2px solid currentcolor;
         outline-offset: 3px;
       }
@@ -64,11 +64,11 @@
          (web-terminal-ui 31-switcher.css: sticky :hover after tap on touch);
          press feedback on touch comes from :active. */
       @media (hover: hover) {
-        #loading[role="alert"] button:hover {
+        #loading:is([role="alert"], [role="alertdialog"]) button:hover {
           background: color-mix(in oklch, currentcolor 28%, transparent);
         }
       }
-      #loading[role="alert"] button:active {
+      #loading:is([role="alert"], [role="alertdialog"]) button:active {
         background: color-mix(in oklch, currentcolor 36%, transparent);
       }
       #loading .bar {
@@ -167,11 +167,20 @@
           // own showFatal replaces the bar before it throws.
           if (!overlay || !overlay.querySelector(".bar")) return;
           if (!(e.target instanceof HTMLScriptElement) && !e.error) return;
-          overlay.removeAttribute("aria-label");
-          overlay.setAttribute("role", "alert");
-          overlay.setAttribute("aria-live", "assertive");
-          overlay.textContent =
+          // alertdialog, not alert: the overlay carries an interactive Reload
+          // button and moves focus into it, the alertdialog interaction model
+          // (APG) -- same treatment as showFatal in app.ts. The role plus the
+          // focus transition supplies the announcement, so no aria-live is
+          // needed; aria-label replaces the static "Loading" name.
+          const description = document.createElement("p");
+          description.id = "bootstrap-failure-message";
+          description.textContent =
             "Web Terminal for Kiro failed to load. Check your connection and reload the page.";
+          overlay.setAttribute("role", "alertdialog");
+          overlay.setAttribute("aria-modal", "true");
+          overlay.setAttribute("aria-label", "Web Terminal for Kiro startup failure");
+          overlay.setAttribute("aria-describedby", description.id);
+          overlay.replaceChildren(description);
           const reload = document.createElement("button");
           reload.type = "button";
           reload.textContent = "Reload";
@@ -179,7 +188,7 @@
           overlay.append(" ", reload);
           // Match showFatal (app.ts): move focus to the recovery CTA; the
           // page content never loaded and Reload is the only actionable
-          // element left (same APG alert rationale as l-f11).
+          // element left (the alertdialog pattern's initial focus).
           reload.focus();
         },
         true,
