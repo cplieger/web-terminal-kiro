@@ -24,11 +24,10 @@ const THEME = {
 
 describe("web-terminal-kiro bootstrap (app.ts)", () => {
   beforeEach(() => {
-    // resetModules so each dynamic import re-runs app.ts top-level code; clear
-    // the mocks' call history between tests (their implementations persist).
+    // resetModules so each dynamic import re-runs app.ts top-level code. Mock
+    // call history is cleared by the config's clearMocks/mockReset before each
+    // test (implementations given to vi.fn persist through mockReset).
     vi.resetModules();
-    createTerminalMock.mockClear();
-    presetAgentTabbedMock.mockClear();
     document.body.replaceChildren();
   });
 
@@ -74,16 +73,35 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
   it("surfaces an alert on the #loading overlay when #terminal is missing but #loading exists", async () => {
     const overlay = document.createElement("div");
     overlay.id = "loading";
+    overlay.setAttribute("aria-label", "Loading"); // mirror index.html's static markup
     document.body.appendChild(overlay);
 
     await expect(import("./app.js")).rejects.toThrow(
       "web-terminal-kiro: missing #terminal root element",
     );
 
+    expect(overlay.hasAttribute("aria-label")).toBe(false);
     expect(overlay.getAttribute("role")).toBe("alert");
     expect(overlay.getAttribute("aria-live")).toBe("assertive");
     expect(overlay.textContent).toContain("Web Terminal for Kiro failed to start");
     expect(createTerminalMock).not.toHaveBeenCalled();
+  });
+
+  it("offers a working reload action when startup fails", async () => {
+    const reload = vi.spyOn(window.location, "reload").mockImplementation(() => undefined);
+    const overlay = document.createElement("div");
+    overlay.id = "loading";
+    document.body.appendChild(overlay);
+
+    await expect(import("./app.js")).rejects.toThrow(
+      "web-terminal-kiro: missing #terminal root element",
+    );
+
+    const reloadButton = overlay.querySelector("button");
+    expect(reloadButton?.type).toBe("button");
+    expect(reloadButton?.textContent).toBe("Reload");
+    reloadButton?.click();
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it("reveals the #loading overlay with an error message and rethrows when createTerminal throws", async () => {
@@ -93,6 +111,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     const loading = document.createElement("div");
     loading.id = "loading";
     loading.classList.add("fade");
+    loading.setAttribute("aria-label", "Loading"); // mirror index.html's static markup
     document.body.appendChild(loading);
     createTerminalMock.mockImplementationOnce(() => {
       throw new Error("kernel boom");
@@ -101,6 +120,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     await expect(import("./app.js")).rejects.toThrow("kernel boom");
 
     expect(loading.classList.contains("fade")).toBe(false);
+    expect(loading.hasAttribute("aria-label")).toBe(false);
     expect(loading.getAttribute("role")).toBe("alert");
     expect(loading.getAttribute("aria-live")).toBe("assertive");
     expect(loading.textContent).toContain("Failed to start the terminal");
@@ -116,5 +136,6 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
 
     await expect(import("./app.js")).rejects.toThrow("kernel boom no overlay");
     expect(createTerminalMock).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="alert"]')).toBeNull();
   });
 });

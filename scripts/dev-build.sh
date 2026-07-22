@@ -20,17 +20,35 @@ TSC="static-src/node_modules/.bin/tsc"
   echo "error: $TSC not found — run 'cd static-src && npm install' first" >&2
   exit 1
 }
+# Validate every required checkout input BEFORE go.work is written or the
+# destructive node_modules overlay below starts, so a missing sibling checkout
+# or a typo'd ENGINE_DIR/UI_DIR override fails cleanly instead of half-deleting
+# the installed packages (repaired only by a fresh npm install).
+for required in \
+  "$ENGINE_DIR/web/package.json" "$ENGINE_DIR/web/src" \
+  "$UI_DIR/package.json" "$UI_DIR/src" "$UI_DIR/css/MANIFEST"; do
+  [ -e "$required" ] || {
+    printf 'error: required local checkout input not found: %s\n' "$required" >&2
+    exit 1
+  }
+done
 
-echo "[1/6] go.work -> local engine (replace; engine module is unpublished)"
-# Mirror go.mod's go directive so the two never drift (a hardcoded version
-# here broke the build when go.mod moved to a newer patch).
+echo "[1/6] go.work -> local engine (replace published module with ${ENGINE_DIR})"
+# Mirror go.mod's go directive and engine module path so neither can drift (a
+# hardcoded version here broke the build when go.mod moved to a newer patch; a
+# hardcoded /v2 module path silently no-opped the replace after the v3 bump).
 GO_DIRECTIVE="$(sed -n 's/^go /go /p' go.mod | head -n1)"
+ENGINE_MOD="$(sed -n 's|.*\(github.com/cplieger/web-terminal-engine/v[0-9]*\) .*|\1|p' go.mod | head -n1)"
+[ -n "$ENGINE_MOD" ] || {
+  echo "error: engine module path not found in go.mod" >&2
+  exit 1
+}
 cat >go.work <<EOF
 ${GO_DIRECTIVE}
 
 use .
 
-replace github.com/cplieger/web-terminal-engine/v2 => ../web-terminal-engine
+replace ${ENGINE_MOD} => ${ENGINE_DIR}
 EOF
 
 echo "[2/6] overlay local engine + UI TS into the bundler-resolved packages"
@@ -66,32 +84,57 @@ mapfile -t ui_ts < <(find "$UI_PKG/src" -name '*.ts')
   --rootDir "$UI_PKG/src" --skipLibCheck --strict "${ui_ts[@]}"
 
 echo "[5/6] fonts (Monaspace Nerd Font, cached) + CSS bundle (from UI package)"
-FONT_CACHE="${HOME}/.cache/web-terminal-kiro-fonts"
-FONT_VER="v3.4.0"
-# Keep in lockstep with NERDFONT_SHA256 in the Dockerfile (Monaspace.tar.xz, this tag).
-FONT_SHA256="5fdb97828e1a23fd28ea5ed0e7d15cdebb77ef079aaa48b93f1526764b40ef8c"
+# Single source of truth: the Dockerfile's Renovate-managed NERDFONT_* ARGs.
+FONT_VER="$(sed -n 's/^ARG NERDFONT_VERSION=//p' Dockerfile)"
+FONT_SHA256="$(sed -n 's/^ARG NERDFONT_SHA256=//p' Dockerfile)"
+: "${FONT_VER:?failed to parse NERDFONT_VERSION from Dockerfile}"
+: "${FONT_SHA256:?failed to parse NERDFONT_SHA256 from Dockerfile}"
+# Key the cache dir by version AND integrity pin so a NERDFONT_VERSION bump —
+# or a same-version NERDFONT_SHA256 correction — misses the cache instead of
+# silently reusing stale fonts (old cache dirs are tiny and rare enough to
+# leave behind). A .complete marker inside the keyed dir gates reuse: it is
+# written only after every face extracted non-empty, so a tar interrupted
+# mid-face (which can leave all four pathnames present, the last truncated)
+# self-heals with a full retry on the next build instead of embedding a
+# corrupt face.
+FONT_CACHE="${HOME}/.cache/web-terminal-kiro-fonts/${FONT_VER}-${FONT_SHA256}"
+FONT_CACHE_MARKER="$FONT_CACHE/.complete"
+fonts=(
+  MonaspiceNeNerdFontMono-Regular.otf
+  MonaspiceNeNerdFontMono-Bold.otf
+  MonaspiceNeNerdFontMono-Italic.otf
+  MonaspiceNeNerdFontMono-BoldItalic.otf
+)
 mkdir -p "$FONT_CACHE" static/vendor/fonts
-if [ ! -f "$FONT_CACHE/MonaspiceNeNerdFontMono-Regular.otf" ]; then
+need_fonts=0
+[ -f "$FONT_CACHE_MARKER" ] || need_fonts=1
+for font in "${fonts[@]}"; do
+  [ -s "$FONT_CACHE/$font" ] || need_fonts=1
+done
+if [ "$need_fonts" = 1 ]; then
   echo "  downloading Monaspace ${FONT_VER}..."
+  rm -f "$FONT_CACHE_MARKER"
   mona_tmp="$(mktemp)"
-  curl --proto '=https' --tlsv1.2 -fsSL \
+  trap 'rm -f "$mona_tmp"' EXIT
+  curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL \
     "https://github.com/ryanoasis/nerd-fonts/releases/download/${FONT_VER}/Monaspace.tar.xz" \
     -o "$mona_tmp"
   printf '%s  %s\n' "$FONT_SHA256" "$mona_tmp" | sha256sum -c -
-  tar -xJ -C "$FONT_CACHE" -f "$mona_tmp" \
-    MonaspiceNeNerdFontMono-Regular.otf \
-    MonaspiceNeNerdFontMono-Bold.otf \
-    MonaspiceNeNerdFontMono-Italic.otf \
-    MonaspiceNeNerdFontMono-BoldItalic.otf
+  tar -xJ -C "$FONT_CACHE" -f "$mona_tmp" "${fonts[@]}"
   rm -f "$mona_tmp"
+  for font in "${fonts[@]}"; do
+    [ -s "$FONT_CACHE/$font" ] || {
+      printf 'error: extracted font is missing or empty: %s\n' "$FONT_CACHE/$font" >&2
+      exit 1
+    }
+  done
+  : >"$FONT_CACHE_MARKER"
 fi
-cp "$FONT_CACHE"/MonaspiceNeNerdFontMono-*.otf static/vendor/fonts/
+for font in "${fonts[@]}"; do
+  cp "$FONT_CACHE/$font" static/vendor/fonts/
+done
 
-: >static/style.css
-while IFS= read -r line || [ -n "$line" ]; do
-  case "$line" in '' | \#*) continue ;; esac
-  cat "$UI_DIR/css/${line}" >>static/style.css
-done <"$UI_DIR/css/MANIFEST"
+sh scripts/css-bundle.sh "$UI_DIR/css" static/style.css
 
 echo "[6/6] go build (CGO off, linux/amd64 host = container arch)"
 CGO_ENABLED=0 go build -trimpath -o web-terminal-kiro-dev-bin .

@@ -23,7 +23,7 @@ stream. This guide covers the things the codebase won't tell you at a glance.
   not the manifest.
 
 Web Terminal for Kiro is a thin consumer of the first-party web-terminal libraries: the
-terminal engine `web-terminal-engine` (`github.com/cplieger/web-terminal-engine/v2`
+terminal engine `web-terminal-engine` (`github.com/cplieger/web-terminal-engine/v3`
 server-side, `@cplieger/web-terminal-engine` client-side) and the reference UI
 `@cplieger/web-terminal-ui`. Most of "what the terminal does" lives in those
 repos, not here. The Go server and TS client share a binary wire protocol, not
@@ -56,15 +56,12 @@ Web Terminal for Kiro ships no local CSS: the bundle is assembled from the vendo
 concatenates the files listed in that package's `css/MANIFEST` into
 `static/style.css`. For a local `go run .`, install the package first
 (`cd static-src && npm install`), then reproduce the bundle from the repo
-root in MANIFEST order:
+root with the canonical script (skips blanks + `#`-comments, handles a
+missing trailing newline — the same recipe the Dockerfile and
+`scripts/dev-build.sh` run):
 
 ```sh
-UI=static-src/node_modules/@cplieger/web-terminal-ui/css
-: > static/style.css
-while IFS= read -r f; do
-  case "$f" in ''|\#*) continue ;; esac   # skip blanks + comments
-  cat "$UI/$f" >> static/style.css
-done < "$UI/MANIFEST"
+sh scripts/css-bundle.sh static-src/node_modules/@cplieger/web-terminal-ui/css static/style.css
 ```
 
 ## Local dev setup
@@ -116,7 +113,7 @@ Frontend (from `static-src/`):
 npm run typecheck       # tsc -project tsconfig.json
 npm run test            # vitest --run (node + happy-dom; *.test.ts)
 npm run lint:eslint     # eslint .
-npm run lint:prettier   # prettier --check ../..
+npm run lint:prettier   # prettier --check .
 npm run lint:knip       # unused-export / dependency check
 ```
 
@@ -131,7 +128,7 @@ assert at least once (`expect.requireAssertions`) and `.only` is forbidden.
   `webhttp.WriteJSON`, `webhttp.WriteJSONStatus`, `webhttp.Ok`, and
   `webhttp.WriteError` (the JSON error envelope).
 - **Client-local vs library code.** `static-src/app.ts` is the only client
-  source Web Terminal for Kiro owns — a single `createTerminal(root, { features: presetAgentTabbed(), theme })` call (the theme is Web Terminal for Kiro's purple token set; `presetAgentTabbed` pulls in tabs, the activity monitor, touch toolbar, context menu, clipboard, scroll-to-bottom, predictive echo, connection banner, and animations). The input model,
+  source Web Terminal for Kiro owns — a `createTerminal(root, { features: presetAgentTabbed(), theme })` call plus a small bootstrap-failure handler (`showFatal`, which surfaces a missing `#terminal` root or a `createTerminal` throw on the pre-JS `#loading` overlay as a `role="alert"` message with a Reload button) (the theme is Web Terminal for Kiro's purple token set; `presetAgentTabbed` pulls in tabs, the activity monitor, touch toolbar, context menu, clipboard, scroll-to-bottom, predictive echo, connection banner, and animations). The input model,
   IME/composition, predictive echo, viewport, mobile key toolbar, and status
   banner, plus the render / keyboard / scroll / connection layers, all live in
   `@cplieger/web-terminal-ui` (built on `@cplieger/web-terminal-engine`);

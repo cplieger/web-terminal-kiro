@@ -33,7 +33,7 @@ import (
 // silently.
 func TestDebugRoutesNotExposed(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
+	var ready webhttp.Ready
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -66,7 +66,7 @@ func TestDebugRoutesNotExposed(t *testing.T) {
 // returns 200. The atomic flag is the only thing that flips the branch.
 func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
+	var ready webhttp.Ready
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -89,7 +89,7 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 		t.Errorf("before ready: status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
 	}
 
-	ready.Store(true)
+	ready.Set(true)
 	if rec := get(); rec.Code != http.StatusOK {
 		t.Errorf("after ready: status = %d, want %d", rec.Code, http.StatusOK)
 	}
@@ -108,8 +108,8 @@ func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
 
 	newMux := func(markerPath string) *http.ServeMux {
 		mux := http.NewServeMux()
-		var ready atomic.Bool
-		ready.Store(true)
+		var ready webhttp.Ready
+		ready.Set(true)
 		deps := &routeDeps{
 			staticFS:        fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 			ready:           &ready,
@@ -182,17 +182,17 @@ func TestKiroCacheControl(t *testing.T) {
 	}
 }
 
-// TestStaticETagRevalidation pins the embedded-bundle revalidation contract
-// promised by cacheHeaders' godoc: embed.FS reports a zero ModTime, so
-// http.FileServer emits no validator on its own and every full load would
-// re-download the body. buildETags precomputes a content-hash ETag that
-// cacheHeaders sets on the default (non-font) branch, so GET / returns a quoted
-// ETag and a conditional GET with a matching If-None-Match answers 304 with an
+// TestStaticETagRevalidation pins the embedded-bundle revalidation contract:
+// embed.FS reports a zero ModTime, so a bare http.FileServer emits no
+// validator and every full load would re-download the body.
+// webhttp.StaticHandler precomputes a content-hash ETag (served on the
+// default, non-font cache branch), so GET / returns a quoted ETag and a
+// conditional GET with a matching If-None-Match answers 304 with an
 // empty body instead of re-sending the bundle. Mirrors the sibling
 // web-terminal-server's TestStaticHandlerETagAndRevalidation.
 func TestStaticETagRevalidation(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
+	var ready webhttp.Ready
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -245,8 +245,8 @@ func TestStaticETagRevalidation(t *testing.T) {
 // SSE stream.
 func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
-	ready.Store(true)
+	var ready webhttp.Ready
+	ready.Set(true)
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -263,13 +263,13 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	srv := httptest.NewServer(buildHandler(mux, nil, csp))
+	srv := httptest.NewServer(buildHandler(mux, nil, csp, nil))
 	t.Cleanup(srv.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/sessions/events", http.NoBody)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET /api/sessions/events: %v", err)
 	}
@@ -295,42 +295,48 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 // expectations are updated consciously rather than drifting silently.
 const sessionCreateBurst = 6
 
-// TestCreateRateLimit pins the create throttle: a burst of POST /api/sessions is
-// allowed, then further creates are 429'd, while GET (list) is never limited. It
-// exercises the shared preset exactly as registerRoutes wires it, with a stub
-// next handler so it does not fork real kiro-cli processes.
+// TestCreateRateLimit pins the create throttle as registerRoutes actually
+// wires it: a burst of POST /api/sessions through the production routes is
+// allowed, then further creates are 429'd. Driving the real mux (cmd
+// /bin/true, so sessions exit immediately) means the test fails if
+// registerRoutes stops wiring terminal.WithCreateGate(createGate) or moves
+// the mounted path — composition drift the previous direct-preset version
+// could not detect.
 func TestCreateRateLimit(t *testing.T) {
-	var restHit atomic.Bool
-	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		restHit.Store(true)
-		w.WriteHeader(http.StatusOK)
-	})
-	h := webhttp.SessionCreateRateLimit("/api/sessions")(next)
-	post := func() int {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
-		return rec.Code
+	mux := http.NewServeMux()
+	var ready webhttp.Ready
+	deps := &routeDeps{
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
+		ready:    &ready,
+		workDir:  "",
+		cmd:      []string{"/bin/true"},
 	}
+	mgr, _, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
 
-	allowed := 0
-	for range sessionCreateBurst {
-		if post() == http.StatusOK {
-			allowed++
+	for attempt := 1; attempt <= sessionCreateBurst; attempt++ {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create %d status = %d, want %d (body %s)", attempt, rec.Code, http.StatusCreated, rec.Body.String())
 		}
 	}
-	if allowed != sessionCreateBurst {
-		t.Errorf("allowed %d creates in the burst, want %d", allowed, sessionCreateBurst)
-	}
-	if code := post(); code != http.StatusTooManyRequests {
-		t.Errorf("create past the burst = %d, want 429", code)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("create past burst status = %d, want %d (body %s)", rec.Code, http.StatusTooManyRequests, rec.Body.String())
 	}
 
-	// GET (list) is never rate-limited, even after the create burst is spent.
-	restHit.Store(false)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", http.NoBody))
-	if !restHit.Load() {
-		t.Error("GET /api/sessions was blocked by the create rate limiter")
+	// Listing sessions remains available after the create burst is spent: the
+	// gate throttles only creation, never the whole sessions subtree.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", http.NoBody))
+	if rec.Code != http.StatusOK {
+		t.Errorf("list after create burst status = %d, want %d (body %s)", rec.Code, http.StatusOK, rec.Body.String())
 	}
 }
 
@@ -341,14 +347,15 @@ func TestCreateRateLimit(t *testing.T) {
 // baseline: X-Content-Type-Options nosniff, X-Frame-Options DENY, and
 // Referrer-Policy strict-origin-when-cross-origin on a normal 200. It also pins
 // the two deliberate choices -- X-Frame-Options is the DENY default because
-// web-terminal-kiro is never embedded in a frame, and NO Content-Security-Policy is set,
-// because a wrong CSP would silently break the terminal UI's fonts + WebSocket.
+// web-terminal-kiro is never embedded in a frame, and the Content-Security-Policy is the
+// hash-pinned policy buildCSPPolicy assembles from the embedded index.html
+// (asserted below: script-src pins sha256 tokens, never 'unsafe-inline').
 // Driven through the full production chain (buildHandler) so the assertion
 // tracks what the server actually sends.
 func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
-	ready.Store(true)
+	var ready webhttp.Ready
+	ready.Set(true)
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -362,7 +369,7 @@ func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 	t.Cleanup(mgr.Shutdown)
 
 	rec := httptest.NewRecorder()
-	buildHandler(mux, nil, csp).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+	buildHandler(mux, nil, csp, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/health: status = %d, want %d", rec.Code, http.StatusOK)
@@ -479,8 +486,8 @@ func TestBuildCSPPolicyFailsLoud(t *testing.T) {
 // re-open cross-site WebSocket hijacking. This test fails if that happens.
 func TestWSRejectsCrossOrigin(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
-	ready.Store(true)
+	var ready webhttp.Ready
+	ready.Set(true)
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -501,7 +508,7 @@ func TestWSRejectsCrossOrigin(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	srv := httptest.NewServer(buildHandler(mux, nil, csp))
+	srv := httptest.NewServer(buildHandler(mux, nil, csp, nil))
 	t.Cleanup(srv.Close)
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/ws?session="+id, http.NoBody)
@@ -528,8 +535,8 @@ func TestWSRejectsCrossOrigin(t *testing.T) {
 // the 403 is specifically the same-origin (CSWSH) check, not a blanket refusal.
 func TestWSAcceptsSameOrigin(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
-	ready.Store(true)
+	var ready webhttp.Ready
+	ready.Set(true)
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -546,7 +553,7 @@ func TestWSAcceptsSameOrigin(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	srv := httptest.NewServer(buildHandler(mux, nil, csp))
+	srv := httptest.NewServer(buildHandler(mux, nil, csp, nil))
 	t.Cleanup(srv.Close)
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/ws?session="+id, http.NoBody)
@@ -604,8 +611,8 @@ func TestClassifyStatus(t *testing.T) {
 func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
 	newMux := func(ready bool, markerPath string) *http.ServeMux {
 		mux := http.NewServeMux()
-		var r atomic.Bool
-		r.Store(ready)
+		var r webhttp.Ready
+		r.Set(ready)
 		deps := &routeDeps{
 			staticFS:        fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 			ready:           &r,
@@ -655,8 +662,8 @@ func newToolsDeps(t *testing.T) *routeDeps {
 		t.Fatalf("toolbelt.New: %v", err)
 	}
 	t.Cleanup(eng.Close)
-	var ready atomic.Bool
-	ready.Store(true)
+	var ready webhttp.Ready
+	ready.Set(true)
 	return &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -719,12 +726,44 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	}
 }
 
+// TestToolsAPI_LoopbackOnly_malformedPeerFailsClosed pins the fail-closed
+// posture of the loopback gate on a socket peer it cannot prove is loopback:
+// a RemoteAddr that fails net.SplitHostPort (no port), an empty RemoteAddr,
+// and a host net.ParseIP rejects must all be refused with 403. The existing
+// TestToolsAPI_LoopbackOnly exercises only well-formed host:port peers, so a
+// fail-open regression on the error disjunct would pass the suite unnoticed.
+func TestToolsAPI_LoopbackOnly_malformedPeerFailsClosed(t *testing.T) {
+	mux := http.NewServeMux()
+	deps := newToolsDeps(t)
+	mgr, _, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
+
+	for _, tc := range []struct{ name, remoteAddr string }{
+		{name: "no port fails SplitHostPort", remoteAddr: "127.0.0.1"},
+		{name: "empty RemoteAddr", remoteAddr: ""},
+		{name: "unparseable host", remoteAddr: "not-an-ip:1234"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/tools", http.NoBody)
+			req.RemoteAddr = tc.remoteAddr
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("RemoteAddr %q: status = %d, want %d (a peer that cannot be proven loopback must be refused)", tc.remoteAddr, rec.Code, http.StatusForbidden)
+			}
+		})
+	}
+}
+
 // TestToolsAPI_AbsentWithoutEngine pins the no-engine shape (bare `go run`
 // / tests outside the container): /api/tools is simply not a registered
 // pattern, falling through to the static catch-all.
 func TestToolsAPI_AbsentWithoutEngine(t *testing.T) {
 	mux := http.NewServeMux()
-	var ready atomic.Bool
+	var ready webhttp.Ready
 	deps := &routeDeps{
 		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
 		ready:    &ready,
@@ -805,5 +844,62 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 	gated.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
 	if rec.Code != http.StatusServiceUnavailable || inner != 1 {
 		t.Fatalf("re-gated create: status %d inner %d, want 503 and no inner call", rec.Code, inner)
+	}
+}
+
+// TestRegisterRoutes_failsLoudOnMalformedStatic pins the error propagation of
+// the fail-loud CSP build through registerRoutes: an embedded index.html with
+// no inline <script> (a malformed build) must abort route registration with an
+// error, never register routes with a silently-degraded CSP.
+func TestRegisterRoutes_failsLoudOnMalformedStatic(t *testing.T) {
+	mux := http.NewServeMux()
+	var ready webhttp.Ready
+	deps := &routeDeps{
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(`<script src="/app.js"></script>`)}},
+		ready:    &ready,
+		workDir:  "",
+		cmd:      []string{"/bin/cat"},
+	}
+	if _, _, err := registerRoutes(mux, deps); err == nil {
+		t.Fatal("registerRoutes returned nil error for an index.html with no inline script; the hash-pinned CSP must abort startup, not degrade silently")
+	}
+}
+
+// TestComposeGate_narrowsToCreateOnly pins the narrowing contract the gate's
+// doc comment states but no test asserts: while tools are syncing, ONLY
+// session creation (POST terminal.SessionsPath) is 503'd — list (GET on the
+// same path) and requests to other paths pass through to the inner chain,
+// matching the engine's WithCreateGate contract (list/close/title flow
+// through the same doubly-mounted handler).
+func TestComposeGate_narrowsToCreateOnly(t *testing.T) {
+	syncing := func() bool { return true }
+	identity := func(next http.Handler) http.Handler { return next }
+
+	cases := []struct {
+		name     string
+		method   string
+		path     string
+		wantCode int
+		wantNext bool
+	}{
+		{name: "POST create is gated", method: http.MethodPost, path: terminal.SessionsPath, wantCode: http.StatusServiceUnavailable, wantNext: false},
+		{name: "GET list passes through", method: http.MethodGet, path: terminal.SessionsPath, wantCode: http.StatusCreated, wantNext: true},
+		{name: "DELETE close passes through", method: http.MethodDelete, path: terminal.SessionsPath + "/abc", wantCode: http.StatusCreated, wantNext: true},
+		{name: "POST to another path passes through", method: http.MethodPost, path: "/api/health", wantCode: http.StatusCreated, wantNext: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			nextHit := false
+			gated := composeGate(identity, syncing)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				nextHit = true
+				w.WriteHeader(http.StatusCreated)
+			}))
+			rec := httptest.NewRecorder()
+			gated.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, http.NoBody))
+			if rec.Code != tc.wantCode || nextHit != tc.wantNext {
+				t.Errorf("%s %s during sync = (status %d, next %v), want (%d, %v)",
+					tc.method, tc.path, rec.Code, nextHit, tc.wantCode, tc.wantNext)
+			}
+		})
 	}
 }

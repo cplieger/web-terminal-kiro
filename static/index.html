@@ -25,10 +25,40 @@
         --accent: hsl(263.1683 100% 80%);
         background: #000;
         color: var(--accent);
-        transition: opacity 0.3s ease;
+        /* easing matches the UI bundle's --ease-exit; tokens are scoped to .wt-root
+           and unreachable here, so the value is inlined like the --accent literal. */
+        transition: opacity 0.3s cubic-bezier(0.4, 0, 1, 1);
       }
       #loading.fade {
         opacity: 0;
+        /* the kernel removes the node on transitionend (1.5s fallback); until
+           then the invisible full-viewport overlay must not swallow the first
+           tap-to-focus on the freshly rendered terminal */
+        pointer-events: none;
+      }
+      #loading[role="alert"] {
+        flex-direction: column;
+        gap: 1rem;
+        padding: 1rem;
+        font-family: system-ui, -apple-system, sans-serif;
+        text-align: center;
+      }
+      #loading[role="alert"] button {
+        min-inline-size: 2.75rem;
+        min-block-size: 2.75rem;
+        padding-inline: 1rem;
+        border: 1px solid currentcolor;
+        border-radius: 0.5rem;
+        background: color-mix(in oklch, currentcolor 16%, transparent);
+        color: inherit;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+      #loading[role="alert"] button:focus-visible {
+        outline: 2px solid currentcolor;
+        outline-offset: 3px;
       }
       #loading .bar {
         position: relative;
@@ -80,7 +110,8 @@
         margin: 0;
         padding: 1rem;
         background: #000;
-        color: #b48eff;
+        /* brand accent (matches #loading --accent and the createTerminal theme) */
+        color: hsl(263.1683 100% 80%);
         font-family:
           system-ui,
           -apple-system,

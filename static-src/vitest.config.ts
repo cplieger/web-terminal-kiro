@@ -16,19 +16,22 @@ export default defineConfig({
     // modules.
     pool: "threads",
 
-    // Disable test isolation: pure functions have no side effects, so
+    // Disable test isolation: the suite is a single self-contained bootstrap
+    // test file (app.test.ts resets modules, mocks, and DOM itself), so
     // isolation adds overhead with no benefit.
     isolate: false,
 
     // Test files co-located with source, named *.test.ts
     include: ["**/*.test.ts"],
 
-    // Exclude compiled output, plus Vitest's defaults (node_modules at
-    // any depth, .git). Spreading configDefaults.exclude avoids narrowing
-    // the built-in "**/node_modules/**" to a top-level-only glob.
+    // Vitest's defaults (node_modules at any depth, .git); spreading
+    // configDefaults.exclude avoids narrowing the built-in
+    // "**/node_modules/**" to a top-level-only glob.
     // "**/.code-review/**" keeps stray *.test.ts scratch (e.g. files written under
     // .code-review/tmp by tooling) from being collected and failing the run.
-    exclude: [...configDefaults.exclude, "../static/**", "**/.code-review/**"],
+    // (Compiled output under ../static needs no entry: include/exclude resolve
+    // against this directory, so files outside it are never collected.)
+    exclude: [...configDefaults.exclude, "**/.code-review/**"],
 
     // Forbid .only tests unconditionally — not just in CI.
     allowOnly: false,
@@ -58,11 +61,11 @@ export default defineConfig({
     // Stop after the first failure in CI; collect full results locally.
     bail: process.env["CI"] ? 1 : 0,
 
-    // Per-test timeout. Pure-function tests should never need more than 2s.
+    // Per-test timeout. These small unit tests should never need more than 2s.
     testTimeout: 2000,
     hookTimeout: 5000,
 
-    // Flag tests slower than 100ms — pure functions have no I/O.
+    // Flag tests slower than 100ms — these tests have no I/O.
     slowTestThreshold: 100,
 
     // Reproducible ordering. hooks: "stack" = afterEach/afterAll run in
@@ -87,13 +90,13 @@ export default defineConfig({
       reportOnFailure: true,
       reporter: ["text", "text-summary", "lcov"],
       thresholds: {
-        // Thresholds intentionally low: web-terminal-kiro's frontend is small and
-        // most code is DOM/terminal/WS side-effect wiring. Bump these
-        // when more pure helpers are extracted into testable modules.
-        lines: 5,
-        functions: 5,
-        branches: 5,
-        statements: 5,
+        // The frontend is a single bootstrap module (app.ts) fully covered
+        // by app.test.ts (100% on all axes). 90 locks that in while leaving
+        // slack for a future module with an untestable sliver.
+        lines: 90,
+        functions: 90,
+        branches: 90,
+        statements: 90,
       },
     },
 

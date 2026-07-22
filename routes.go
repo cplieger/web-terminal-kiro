@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync/atomic"
+	"time"
 
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/toolbelt/v2/httpapi"
@@ -19,7 +19,7 @@ import (
 
 type routeDeps struct {
 	staticFS fs.FS
-	ready    *atomic.Bool
+	ready    *webhttp.Ready
 	// tools, when non-nil, mounts the toolbelt httpapi projection at
 	// /api/tools behind the loopback gate; toolsSyncing gates session
 	// creation on the boot convergence pass; toolsState feeds the
@@ -38,12 +38,17 @@ type routeDeps struct {
 	cmd             []string
 }
 
-// registerRoutes wires the full route table on mux and returns the session
-// manager (for shutdown) plus the hash-pinned CSP policy string built from the
-// embedded index.html (for buildHandler's SecurityHeaders layer) — both derive
-// from the same static tree, so they are assembled together, fail-loud.
-func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManager, string, error) {
-	sub, err := fs.Sub(deps.staticFS, "static")
+// buildStaticSurface assembles the embedded-static serving surface: the
+// static handler and the hash-pinned CSP policy string built from the same
+// static tree, fail-loud on a malformed embed. webhttp.StaticHandler supplies
+// the embedded-static mechanism (per-file content-hash ETags — embed.FS
+// reports a zero ModTime, so a bare http.FileServer emits no validator and
+// every load re-downloads the bundle — plus precomputed gzip and
+// Vary: Accept-Encoding); the per-path cache POLICY stays this app's
+// (kiroCacheControl below). Same helper as web-terminal-server, so the two
+// family shells cannot drift on the mechanism again.
+func buildStaticSurface(staticFS fs.FS) (http.Handler, string, error) {
+	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		return nil, "", err
 	}
@@ -51,14 +56,19 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	if err != nil {
 		return nil, "", err
 	}
-	// webhttp.StaticHandler supplies the embedded-static mechanism (per-file
-	// content-hash ETags — embed.FS reports a zero ModTime, so a bare
-	// http.FileServer emits no validator and every load re-downloads the
-	// bundle — plus precomputed gzip and Vary: Accept-Encoding); the per-path
-	// cache POLICY stays this app's (kiroCacheControl below). Same helper as
-	// web-terminal-server, so the two family shells cannot drift on the
-	// mechanism again.
 	staticSrv, err := webhttp.StaticHandler(sub, webhttp.WithStaticCacheControl(kiroCacheControl))
+	if err != nil {
+		return nil, "", err
+	}
+	return staticSrv, cspPolicy, nil
+}
+
+// registerRoutes wires the full route table on mux and returns the session
+// manager (for shutdown) plus the hash-pinned CSP policy string built from the
+// embedded index.html (for buildHandler's SecurityHeaders layer) — both derive
+// from the same static tree, so they are assembled together, fail-loud.
+func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManager, string, error) {
+	staticSrv, cspPolicy, err := buildStaticSurface(deps.staticFS)
 	if err != nil {
 		return nil, "", err
 	}
@@ -82,11 +92,42 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	// unlock kiro-cli, and iTerm.app additionally covers other agents like Claude
 	// Code). Anything the engine can't render (inline images) is consumed silently.
 	factory := func(id string) *terminal.Handler {
+		start := time.Now()
+		// The session id doubles as the WebSocket routing/resume capability
+		// token (the engine's manager truncates it in its own logs for the
+		// same reason), so only a correlation-safe truncated form may reach
+		// the log stream: the full value would hand terminal access to
+		// anyone with log-read access and network reach.
+		safeID := id
+		if len(safeID) > 8 {
+			safeID = safeID[:8] + "…"
+		}
+		sessionLogger := slog.Default().With("session", safeID)
 		return terminal.NewHandler(deps.cmd,
 			terminal.WithWorkDir(deps.workDir),
 			terminal.WithScrollbackCapacity(5000),
 			terminal.WithKeepUnfocused(),
-			terminal.WithLogger(slog.Default().With("session", id)),
+			terminal.WithLogger(sessionLogger),
+			// A session whose process dies within seconds of spawn is the
+			// kiro-cli-missing/broken signature (the sign-in guard exits 1
+			// when the binary is absent or login fails instantly). The
+			// engine logs child exit at Info by design; this app-level hook
+			// raises the fast-death case to Warn so a broken install on the
+			// persistent volume is visible to operators, not only in the PTY.
+			// Gated on deps.ready: an app-initiated shutdown (SIGTERM
+			// pre-drain, or the Serve-error path) clears readiness before
+			// mgr.Shutdown cancels the child processes, whose killed/canceled
+			// wait errors would otherwise fire this warning as a false
+			// broken-install alert on every deploy. Only spontaneous early
+			// exits while still serving are promoted to Warn; intentional
+			// shutdowns keep the engine's normal INFO exit record.
+			terminal.WithOnProcessExit(func(err error) {
+				if err != nil && deps.ready.Ready() && time.Since(start) < 10*time.Second {
+					sessionLogger.Warn("session process exited almost immediately after start; kiro-cli may be missing or broken",
+						"error", err,
+						"hint", "check /api/health and the kiro-cli install under /config/tools/bin")
+				}
+			}),
 		)
 	}
 
@@ -106,7 +147,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 	// topology lives in the engine, the throttle policy in webhttp; this app
 	// just composes the two.
 	// The create gate composes two layers: the fleet-standard create
-	// rate limit (outer), and — while the tools boot convergence runs —
+	// rate limit (inner), and — checked before it while the tools boot convergence runs —
 	// a 503 that keeps the FIRST kiro-cli session from spawning before
 	// the manifest's language servers are on PATH (kiro-cli scans PATH
 	// once at session start). Static assets, /api/health, and the tools
@@ -132,14 +173,24 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 		mux.Handle("/api/tools/", toolsAPI)
 	}
 
-	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/health", handleHealth(deps))
+
+	return mgr, cspPolicy, nil
+}
+
+// handleHealth returns the /api/health readiness handler. It reflects, in
+// order: listener readiness (deps.ready), the env-gated kiro-cli readiness
+// marker (deps.kiroReadyMarker; see the entrypoint), and the INFORMATIONAL
+// tools field (deps.toolsState) — tool convergence never gates readiness.
+func handleHealth(deps *routeDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
 		unready := func(reason string) {
 			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
 				"status": "unready",
 				"reason": reason,
 			})
 		}
-		if !deps.ready.Load() {
+		if !deps.ready.Ready() {
 			unready("starting up or shutting down")
 			return
 		}
@@ -169,16 +220,16 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) (*terminal.SessionManag
 			body["tools"] = deps.toolsState()
 		}
 		webhttp.WriteJSON(w, body)
-	})
-
-	return mgr, cspPolicy, nil
+	}
 }
 
 // classifyStatus maps kiro-cli's OSC 9 notification text to a latched session
 // status for the tab activity dots: "Response complete" at the end of an agent
 // turn latches the done (green) state, and "Permission required" when a tool
 // call is blocked on approval latches the needs-input (amber) state (confirmed
-// against the pinned 2.11.0 build). A new working phase (the OSC 9;4 progress
+// against the pinned 2.13.0 build's notifier call sites — re-verify both
+// strings after every kiro-cli bump, in the same PR as the pin move). A new
+// working phase (the OSC 9;4 progress
 // signal, enabled by the factory's TERM_PROGRAM) clears the latch. Any other
 // message is ignored. This mapping is the only kiro-cli-specific coupling; the
 // engine stays generic (a plain shell server sets no classifier and derives
@@ -271,18 +322,25 @@ func buildCSPPolicy(sub fs.FS) (string, error) {
 	return fmt.Sprintf(cspTemplate, strings.Join(hashes, " ")), nil
 }
 
+// errorField is the JSON key carrying the human-readable failure reason in
+// the hand-rolled ad-hoc error bodies below and in main.go's hostAllowlist.
+const errorField = "error"
+
 // composeGate wraps the session-create gate with the tools-syncing
-// check: while the boot convergence pass runs, session creation answers
-// 503 so kiro-cli never spawns before the manifest's tools are on PATH.
-// The inner gate (the create rate limit) applies once syncing is over.
+// check: while the boot convergence pass runs, only SESSION CREATION
+// (POST terminal.SessionsPath) answers 503, so kiro-cli never spawns
+// before the manifest's tools are on PATH; list/close/title requests
+// routed through the same doubly-mounted handler pass through, matching
+// the engine's WithCreateGate contract. The inner gate (the create rate
+// limit) applies once syncing is over.
 func composeGate(inner func(http.Handler) http.Handler, syncing func() bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		gated := inner(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if syncing() {
+			if syncing() && r.Method == http.MethodPost && r.URL.Path == terminal.SessionsPath {
 				webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
-					"error":  "tools installing",
-					"reason": "tools installing",
+					errorField: "tools installing",
+					"reason":   "tools installing",
 				})
 				return
 			}
@@ -302,7 +360,7 @@ func loopbackOnly(next http.Handler) http.Handler {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil || !net.ParseIP(host).IsLoopback() {
 			webhttp.WriteJSONStatus(w, http.StatusForbidden, map[string]string{
-				"error": "tools API is loopback-only; call it from inside the container (curl localhost:9848)",
+				errorField: "tools API is loopback-only; call it from inside the container (curl localhost:9848)",
 			})
 			return
 		}
