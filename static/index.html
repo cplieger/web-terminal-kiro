@@ -60,6 +60,17 @@
         outline: 2px solid currentcolor;
         outline-offset: 3px;
       }
+      /* Hover gated to real hover pointers, matching the family convention
+         (web-terminal-ui 31-switcher.css: sticky :hover after tap on touch);
+         press feedback on touch comes from :active. */
+      @media (hover: hover) {
+        #loading[role="alert"] button:hover {
+          background: color-mix(in oklch, currentcolor 28%, transparent);
+        }
+      }
+      #loading[role="alert"] button:active {
+        background: color-mix(in oklch, currentcolor 36%, transparent);
+      }
       #loading .bar {
         position: relative;
         inline-size: min(220px, 62vw);
@@ -141,6 +152,34 @@
           "@cplieger/web-terminal-ui/presets": "/vendor/cplieger-web-terminal-ui/presets.js"
         }
       }
+    </script>
+    <script>
+      // Bootstrap watchdog: if /app.js (or a vendor module it statically
+      // imports) fails to fetch/parse/evaluate, no JS ever runs to replace the
+      // loading overlay, leaving an infinitely animating "Loading" bar (the
+      // 2026-07 stuck-loading UX through a different hole). Surface it instead.
+      window.addEventListener(
+        "error",
+        (e) => {
+          const overlay = document.getElementById("loading");
+          // Only while the pre-JS overlay is still pristine (bar present, no
+          // alert yet): after boot the kernel removes the overlay, and app.js's
+          // own showFatal replaces the bar before it throws.
+          if (!overlay || !overlay.querySelector(".bar")) return;
+          if (!(e.target instanceof HTMLScriptElement) && !e.error) return;
+          overlay.removeAttribute("aria-label");
+          overlay.setAttribute("role", "alert");
+          overlay.setAttribute("aria-live", "assertive");
+          overlay.textContent =
+            "Web Terminal for Kiro failed to load. Check your connection and reload the page.";
+          const reload = document.createElement("button");
+          reload.type = "button";
+          reload.textContent = "Reload";
+          reload.addEventListener("click", () => window.location.reload());
+          overlay.append(" ", reload);
+        },
+        true,
+      );
     </script>
     <script
       type="module"

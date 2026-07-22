@@ -179,3 +179,39 @@ func TestBuildHandlerClientIPThreading(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildHandlerSkipsAccessLogForStreams pins the WithSkipPaths wiring in
+// buildHandler: the long-lived streams (/ws and the /api/sessions/events SSE)
+// must emit NO access-log line (a per-open line records a misleading
+// status/duration for a connection that lives for hours), while a normal
+// request still produces one. A regression dropping WithSkipPaths would flood
+// the access log with one misleading line per reconnect and pass every other
+// test. Serial: swaps the process-global default logger (buildHandler binds
+// WithLogger(slog.Default()) at construction).
+func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	mux := http.NewServeMux()
+	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
+	mux.HandleFunc("/ws", ok)
+	mux.HandleFunc("/api/sessions/events", ok)
+	mux.HandleFunc("/probe", ok)
+
+	h := buildHandler(mux, nil, "default-src 'self'", nil)
+	for _, path := range []string{"/ws", "/api/sessions/events", "/probe"} {
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, http.NoBody))
+	}
+
+	log := buf.String()
+	for _, skipped := range []string{"path=/ws", "path=/api/sessions/events"} {
+		if strings.Contains(log, skipped) {
+			t.Errorf("access log = %q, want no line for the long-lived stream %q (WithSkipPaths must keep per-open lines out)", log, skipped)
+		}
+	}
+	if !strings.Contains(log, "path=/probe") {
+		t.Errorf("access log = %q, want an access line for the normal request path=/probe (the skip list must not swallow everything)", log)
+	}
+}

@@ -103,6 +103,9 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     const reloadButton = overlay.querySelector("button");
     expect(reloadButton?.type).toBe("button");
     expect(reloadButton?.textContent).toBe("Reload");
+    // showFatal moves focus to the recovery CTA: the page content is gone and
+    // Reload is the only actionable element left.
+    expect(document.activeElement).toBe(reloadButton);
     reloadButton?.click();
     expect(reload).toHaveBeenCalledTimes(1);
   });

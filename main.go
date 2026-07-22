@@ -173,9 +173,8 @@ func hostAllowlist(allowed map[string]struct{}) func(http.Handler) http.Handler 
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if _, ok := allowed[canonicalHost(r.Host)]; !ok {
-				webhttp.WriteJSONStatus(w, http.StatusForbidden, map[string]string{
-					errorField: "host not allowed; add it to KWEB_ALLOWED_HOSTS to serve this hostname",
-				})
+				webhttp.WriteError(w, r, http.StatusForbidden, "",
+					"host not allowed; add it to KWEB_ALLOWED_HOSTS to serve this hostname")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -475,27 +474,7 @@ func startTools(cfg baseTools) toolsRuntime {
 		warnIfNoLSPEnabled(eng)
 	default:
 		syncing.Store(true)
-		go func() {
-			final, werr := eng.Wait(context.Background(), job.ID)
-			switch {
-			case werr != nil:
-				slog.Warn("tools: boot reconcile wait failed", "error", werr)
-				finish("degraded")
-			case final.State != toolbelt.JobDone:
-				slog.Warn("tools: boot reconcile finished degraded",
-					"state", final.State, "error", final.Error)
-				finish("degraded")
-			default:
-				slog.Info("tools: boot reconcile converged")
-				finish("ok")
-			}
-			// Freshness pass for unpinned entries, off the boot path
-			// (version-check network never holds the session gate).
-			if _, uerr := eng.Update(); uerr != nil {
-				slog.Warn("tools: update pass not enqueued", "error", uerr)
-			}
-			warnIfNoLSPEnabled(eng)
-		}()
+		go awaitBootConvergence(eng, job.ID, finish)
 	}
 	// Boot catalog fetch, explicitly AFTER the reconcile enqueue: the
 	// engine's schedule deliberately has no fire-on-start (an immediate
@@ -510,6 +489,31 @@ func startTools(cfg baseTools) toolsRuntime {
 		syncing: syncing.Load,
 		state:   func() string { s, _ := verdict.Load().(string); return s },
 	}
+}
+
+// awaitBootConvergence blocks on the boot reconcile job, records the verdict
+// (lifting the session-create gate via finish), then runs the same post-boot
+// tail the enqueue-failure paths run inline: the freshness pass for unpinned
+// entries (off the boot path — version-check network never holds the session
+// gate) and the language-server nudge.
+func awaitBootConvergence(eng *toolbelt.Engine, jobID string, finish func(string)) {
+	final, werr := eng.Wait(context.Background(), jobID)
+	switch {
+	case werr != nil:
+		slog.Warn("tools: boot reconcile wait failed", "error", werr)
+		finish("degraded")
+	case final.State != toolbelt.JobDone:
+		slog.Warn("tools: boot reconcile finished degraded",
+			"state", final.State, "error", final.Error)
+		finish("degraded")
+	default:
+		slog.Info("tools: boot reconcile converged")
+		finish("ok")
+	}
+	if _, uerr := eng.Update(); uerr != nil {
+		slog.Warn("tools: update pass not enqueued", "error", uerr)
+	}
+	warnIfNoLSPEnabled(eng)
 }
 
 // warnIfNoLSPEnabled logs the code-intelligence nudge when no

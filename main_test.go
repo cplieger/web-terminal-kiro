@@ -698,7 +698,7 @@ func TestEmbeddedRequiredToolsNonEmpty(t *testing.T) {
 	}
 	// The seed templates must stay covered: the runtime refresh gate
 	// protects exactly what the image-build verify gate protects.
-	for _, seed := range []string{"gopls", "typescript-language-server", "pyright", "gh"} {
+	for _, seed := range []string{"gopls", "typescript-language-server", "pyright", "rust-analyzer", "gh"} {
 		if !slices.Contains(names, seed) {
 			t.Errorf("required-tools.txt missing seed name %q", seed)
 		}

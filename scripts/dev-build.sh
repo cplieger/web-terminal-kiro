@@ -17,7 +17,7 @@ UI_PKG="static-src/node_modules/@cplieger/web-terminal-ui"
 # The TS7 native compiler comes from static-src's @typescript/native devDep.
 TSC="static-src/node_modules/.bin/tsc"
 [ -x "$TSC" ] || {
-  echo "error: $TSC not found — run 'cd static-src && npm install' first" >&2
+  printf "error: %s not found — run 'cd static-src && npm install' first\n" "$TSC" >&2
   exit 1
 }
 # Validate every required checkout input BEFORE go.work is written or the
@@ -33,14 +33,14 @@ for required in \
   }
 done
 
-echo "[1/6] go.work -> local engine (replace published module with ${ENGINE_DIR})"
+printf '[1/6] go.work -> local engine (replace published module with %s)\n' "$ENGINE_DIR"
 # Mirror go.mod's go directive and engine module path so neither can drift (a
 # hardcoded version here broke the build when go.mod moved to a newer patch; a
 # hardcoded /v2 module path silently no-opped the replace after the v3 bump).
 GO_DIRECTIVE="$(sed -n 's/^go /go /p' go.mod | head -n1)"
 ENGINE_MOD="$(sed -n 's|.*\(github.com/cplieger/web-terminal-engine/v[0-9]*\) .*|\1|p' go.mod | head -n1)"
 [ -n "$ENGINE_MOD" ] || {
-  echo "error: engine module path not found in go.mod" >&2
+  printf 'error: engine module path not found in go.mod\n' >&2
   exit 1
 }
 cat >go.work <<EOF
@@ -51,7 +51,7 @@ use .
 replace ${ENGINE_MOD} => ${ENGINE_DIR}
 EOF
 
-echo "[2/6] overlay local engine + UI TS into the bundler-resolved packages"
+printf '[2/6] overlay local engine + UI TS into the bundler-resolved packages\n'
 rm -rf "$ENGINE_PKG/src" "$UI_PKG/src"
 mkdir -p "$ENGINE_PKG/src" "$UI_PKG/src"
 cp "$ENGINE_DIR/web/package.json" "$ENGINE_PKG/package.json"
@@ -68,10 +68,10 @@ cp "$UI_DIR/package.json" "$UI_PKG/package.json"
     cp "$UI_DIR/src/$f" "$UI_PKG/src/$f"
   done
 
-echo "[3/6] tsc: app -> static/app.js (resolves @cplieger/web-terminal-ui)"
+printf '[3/6] tsc: app -> static/app.js (resolves @cplieger/web-terminal-ui)\n'
 "$TSC" --project static-src/tsconfig.json
 
-echo "[4/6] tsc: engine + UI libs -> static/vendor/"
+printf '[4/6] tsc: engine + UI libs -> static/vendor/\n'
 rm -rf static/vendor/cplieger-web-terminal-engine static/vendor/cplieger-web-terminal-ui
 "$TSC" --module ESNext --target ESNext --moduleResolution bundler \
   --outDir static/vendor/cplieger-web-terminal-engine \
@@ -83,7 +83,7 @@ mapfile -t ui_ts < <(find "$UI_PKG/src" -name '*.ts')
   --outDir static/vendor/cplieger-web-terminal-ui \
   --rootDir "$UI_PKG/src" --skipLibCheck --strict "${ui_ts[@]}"
 
-echo "[5/6] fonts (Monaspace Nerd Font, cached) + CSS bundle (from UI package)"
+printf '[5/6] fonts (Monaspace Nerd Font, cached) + CSS bundle (from UI package)\n'
 # Single source of truth: the Dockerfile's Renovate-managed NERDFONT_* ARGs.
 FONT_VER="$(sed -n 's/^ARG NERDFONT_VERSION=//p' Dockerfile)"
 FONT_SHA256="$(sed -n 's/^ARG NERDFONT_SHA256=//p' Dockerfile)"
@@ -112,7 +112,7 @@ for font in "${fonts[@]}"; do
   [ -s "$FONT_CACHE/$font" ] || need_fonts=1
 done
 if [ "$need_fonts" = 1 ]; then
-  echo "  downloading Monaspace ${FONT_VER}..."
+  printf '  downloading Monaspace %s...\n' "$FONT_VER"
   rm -f "$FONT_CACHE_MARKER"
   mona_tmp="$(mktemp)"
   trap 'rm -f "$mona_tmp"' EXIT
@@ -136,6 +136,6 @@ done
 
 sh scripts/css-bundle.sh "$UI_DIR/css" static/style.css
 
-echo "[6/6] go build (CGO off, linux/amd64 host = container arch)"
+printf '[6/6] go build (CGO off, linux/amd64 host = container arch)\n'
 CGO_ENABLED=0 go build -trimpath -o web-terminal-kiro-dev-bin .
-echo "OK -> $(pwd)/web-terminal-kiro-dev-bin ($(du -h web-terminal-kiro-dev-bin | cut -f1))"
+printf 'OK -> %s/web-terminal-kiro-dev-bin (%s)\n' "$(pwd)" "$(du -h web-terminal-kiro-dev-bin | cut -f1)"

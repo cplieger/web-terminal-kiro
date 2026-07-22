@@ -12,6 +12,7 @@ out="${2:?usage: css-bundle.sh <ui-css-dir> <out-file>}"
 # output directory keeps the rename atomic.
 tmp=$(mktemp "${out}.XXXXXX")
 trap 'rm -f "$tmp"' EXIT HUP INT TERM
+css_root=$(realpath "$css_dir")
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in '' | \#*) continue ;; esac
   case "$line" in
@@ -20,7 +21,20 @@ while IFS= read -r line || [ -n "$line" ]; do
       exit 1
       ;;
   esac
-  cat "${css_dir}/${line}" >>"$tmp"
+  # Resolve symlinks and re-assert containment: the literal guard above
+  # cannot see a symlink shipped inside a crafted UI tarball.
+  entry=$(realpath -e "${css_dir}/${line}") || {
+    printf 'css-bundle: MANIFEST entry does not resolve: %s\n' "$line" >&2
+    exit 1
+  }
+  case "$entry" in
+    "${css_root}"/*) ;;
+    *)
+      printf 'css-bundle: MANIFEST entry resolves outside css dir, refusing: %s\n' "$line" >&2
+      exit 1
+      ;;
+  esac
+  cat "$entry" >>"$tmp"
 done <"${css_dir}/MANIFEST"
 # An empty or fully-commented MANIFEST (a truncated/mis-published UI tarball)
 # would otherwise install an empty bundle that nothing downstream catches.

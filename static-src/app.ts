@@ -43,6 +43,11 @@ function showFatal(overlay: HTMLElement, message: string): void {
     window.location.reload();
   });
   overlay.append(" ", reload);
+  // Move focus to the recovery CTA: the page content is gone, the alert has
+  // announced, and Reload is the only actionable element left (APG alert
+  // pattern advises against interactive content in an un-focus-managed alert;
+  // alertdialog's focus move is the matching treatment).
+  reload.focus();
 }
 
 const loading = document.getElementById("loading");

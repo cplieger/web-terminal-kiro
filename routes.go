@@ -227,8 +227,10 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 // status for the tab activity dots: "Response complete" at the end of an agent
 // turn latches the done (green) state, and "Permission required" when a tool
 // call is blocked on approval latches the needs-input (amber) state (confirmed
-// against the pinned 2.13.0 build's notifier call sites — re-verify both
-// strings after every kiro-cli bump, in the same PR as the pin move). A new
+// against the pinned 2.13.1 build's kiro-cli-chat notifier strings — the
+// strings live in the kiro-cli-chat sidecar binary, not the kiro-cli
+// dispatcher, so re-verify both strings there after every kiro-cli bump, in
+// the same PR as the pin move). A new
 // working phase (the OSC 9;4 progress
 // signal, enabled by the factory's TERM_PROGRAM) clears the latch. Any other
 // message is ignored. This mapping is the only kiro-cli-specific coupling; the
@@ -323,7 +325,8 @@ func buildCSPPolicy(sub fs.FS) (string, error) {
 }
 
 // errorField is the JSON key carrying the human-readable failure reason in
-// the hand-rolled ad-hoc error bodies below and in main.go's hostAllowlist.
+// composeGate's hand-rolled 503 body below (the two 403 gates emit the
+// standard webhttp.WriteError envelope).
 const errorField = "error"
 
 // composeGate wraps the session-create gate with the tools-syncing
@@ -359,9 +362,8 @@ func loopbackOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil || !net.ParseIP(host).IsLoopback() {
-			webhttp.WriteJSONStatus(w, http.StatusForbidden, map[string]string{
-				errorField: "tools API is loopback-only; call it from inside the container (curl localhost:9848)",
-			})
+			webhttp.WriteError(w, r, http.StatusForbidden, "",
+				"tools API is loopback-only; call it from inside the container (curl localhost:9848)")
 			return
 		}
 		next.ServeHTTP(w, r)

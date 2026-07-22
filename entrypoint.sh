@@ -16,7 +16,7 @@ BIN="$TOOLS/bin/kiro-cli"
 kiro_cli_version() {
   # --kill-after gives a TERM-resistant binary a hard second-stage deadline;
   # without it GNU timeout waits forever on a child that traps/ignores TERM.
-  timeout --signal=TERM --kill-after=5s 10s "$1" --version 2>/dev/null | awk '{print $NF}'
+  timeout --signal=TERM --kill-after=5s 10s "$1" --version 2>/dev/null | awk 'NR==1{print $NF; exit}'
 }
 
 # kiro-cli is pinned via Renovate against the public install manifest at
@@ -217,8 +217,12 @@ fi
 # must not block boot, but a silent one leaves e.g. auto-update enabled or the
 # OSC 9 notification path off with no trail in Loki).
 kiro_setting() {
-  if ! timeout --signal=TERM --kill-after=5s 10s "$BIN" settings "$1" "$2" >/dev/null 2>&1; then
-    printf 'level=warn msg="kiro-cli settings call failed; dependent feature may misbehave" setting=%s value=%s component=entrypoint\n' "$1" "$2" >&2
+  timeout --signal=TERM --kill-after=5s 10s "$BIN" settings "$1" "$2" >/dev/null 2>&1
+  setting_rc=$?
+  if [ "$setting_rc" -ne 0 ]; then
+    # 124/137 = the 10s deadline (TERM, then the --kill-after SIGKILL fallback),
+    # logged with rc so Loki distinguishes a wedged binary from a settings error.
+    printf 'level=warn msg="kiro-cli settings call failed; dependent feature may misbehave" setting=%s value=%s rc=%d component=entrypoint\n' "$1" "$2" "$setting_rc" >&2
   fi
 }
 if [ -x "$BIN" ]; then
