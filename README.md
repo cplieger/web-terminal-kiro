@@ -55,9 +55,13 @@ The image ships working defaults; most setups only pick a port and a volume.
 | --- | --- | --- |
 | `KWEB_ADDR` | `:9848` | Listen address (`host:port`). |
 | `KWEB_WORK_DIR` | `/workspace` | Directory each terminal session starts in (must exist). |
+| `KWEB_CONFIG_DIR` | `/config` | Persistent config directory (kiro-cli home, tool state). When the directory does not exist the tool-provisioning engine is skipped with a warning; terminal sessions still run (the case when running bare `go run` outside the image). |
+| `KIRO_CLI_PATH` | `kiro-cli` | Path to the kiro-cli binary each session launches (resolved via `PATH` when bare). A missing binary reports inside the terminal at session start; the server keeps serving. |
 | `KIRO_CLI_CHAT_ARGS` | _(unset)_ | Extra launch flags appended to every session's `kiro-cli chat` command, whitespace-separated (for example `--effort high` or `--v3`). Handy for opting into kiro-cli features ahead of the image's defaults. |
 | `TOOL_CATALOG_REFRESH` | `24h` | How often the server refreshes the tool catalog from the published artifact (Go duration). `off` or `0` disables the schedule; a manual refresh stays available via `POST /api/tools/catalog/refresh` on loopback. |
 | `TOOL_CATALOG_URL` | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest-release artifact | Where catalog refreshes fetch from. Point it at a fork or mirror to decouple from the default publisher. |
+| `TOOL_CATALOG_PATH` | `/app/tool-catalog.json` | Image-baked tool catalog used at first boot and when offline, until a successfully fetched catalog replaces it. |
+| `KIRO_CLI_READY_MARKER` | _(unset)_ | Image-internal: the entrypoint sets it to the marker file it writes once kiro-cli is verified runnable, and `/api/health` reports starting (503) while the marker is absent. Leave unset outside the container. |
 | `TRUSTED_PROXIES` | _(unset)_ | Reverse-proxy CIDRs / bare IPs whose `X-Forwarded-For` the access log trusts to resolve `client_ip`. See [Behind a reverse proxy](#behind-a-reverse-proxy). |
 | `KWEB_ALLOWED_HOSTS` | _(unset)_ | Comma-separated exact hostnames/IPs the server answers for (e.g. `localhost,192.168.1.5,webterm.example.com`); a request with any other `Host` header is rejected. This blocks DNS-rebinding attacks, which can reach even a loopback- or LAN-bound terminal through your own browser, so set it for any long-running deployment (unset accepts every `Host` and logs a startup warning). |
 
@@ -145,7 +149,7 @@ the GitHub CLI, all disabled. Flip the ones you want and restart:
 ```
 
 Install knowledge (download URLs, checksums, dependencies) comes from a
-catalog of ~700 tools compiled daily from the mise and aqua registries by
+catalog of ~700 tools compiled from the mise and aqua registries, as they release, by
 [tool-catalog](https://github.com/cplieger/tool-catalog) — a template carries
 no install commands, so it never goes stale. The server refreshes the catalog
 at boot and every `TOOL_CATALOG_REFRESH` (default `24h`; `off` disables the
