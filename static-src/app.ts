@@ -26,6 +26,10 @@ import { presetAgentTabbed } from "@cplieger/web-terminal-ui/presets";
 // Reveal the #loading overlay as a modal alert dialog with a fatal message.
 // remove("fade") undoes any fade-out createTerminal began; on the missing-root
 // path createTerminal never ran, so the remove is a harmless no-op.
+// Mirrored by the inline bootstrap watchdog in static/index.html, which builds
+// the same alertdialog shape for app.js load failures (before this module can
+// run) and stands down once the pristine .bar child is gone -- keep the two in
+// sync when changing this shape.
 function showFatal(overlay: HTMLElement, message: string): void {
   overlay.classList.remove("fade");
   // alertdialog, not alert: the overlay carries an interactive Reload button
@@ -41,7 +45,6 @@ function showFatal(overlay: HTMLElement, message: string): void {
   overlay.setAttribute("aria-modal", "true");
   overlay.setAttribute("aria-label", "Web Terminal for Kiro startup failure");
   overlay.setAttribute("aria-describedby", description.id);
-  overlay.replaceChildren(description);
   // manifest.json declares display: standalone, so an installed PWA has no browser
   // chrome; "reload the page" needs an in-page affordance (Vercel: no dead ends).
   const reload = document.createElement("button");
@@ -50,7 +53,7 @@ function showFatal(overlay: HTMLElement, message: string): void {
   reload.addEventListener("click", () => {
     window.location.reload();
   });
-  overlay.append(" ", reload);
+  overlay.replaceChildren(description, reload);
   // Move focus to the recovery CTA: the page content is gone and Reload is the
   // only actionable element left (the alertdialog pattern's initial focus).
   reload.focus();

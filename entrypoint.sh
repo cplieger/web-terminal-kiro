@@ -217,6 +217,7 @@ fi
 # must not block boot, but a silent one leaves e.g. auto-update enabled or the
 # OSC 9 notification path off with no trail in Loki).
 kiro_setting() {
+  local setting_rc
   timeout --signal=TERM --kill-after=5s 10s "$BIN" settings "$1" "$2" >/dev/null 2>&1
   setting_rc=$?
   if [ "$setting_rc" -ne 0 ]; then

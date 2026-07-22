@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
     <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#000000">
     <title>Web Terminal for Kiro</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
@@ -36,14 +37,14 @@
            tap-to-focus on the freshly rendered terminal */
         pointer-events: none;
       }
-      #loading:is([role="alert"], [role="alertdialog"]) {
+      #loading[role="alertdialog"] {
         flex-direction: column;
         gap: 1rem;
         padding: 1rem;
         font-family: system-ui, -apple-system, sans-serif;
         text-align: center;
       }
-      #loading:is([role="alert"], [role="alertdialog"]) button {
+      #loading[role="alertdialog"] button {
         min-inline-size: 2.75rem;
         min-block-size: 2.75rem;
         padding-inline: 1rem;
@@ -56,7 +57,7 @@
         cursor: pointer;
         touch-action: manipulation;
       }
-      #loading:is([role="alert"], [role="alertdialog"]) button:focus-visible {
+      #loading[role="alertdialog"] button:focus-visible {
         outline: 2px solid currentcolor;
         outline-offset: 3px;
       }
@@ -64,12 +65,15 @@
          (web-terminal-ui 31-switcher.css: sticky :hover after tap on touch);
          press feedback on touch comes from :active. */
       @media (hover: hover) {
-        #loading:is([role="alert"], [role="alertdialog"]) button:hover {
+        #loading[role="alertdialog"] button:hover {
           background: color-mix(in oklch, currentcolor 28%, transparent);
         }
       }
-      #loading:is([role="alert"], [role="alertdialog"]) button:active {
+      #loading[role="alertdialog"] button:active {
         background: color-mix(in oklch, currentcolor 36%, transparent);
+      }
+      #loading[role="alertdialog"] p {
+        margin: 0;
       }
       #loading .bar {
         position: relative;
@@ -163,9 +167,14 @@
         (e) => {
           const overlay = document.getElementById("loading");
           // Only while the pre-JS overlay is still pristine (bar present, no
-          // alert yet): after boot the kernel removes the overlay, and app.js's
-          // own showFatal replaces the bar before it throws.
-          if (!overlay || !overlay.querySelector(".bar")) return;
+          // alert yet, and no fade-out started): after boot the kernel removes
+          // the overlay on transitionend, but between the first frame's
+          // fade-out and that removal the bar is still a child, so a stray
+          // uncaught runtime error in that window would otherwise convert a
+          // BOOTED terminal's invisible (opacity:0, pointer-events:none)
+          // overlay into a focus-stealing alertdialog. app.js's own showFatal
+          // replaces the bar before it throws.
+          if (!overlay || !overlay.querySelector(".bar") || overlay.classList.contains("fade")) return;
           if (!(e.target instanceof HTMLScriptElement) && !e.error) return;
           // alertdialog, not alert: the overlay carries an interactive Reload
           // button and moves focus into it, the alertdialog interaction model
@@ -180,12 +189,11 @@
           overlay.setAttribute("aria-modal", "true");
           overlay.setAttribute("aria-label", "Web Terminal for Kiro startup failure");
           overlay.setAttribute("aria-describedby", description.id);
-          overlay.replaceChildren(description);
           const reload = document.createElement("button");
           reload.type = "button";
           reload.textContent = "Reload";
           reload.addEventListener("click", () => window.location.reload());
-          overlay.append(" ", reload);
+          overlay.replaceChildren(description, reload);
           // Match showFatal (app.ts): move focus to the recovery CTA; the
           // page content never loaded and Reload is the only actionable
           // element left (the alertdialog pattern's initial focus).

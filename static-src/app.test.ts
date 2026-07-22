@@ -76,7 +76,11 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
   it("surfaces an alert dialog on the #loading overlay when #terminal is missing but #loading exists", async () => {
     const overlay = document.createElement("div");
     overlay.id = "loading";
-    overlay.setAttribute("aria-label", "Loading"); // mirror index.html's static markup
+    overlay.setAttribute("role", "status"); // mirror index.html's static markup
+    overlay.setAttribute("aria-label", "Loading");
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    overlay.appendChild(bar);
     document.body.appendChild(overlay);
 
     await expect(import("./app.js")).rejects.toThrow(
@@ -84,6 +88,10 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     );
 
     expect(overlay.getAttribute("role")).toBe("alertdialog");
+    // The index.html watchdog only acts while the pristine .bar is present;
+    // showFatal replacing the children is what stops it from clobbering this
+    // message when the rethrown error reaches the window error listener.
+    expect(overlay.querySelector(".bar")).toBeNull();
     expect(overlay.getAttribute("aria-modal")).toBe("true");
     expect(overlay.getAttribute("aria-label")).toBe("Web Terminal for Kiro startup failure");
     expect(overlay.getAttribute("aria-describedby")).toBe("bootstrap-failure-message");
@@ -119,7 +127,11 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     const loading = document.createElement("div");
     loading.id = "loading";
     loading.classList.add("fade");
-    loading.setAttribute("aria-label", "Loading"); // mirror index.html's static markup
+    loading.setAttribute("role", "status"); // mirror index.html's static markup
+    loading.setAttribute("aria-label", "Loading");
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    loading.appendChild(bar);
     document.body.appendChild(loading);
     createTerminalMock.mockImplementationOnce(() => {
       throw new Error("kernel boom");
@@ -129,6 +141,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
 
     expect(loading.classList.contains("fade")).toBe(false);
     expect(loading.getAttribute("role")).toBe("alertdialog");
+    expect(loading.querySelector(".bar")).toBeNull();
     expect(loading.getAttribute("aria-modal")).toBe("true");
     expect(loading.getAttribute("aria-label")).toBe("Web Terminal for Kiro startup failure");
     expect(loading.getAttribute("aria-describedby")).toBe("bootstrap-failure-message");

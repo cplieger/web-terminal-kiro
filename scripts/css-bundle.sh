@@ -13,6 +13,15 @@ out="${2:?usage: css-bundle.sh <ui-css-dir> <out-file>}"
 tmp=$(mktemp "${out}.XXXXXX")
 trap 'rm -f "$tmp"' EXIT HUP INT TERM
 css_root=$(realpath "$css_dir")
+# The per-entry regular-file guard below cannot protect the MANIFEST
+# itself: opening a FIFO for the loop redirect blocks the build forever,
+# the same crafted-tarball class the entry guard closes. [ -f ] follows
+# symlinks, matching the entry semantics (in-tree symlink to a regular
+# file passes; symlink to a FIFO refuses).
+if [ ! -f "${css_dir}/MANIFEST" ]; then
+  printf 'css-bundle: MANIFEST is missing or not a regular file, refusing: %s\n' "${css_dir}/MANIFEST" >&2
+  exit 1
+fi
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in '' | \#*) continue ;; esac
   case "$line" in

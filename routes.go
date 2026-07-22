@@ -301,8 +301,10 @@ const cspTemplate = "default-src 'self'; " +
 // buildCSPPolicy reads index.html from sub, hashes every inline <script> in it
 // (via webhttp.InlineScriptHashes — the byte-precise scanner that hashes
 // exactly the content a browser hashes), and assembles the full CSP string.
-// web-terminal-kiro's index.html carries ONE inline script, the importmap; the
-// external /app.js module is covered by script-src 'self'. FAIL LOUD: a
+// web-terminal-kiro's index.html carries TWO inline scripts -- the importmap
+// and the bootstrap watchdog (the script-load-failure alertdialog) -- both
+// hashed; the external /app.js module is covered by script-src 'self'. FAIL
+// LOUD: a
 // malformed build — a nil FS, an unreadable index.html, or zero inline scripts
 // — aborts startup rather than silently dropping the script-src hardening or
 // serving a hash set that would block the importmap and break ES module
