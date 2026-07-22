@@ -8,10 +8,23 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 HOST="${DEPLOY_HOST:?set DEPLOY_HOST to your dev box (ssh host or IP)}"
+# Per-operation wall-clock deadline for every ssh/scp invocation below. The
+# SSH transport options (SSH_OPTS) only prove the transport is alive: a wedged
+# remote command (e.g. a hung Docker daemon) keeps answering keepalives while
+# never returning, so each remote operation also runs under a local `timeout`
+# cap. Health-loop inspect samples use a shorter fixed cap (see the poll loop)
+# so one stuck sample cannot overrun the DEPLOY_TIMEOUT budget.
+REMOTE_OP_TIMEOUT="${REMOTE_OP_TIMEOUT:-120}"
+if [[ ! "$REMOTE_OP_TIMEOUT" =~ ^[0-9]{1,9}$ ]]; then
+  printf 'error: REMOTE_OP_TIMEOUT must be a non-negative decimal integer (at most 9 digits), got %q\n' "$REMOTE_OP_TIMEOUT" >&2
+  exit 1
+fi
 # DEPLOY_HOST may be an ssh config alias (documented above), which curl/DNS
 # cannot resolve. ssh -G prints the effective HostName for an alias and
 # echoes a bare IP/hostname unchanged, so this is a no-op for direct values.
-PROBE_HOST=$(ssh -G "$HOST" | awk '/^hostname /{print $2; exit}')
+# ssh -G is nominally local, but a Match exec directive in ssh config runs an
+# arbitrary external command, so it gets the same wall-clock cap.
+PROBE_HOST=$(timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh -G "$HOST" | awk '/^hostname /{print $2; exit}')
 : "${PROBE_HOST:?failed to resolve DEPLOY_HOST via ssh -G}"
 # Bound every ssh/scp invocation the same way the health curl is bounded
 # (-m5), at both stages: ConnectTimeout caps connection setup (without it a
@@ -32,12 +45,12 @@ BIN="web-terminal-kiro-dev-bin"
 # Stage into a remote mktemp path owned by the ssh user (mode 0600, random
 # suffix) so no other local user on the dev box can pre-create or swap the
 # binary between scp and docker cp.
-REMOTE_TMP=$(ssh "${SSH_OPTS[@]}" "$HOST" "mktemp /tmp/web-terminal-kiro-dev-bin.XXXXXX")
+REMOTE_TMP=$(timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh "${SSH_OPTS[@]}" "$HOST" "mktemp /tmp/web-terminal-kiro-dev-bin.XXXXXX")
 echo "scp -> ${HOST}:${REMOTE_TMP}"
-if ! scp "${SSH_OPTS[@]}" -q "$BIN" "${HOST}:${REMOTE_TMP}"; then
+if ! timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" scp "${SSH_OPTS[@]}" -q "$BIN" "${HOST}:${REMOTE_TMP}"; then
   # REMOTE_TMP came from remote mktemp and is intentionally expanded locally.
   # shellcheck disable=SC2029
-  ssh "${SSH_OPTS[@]}" "$HOST" "rm -f ${REMOTE_TMP}" >/dev/null 2>&1 || true
+  timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh "${SSH_OPTS[@]}" "$HOST" "rm -f ${REMOTE_TMP}" >/dev/null 2>&1 || true
   exit 1
 fi
 echo "docker cp + restart web-terminal-kiro-dev"
@@ -48,8 +61,11 @@ echo "docker cp + restart web-terminal-kiro-dev"
 # (the mktemp staging file is 0600 and docker cp preserves metadata), then
 # atomically rename over the live binary so a failed copy never leaves a
 # partial or non-executable /app/web-terminal-kiro behind.
+# The composite cp/exec/restart chain runs under the same single wall-clock
+# cap: a wedged Docker daemon answers SSH keepalives forever while never
+# returning, which is exactly the hang the transport options cannot catch.
 # shellcheck disable=SC2029
-ssh "${SSH_OPTS[@]}" "$HOST" "trap 'rm -f ${REMOTE_TMP}' EXIT; sudo docker cp ${REMOTE_TMP} web-terminal-kiro-dev:/app/web-terminal-kiro.new && sudo docker exec web-terminal-kiro-dev sh -c 'chmod 0755 /app/web-terminal-kiro.new && mv -f /app/web-terminal-kiro.new /app/web-terminal-kiro' && sudo docker restart web-terminal-kiro-dev"
+timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh "${SSH_OPTS[@]}" "$HOST" "trap 'rm -f ${REMOTE_TMP}' EXIT; sudo docker cp ${REMOTE_TMP} web-terminal-kiro-dev:/app/web-terminal-kiro.new && sudo docker exec web-terminal-kiro-dev sh -c 'chmod 0755 /app/web-terminal-kiro.new && mv -f /app/web-terminal-kiro.new /app/web-terminal-kiro' && sudo docker restart web-terminal-kiro-dev"
 # Bounded health poll. The entrypoint's foreground work before the server
 # binds can legally take up to ~1080s on a cold volume (kiro-cli download +
 # install + probes + optional APT_PACKAGES), so a single early probe would
@@ -71,7 +87,7 @@ echo "waiting for web-terminal-kiro-dev health (timeout ${DEPLOY_TIMEOUT}s)"
 # later increase means the entrypoint died and the restart policy relaunched it.
 # The baseline is mandatory — synthesizing it from a later sample would adopt a
 # post-crash count as normal and blind the restart-growth crash detector.
-if ! base_restarts=$(ssh "${SSH_OPTS[@]}" "$HOST" "sudo docker inspect -f '{{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null); then
+if ! base_restarts=$(timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh "${SSH_OPTS[@]}" "$HOST" "sudo docker inspect -f '{{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null); then
   printf 'deploy verification failed: could not establish restart-count baseline\n' >&2
   exit 1
 fi
@@ -84,7 +100,10 @@ esac
 deadline=$(($(date +%s) + 10#$DEPLOY_TIMEOUT))
 code="ERR"
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  state=$(ssh "${SSH_OPTS[@]}" "$HOST" "sudo docker inspect -f '{{.State.Running}} {{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null || echo "unknown unknown")
+  # Shorter fixed 15s cap here (not REMOTE_OP_TIMEOUT): a single stuck inspect
+  # sample must not overrun the DEPLOY_TIMEOUT budget; a timed-out sample
+  # falls into the existing "unknown unknown" skip path below.
+  state=$(timeout --signal=TERM --kill-after=5s 15s ssh "${SSH_OPTS[@]}" "$HOST" "sudo docker inspect -f '{{.State.Running}} {{.RestartCount}}' web-terminal-kiro-dev" 2>/dev/null || echo "unknown unknown")
   running=${state%% *}
   restarts=${state##* }
   if [ "$running" = "false" ]; then

@@ -638,6 +638,30 @@ func TestParseAllowedHosts(t *testing.T) {
 	})
 }
 
+// TestParseAllowedHosts_warnsForEmptyCanonicalHost pins the empty-key branch
+// TestParseAllowedHosts's other cases never reach: an entry like a lone
+// ":9848" (a pasted KWEB_ADDR value) canonicalizes to an empty host no
+// browser-sent Host can ever match, so the parser must emit exactly one
+// named Warn while KEEPING the entry -- acceptance unchanged, same contract
+// as the URL-shaped case above.
+// Serial: capture.Default mutates the process-global default logger.
+func TestParseAllowedHosts_warnsForEmptyCanonicalHost(t *testing.T) {
+	records := capture.Default(t)
+	t.Setenv("KWEB_ALLOWED_HOSTS", ":9848")
+
+	allowed := parseAllowedHosts()
+
+	if got := countLevel(records, slog.LevelWarn, "canonicalizes to an empty host"); got != 1 {
+		t.Errorf("log = %q, want exactly one empty-host Warn (got %d)", records.Messages(), got)
+	}
+	if len(allowed) != 1 {
+		t.Fatalf("parseAllowedHosts() kept %d entries, want 1", len(allowed))
+	}
+	if _, ok := allowed[""]; !ok {
+		t.Error("the warned empty-host entry was dropped; the documented contract keeps malformed entries")
+	}
+}
+
 // TestSessionCommand_missingBinaryAborts pins the guard script's first
 // branch, which the fakeCLI-based tests never reach (their stub always
 // exists): when the configured kiro-cli path does not resolve (a failed
