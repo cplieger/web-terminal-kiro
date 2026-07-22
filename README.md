@@ -143,10 +143,18 @@ the GitHub CLI, all disabled. Flip the ones you want and restart:
     "gopls":                      { "disabled": true },   // Go — set false to install (pulls the Go toolchain)
     "typescript-language-server": { "disabled": false },  // TypeScript LSP: enabled, installs on restart (pulls node)
     "pyright":                    { "disabled": true },   // Python LSP
+    "rust-analyzer":              { "disabled": true },   // Rust LSP
     "gh":                         { "disabled": true }    // GitHub CLI
   }
 }
 ```
+
+Enabled language servers land on `PATH`, where kiro-cli's [code
+intelligence](https://kiro.dev/docs/cli/code-intelligence/) picks them up:
+run `/code init` once per workspace inside a session (writes
+`.kiro/settings/lsp.json` and starts the detected languages' servers), then
+the agent gets LSP-backed navigation, rename, and diagnostics; `/code status`
+shows which servers it found.
 
 Install knowledge (download URLs, checksums, dependencies) comes from a
 catalog of ~700 tools compiled from the mise and aqua registries, as they release, by
