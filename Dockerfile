@@ -84,57 +84,26 @@ RUN --mount=type=cache,target=/root/go/pkg/mod go mod download
 # font fetch, or npm vendor fetch layers. The full tree lands after.
 COPY required-tools.txt ./
 
-# Compile the tool catalog: install knowledge for ~700 tools joined from
-# the mise registry (names, descriptions; MIT) and the aqua registry
-# (binary install definitions with checksum sources; MIT) by the
-# toolbelt toolcatalog lane (its embedded base overlays add runtimes,
-# forge CLIs, and the official language-server entries). The
-# verify pass asserts every required-tools.txt name resolves to usable
-# install knowledge for linux amd64+arm64, so a registry-ref bump that
-# drops a seed or migration tool FAILS THE BUILD here instead of a boot
-# job on the box. The catalog freezes per image tag; tool versions still
-# resolve live at install time.
-# renovate: datasource=github-releases depName=jdx/mise
-ARG MISE_REGISTRY_REF=v2026.7.11
-# sha256 of the codeload tar.gz for MISE_REGISTRY_REF. Git tags are MUTABLE (a
-# retag can swap the bytes under a fixed ref), so this gate is the integrity
-# anchor — same rationale as NERDFONT_SHA256. Update alongside the ref. If a
-# spurious mismatch ever fires (codeload tarball bytes are not guaranteed
-# byte-stable across GitHub infra changes, unlike release assets), pin the
-# immutable commit SHA as the ref instead.
-ARG MISE_REGISTRY_SHA256=608a12c8243ce424c3ea70054d7bb38f638b189e5d1c66074d436aeb91e9a658
-# renovate: datasource=github-releases depName=aquaproj/aqua-registry
-ARG AQUA_REGISTRY_REF=v4.540.0
-# sha256 of the codeload tar.gz for AQUA_REGISTRY_REF. Same mutable-tag
-# rationale and fallback as MISE_REGISTRY_SHA256 above; update alongside the ref.
-ARG AQUA_REGISTRY_SHA256=0e8d0cdb8e57687694b573d1a59224cf45c0145fcd1bfa37505c2e7ce560a7a8
+# Bake the published tool catalog as the first-boot/offline fallback.
+# The catalog (install knowledge for ~700 tools joined from the mise +
+# aqua registries by cplieger/tool-catalog's daily publisher; both
+# registries' MIT license texts travel INSIDE the JSON) is DATA on a
+# daily upstream cadence — the runtime engine refreshes it at boot and
+# on a schedule (TOOL_CATALOG_REFRESH), so this baked copy only serves
+# a container that has never reached the publisher. Fetched unpinned
+# (latest release; TLS + first-party): the verify pass below re-gates
+# whatever arrives, asserting every required-tools.txt name resolves to
+# usable install knowledge for linux amd64+arm64 — a published catalog
+# that drops a seed or migration tool FAILS THE BUILD here, and the
+# runtime refresh re-runs the same check before every swap.
+ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/latest/download/tool-catalog.json
 # renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog/v2
-ARG TOOLBELT_TOOLCATALOG_VERSION=v2.0.8
+ARG TOOLBELT_TOOLCATALOG_VERSION=v2.1.0
 # hadolint ignore=DL3062
 RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    mkdir -p /tmp/registries && \
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/mise.tgz "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" && \
-    printf '%s  /tmp/mise.tgz\n' "$MISE_REGISTRY_SHA256" | sha256sum -c - && \
-    tar -xz -C /tmp/registries -f /tmp/mise.tgz && \
-    rm /tmp/mise.tgz && \
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/aqua.tgz "https://codeload.github.com/aquaproj/aqua-registry/tar.gz/refs/tags/${AQUA_REGISTRY_REF}" && \
-    printf '%s  /tmp/aqua.tgz\n' "$AQUA_REGISTRY_SHA256" | sha256sum -c - && \
-    tar -xz -C /tmp/registries -f /tmp/aqua.tgz && \
-    rm /tmp/aqua.tgz && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/tool-catalog.json "${TOOL_CATALOG_URL}" && \
     go run "github.com/cplieger/toolbelt/cmd/toolcatalog/v2@${TOOLBELT_TOOLCATALOG_VERSION}" \
-      -mise "/tmp/registries/mise-${MISE_REGISTRY_REF#v}/registry" \
-      -aqua "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/pkgs" \
-      -refs "mise=${MISE_REGISTRY_REF},aqua=${AQUA_REGISTRY_REF}" \
-      -out /tmp/tool-catalog.json && \
-    go run "github.com/cplieger/toolbelt/cmd/toolcatalog/v2@${TOOLBELT_TOOLCATALOG_VERSION}" \
-      verify -catalog /tmp/tool-catalog.json -require required-tools.txt && \
-    # MIT requires the copyright + permission notice to travel with
-    # copies/substantial portions; the compiled catalog embeds data
-    # derived from both registries, so ship both license texts.
-    mkdir -p /tmp/catalog-licenses && \
-    cp "/tmp/registries/mise-${MISE_REGISTRY_REF#v}/LICENSE" /tmp/catalog-licenses/LICENSE.mise && \
-    cp "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/LICENSE" /tmp/catalog-licenses/LICENSE.aqua-registry && \
-    rm -rf /tmp/registries
+      verify -catalog /tmp/tool-catalog.json -require required-tools.txt
 
 # Fetch Nerd Font for the monospace terminal display.
 RUN mkdir -p static/vendor/fonts && \
@@ -331,7 +300,6 @@ RUN sed -i 's|^root:x:0:0:root:/root:|root:x:0:0:root:/config/home:|' /etc/passw
 
 COPY --from=builder /web-terminal-kiro /app/web-terminal-kiro
 COPY --from=builder /tmp/tool-catalog.json /app/tool-catalog.json
-COPY --from=builder /tmp/catalog-licenses /app/catalog-licenses
 COPY --chmod=755 entrypoint.sh /opt/web-terminal-kiro/entrypoint.sh
 
 WORKDIR /workspace
