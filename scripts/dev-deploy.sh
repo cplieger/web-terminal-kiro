@@ -24,7 +24,10 @@ fi
 # echoes a bare IP/hostname unchanged, so this is a no-op for direct values.
 # ssh -G is nominally local, but a Match exec directive in ssh config runs an
 # arbitrary external command, so it gets the same wall-clock cap.
-PROBE_HOST=$(timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh -G "$HOST" | awk '/^hostname /{print $2; exit}')
+PROBE_HOST=$(timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh -G "$HOST" | awk '/^hostname /{print $2; exit}') || {
+  printf 'error: ssh -G resolution for %s failed or timed out (%ss cap)\n' "$HOST" "$REMOTE_OP_TIMEOUT" >&2
+  exit 1
+}
 : "${PROBE_HOST:?failed to resolve DEPLOY_HOST via ssh -G}"
 # Bound every ssh/scp invocation the same way the health curl is bounded
 # (-m5), at both stages: ConnectTimeout caps connection setup (without it a
@@ -45,9 +48,13 @@ BIN="web-terminal-kiro-dev-bin"
 # Stage into a remote mktemp path owned by the ssh user (mode 0600, random
 # suffix) so no other local user on the dev box can pre-create or swap the
 # binary between scp and docker cp.
-REMOTE_TMP=$(timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh "${SSH_OPTS[@]}" "$HOST" "mktemp /tmp/web-terminal-kiro-dev-bin.XXXXXX")
+REMOTE_TMP=$(timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh "${SSH_OPTS[@]}" "$HOST" "mktemp /tmp/web-terminal-kiro-dev-bin.XXXXXX") || {
+  printf 'error: remote mktemp on %s failed or timed out (%ss cap)\n' "$HOST" "$REMOTE_OP_TIMEOUT" >&2
+  exit 1
+}
 echo "scp -> ${HOST}:${REMOTE_TMP}"
 if ! timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" scp "${SSH_OPTS[@]}" -q "$BIN" "${HOST}:${REMOTE_TMP}"; then
+  printf 'error: scp of %s to %s failed or timed out (%ss cap)\n' "$BIN" "$HOST" "$REMOTE_OP_TIMEOUT" >&2
   # REMOTE_TMP came from remote mktemp and is intentionally expanded locally.
   # shellcheck disable=SC2029
   timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh "${SSH_OPTS[@]}" "$HOST" "rm -f ${REMOTE_TMP}" >/dev/null 2>&1 || true
@@ -65,7 +72,10 @@ echo "docker cp + restart web-terminal-kiro-dev"
 # cap: a wedged Docker daemon answers SSH keepalives forever while never
 # returning, which is exactly the hang the transport options cannot catch.
 # shellcheck disable=SC2029
-timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh "${SSH_OPTS[@]}" "$HOST" "trap 'rm -f ${REMOTE_TMP}' EXIT; sudo docker cp ${REMOTE_TMP} web-terminal-kiro-dev:/app/web-terminal-kiro.new && sudo docker exec web-terminal-kiro-dev sh -c 'chmod 0755 /app/web-terminal-kiro.new && mv -f /app/web-terminal-kiro.new /app/web-terminal-kiro' && sudo docker restart web-terminal-kiro-dev"
+timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh "${SSH_OPTS[@]}" "$HOST" "trap 'rm -f ${REMOTE_TMP}' EXIT; sudo docker cp ${REMOTE_TMP} web-terminal-kiro-dev:/app/web-terminal-kiro.new && sudo docker exec web-terminal-kiro-dev sh -c 'chmod 0755 /app/web-terminal-kiro.new && mv -f /app/web-terminal-kiro.new /app/web-terminal-kiro' && sudo docker restart web-terminal-kiro-dev" || {
+  printf 'error: docker cp/exec/restart on %s failed or timed out (%ss cap)\n' "$HOST" "$REMOTE_OP_TIMEOUT" >&2
+  exit 1
+}
 # Bounded health poll. The entrypoint's foreground work before the server
 # binds can legally take up to ~1080s on a cold volume (kiro-cli download +
 # install + probes + optional APT_PACKAGES), so a single early probe would

@@ -726,6 +726,38 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	}
 }
 
+// TestToolsAPI_LoopbackOnly_malformedPeerFailsClosed pins the fail-closed
+// posture of the loopback gate on a socket peer it cannot prove is loopback:
+// a RemoteAddr that fails net.SplitHostPort (no port), an empty RemoteAddr,
+// and a host net.ParseIP rejects must all be refused with 403. The existing
+// TestToolsAPI_LoopbackOnly exercises only well-formed host:port peers, so a
+// fail-open regression on the error disjunct would pass the suite unnoticed.
+func TestToolsAPI_LoopbackOnly_malformedPeerFailsClosed(t *testing.T) {
+	mux := http.NewServeMux()
+	deps := newToolsDeps(t)
+	mgr, _, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
+
+	for _, tc := range []struct{ name, remoteAddr string }{
+		{name: "no port fails SplitHostPort", remoteAddr: "127.0.0.1"},
+		{name: "empty RemoteAddr", remoteAddr: ""},
+		{name: "unparseable host", remoteAddr: "not-an-ip:1234"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/tools", http.NoBody)
+			req.RemoteAddr = tc.remoteAddr
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("RemoteAddr %q: status = %d, want %d (a peer that cannot be proven loopback must be refused)", tc.remoteAddr, rec.Code, http.StatusForbidden)
+			}
+		})
+	}
+}
+
 // TestToolsAPI_AbsentWithoutEngine pins the no-engine shape (bare `go run`
 // / tests outside the container): /api/tools is simply not a registered
 // pattern, falling through to the static catch-all.
