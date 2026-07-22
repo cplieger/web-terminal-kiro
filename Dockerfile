@@ -104,7 +104,7 @@ ARG MISE_REGISTRY_REF=v2026.7.11
 # immutable commit SHA as the ref instead.
 ARG MISE_REGISTRY_SHA256=608a12c8243ce424c3ea70054d7bb38f638b189e5d1c66074d436aeb91e9a658
 # renovate: datasource=github-releases depName=aquaproj/aqua-registry
-ARG AQUA_REGISTRY_REF=v4.540.0
+ARG AQUA_REGISTRY_REF=v4.541.0
 # sha256 of the codeload tar.gz for AQUA_REGISTRY_REF. Same mutable-tag
 # rationale and fallback as MISE_REGISTRY_SHA256 above; update alongside the ref.
 ARG AQUA_REGISTRY_SHA256=0e8d0cdb8e57687694b573d1a59224cf45c0145fcd1bfa37505c2e7ce560a7a8
