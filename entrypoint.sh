@@ -37,12 +37,12 @@ kiro_cli_version() {
 # chat.notificationMethod=osc9 settings set below and web-terminal-engine's
 # WithKeepUnfocused() in routes.go -- keep all four in lockstep.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.13.0"
-KIRO_CLI_SHA256="d8c5277358b4a82b2d9a9ed2d52e110862536dc82b9e32c3719fc5f5a9834c94"
+KIRO_CLI_VERSION="2.13.1"
+KIRO_CLI_SHA256="49d712558cc930d3570387ce468887ca0b510ba8b5f08e2f3c7a7a55d44e677f"
 # The `# kiro-cli <version>` trailer is Renovate's version anchor for this
 # arch's digest lookup — do not hand-edit or drop it.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="95972602568c2065b7d8cc28924730304d40e612c0984ee0144d8ba452000be3" # kiro-cli 2.13.0
+KIRO_CLI_SHA256_ARM64="768d811597db5f5f23aa56e48e4af4625d2b78cf638f935d4df3a0fe80a51a9d" # kiro-cli 2.13.1
 
 mkdir -p "$TOOLS/bin" "$HOME/.local/bin" "$HOME/.ssh" "$HOME/.kiro" \
   || {
