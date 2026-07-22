@@ -13,12 +13,16 @@ HOST="${DEPLOY_HOST:?set DEPLOY_HOST to your dev box (ssh host or IP)}"
 # echoes a bare IP/hostname unchanged, so this is a no-op for direct values.
 PROBE_HOST=$(ssh -G "$HOST" | awk '/^hostname /{print $2; exit}')
 : "${PROBE_HOST:?failed to resolve DEPLOY_HOST via ssh -G}"
-# Bound every ssh/scp connection attempt the same way the health curl is
-# bounded (-m5): without a ConnectTimeout a dev box that stops answering TCP
-# mid-poll blocks a single ssh on the kernel's SYN retry schedule, hanging
-# the script past its own DEPLOY_TIMEOUT budget. (No BatchMode=yes — that
-# would change behavior for password-auth dev boxes.)
-SSH_OPTS=(-o ConnectTimeout=10)
+# Bound every ssh/scp invocation the same way the health curl is bounded
+# (-m5), at both stages: ConnectTimeout caps connection setup (without it a
+# dev box that stops answering TCP mid-poll blocks a single ssh on the
+# kernel's SYN retry schedule), and ServerAliveInterval/CountMax fail an
+# established transport that goes silent after ~30s — ConnectTimeout does
+# not detect a session that dies post-handshake, so a remote mktemp/docker/
+# poll command could otherwise hang past the DEPLOY_TIMEOUT budget. Both
+# leave responsive long-running commands unchanged. (No BatchMode=yes —
+# that would change behavior for password-auth dev boxes.)
+SSH_OPTS=(-o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3)
 BIN="web-terminal-kiro-dev-bin"
 [ -f "$BIN" ] || {
   printf 'missing %s — run scripts/dev-build.sh first\n' "$BIN" >&2
