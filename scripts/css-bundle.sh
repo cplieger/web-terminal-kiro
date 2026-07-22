@@ -34,6 +34,13 @@ while IFS= read -r line || [ -n "$line" ]; do
       exit 1
       ;;
   esac
+  # Containment alone still admits a FIFO/device/directory shipped in a
+  # crafted UI tarball; cat on a FIFO blocks the build forever. Only regular
+  # files (including resolved in-tree symlinks) are readable bundle members.
+  if [ ! -f "$entry" ]; then
+    printf 'css-bundle: MANIFEST entry is not a regular file, refusing: %s\n' "$line" >&2
+    exit 1
+  fi
   cat "$entry" >>"$tmp"
 done <"${css_dir}/MANIFEST"
 # An empty or fully-commented MANIFEST (a truncated/mis-published UI tarball)

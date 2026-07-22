@@ -23,17 +23,25 @@
 import { createTerminal } from "@cplieger/web-terminal-ui";
 import { presetAgentTabbed } from "@cplieger/web-terminal-ui/presets";
 
-// Reveal the #loading overlay as an assertive alert with a fatal message.
+// Reveal the #loading overlay as a modal alert dialog with a fatal message.
 // remove("fade") undoes any fade-out createTerminal began; on the missing-root
 // path createTerminal never ran, so the remove is a harmless no-op.
 function showFatal(overlay: HTMLElement, message: string): void {
   overlay.classList.remove("fade");
-  // index.html names the overlay "Loading" (aria-label); drop it so the
-  // alert's accessible name doesn't contradict the fatal message it now shows.
-  overlay.removeAttribute("aria-label");
-  overlay.setAttribute("role", "alert");
-  overlay.setAttribute("aria-live", "assertive");
-  overlay.textContent = message;
+  // alertdialog, not alert: the overlay carries an interactive Reload button
+  // and moves focus into it, which is the alertdialog interaction model (APG).
+  // The role plus the focus transition supplies the announcement, so no
+  // aria-live is needed. aria-label replaces index.html's "Loading" name so
+  // the accessible name doesn't contradict the failure it now shows; the
+  // branch-specific message is the dialog's description.
+  const description = document.createElement("p");
+  description.id = "bootstrap-failure-message";
+  description.textContent = message;
+  overlay.setAttribute("role", "alertdialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", "Web Terminal for Kiro startup failure");
+  overlay.setAttribute("aria-describedby", description.id);
+  overlay.replaceChildren(description);
   // manifest.json declares display: standalone, so an installed PWA has no browser
   // chrome; "reload the page" needs an in-page affordance (Vercel: no dead ends).
   const reload = document.createElement("button");
@@ -43,10 +51,8 @@ function showFatal(overlay: HTMLElement, message: string): void {
     window.location.reload();
   });
   overlay.append(" ", reload);
-  // Move focus to the recovery CTA: the page content is gone, the alert has
-  // announced, and Reload is the only actionable element left (APG alert
-  // pattern advises against interactive content in an un-focus-managed alert;
-  // alertdialog's focus move is the matching treatment).
+  // Move focus to the recovery CTA: the page content is gone and Reload is the
+  // only actionable element left (the alertdialog pattern's initial focus).
   reload.focus();
 }
 

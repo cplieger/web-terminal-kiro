@@ -73,7 +73,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     });
   });
 
-  it("surfaces an alert on the #loading overlay when #terminal is missing but #loading exists", async () => {
+  it("surfaces an alert dialog on the #loading overlay when #terminal is missing but #loading exists", async () => {
     const overlay = document.createElement("div");
     overlay.id = "loading";
     overlay.setAttribute("aria-label", "Loading"); // mirror index.html's static markup
@@ -83,10 +83,12 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
       "web-terminal-kiro: missing #terminal root element",
     );
 
-    expect(overlay.hasAttribute("aria-label")).toBe(false);
-    expect(overlay.getAttribute("role")).toBe("alert");
-    expect(overlay.getAttribute("aria-live")).toBe("assertive");
-    expect(overlay.textContent).toContain("Web Terminal for Kiro failed to start");
+    expect(overlay.getAttribute("role")).toBe("alertdialog");
+    expect(overlay.getAttribute("aria-modal")).toBe("true");
+    expect(overlay.getAttribute("aria-label")).toBe("Web Terminal for Kiro startup failure");
+    expect(overlay.getAttribute("aria-describedby")).toBe("bootstrap-failure-message");
+    const description = overlay.querySelector("#bootstrap-failure-message");
+    expect(description?.textContent).toContain("Web Terminal for Kiro failed to start");
     expect(createTerminalMock).not.toHaveBeenCalled();
   });
 
@@ -126,10 +128,12 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     await expect(import("./app.js")).rejects.toThrow("kernel boom");
 
     expect(loading.classList.contains("fade")).toBe(false);
-    expect(loading.hasAttribute("aria-label")).toBe(false);
-    expect(loading.getAttribute("role")).toBe("alert");
-    expect(loading.getAttribute("aria-live")).toBe("assertive");
-    expect(loading.textContent).toContain("Failed to start the terminal");
+    expect(loading.getAttribute("role")).toBe("alertdialog");
+    expect(loading.getAttribute("aria-modal")).toBe("true");
+    expect(loading.getAttribute("aria-label")).toBe("Web Terminal for Kiro startup failure");
+    expect(loading.getAttribute("aria-describedby")).toBe("bootstrap-failure-message");
+    const description = loading.querySelector("#bootstrap-failure-message");
+    expect(description?.textContent).toContain("Failed to start the terminal");
   });
 
   it("rethrows the original error without touching the DOM when createTerminal throws and #loading is absent", async () => {
@@ -142,6 +146,6 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
 
     await expect(import("./app.js")).rejects.toThrow("kernel boom no overlay");
     expect(createTerminalMock).toHaveBeenCalledTimes(1);
-    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 });
