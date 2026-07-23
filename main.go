@@ -166,20 +166,59 @@ func canonicalHost(hostport string) string {
 // A nil/empty allowlist disables the check entirely (backward compatible;
 // main warns). Runs before CrossOriginProtection so an unauthorized host is
 // rejected before any terminal route, session creation included.
+//
+// One carve-out: a request is admitted regardless of the allowlist when BOTH
+// its socket peer AND its Host are loopback. This keeps the container's own
+// consumers — the baked Docker healthcheck (curl http://127.0.0.1:PORT) and
+// in-container tools clients (curl localhost:9848) — working under any
+// allowlist, so a list of browser-facing hostnames cannot brick the health
+// signal. The carve-out is unreachable by the attacks this gate exists for:
+// a DNS-rebinding request carries the ATTACKER'S hostname in Host (the Host
+// leg fails, even from a browser on this same machine), and a remote client
+// forging Host: 127.0.0.1 is not a loopback peer (the peer leg fails).
 func hostAllowlist(allowed map[string]struct{}) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if len(allowed) == 0 {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if _, ok := allowed[canonicalHost(r.Host)]; !ok {
-				webhttp.WriteError(w, r, http.StatusForbidden, "",
-					"host not allowed; add it to KWEB_ALLOWED_HOSTS to serve this hostname")
+			host := canonicalHost(r.Host)
+			if _, ok := allowed[host]; ok {
+				next.ServeHTTP(w, r)
 				return
 			}
-			next.ServeHTTP(w, r)
+			if loopbackHost(host) && loopbackPeer(r.RemoteAddr) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			webhttp.WriteError(w, r, http.StatusForbidden, "",
+				"host not allowed; add it to KWEB_ALLOWED_HOSTS to serve this hostname")
 		})
 	}
+}
+
+// loopbackHost reports whether a canonicalHost-normalized value names the
+// local host: the literal "localhost" or any loopback IP (127.0.0.0/8, ::1).
+// Name resolution is deliberately not performed — resolving would reopen the
+// DNS-rebinding race canonicalHost's no-resolution rule exists to avoid.
+func loopbackHost(canon string) bool {
+	if canon == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(canon)
+	return ip != nil && ip.IsLoopback()
+}
+
+// loopbackPeer reports whether an http.Request.RemoteAddr belongs to a
+// loopback socket peer. Forwarded headers play no part — RemoteAddr is set
+// by the server from the accepted connection. Malformed values fail closed.
+func loopbackPeer(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // sessionCommand builds the per-session PTY command: `kiro-cli chat` behind a

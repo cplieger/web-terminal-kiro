@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -362,8 +361,7 @@ func composeGate(inner func(http.Handler) http.Handler, syncing func() bool) fun
 // outside — LAN browsers, the reverse proxy — is refused.
 func loopbackOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil || !net.ParseIP(host).IsLoopback() {
+		if !loopbackPeer(r.RemoteAddr) {
 			webhttp.WriteError(w, r, http.StatusForbidden, "",
 				"tools API is loopback-only; call it from inside the container (curl localhost:9848)")
 			return

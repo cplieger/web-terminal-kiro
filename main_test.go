@@ -450,6 +450,83 @@ func TestHostAllowlist(t *testing.T) {
 	})
 }
 
+// TestHostAllowlist_loopbackCarveOut pins the container-internal carve-out
+// through the real middleware stack: with a browser-facing allowlist that
+// names NO loopback entry, the image's own consumers — the Docker healthcheck
+// (Host 127.0.0.1) and in-container tools clients (Host localhost) — must
+// still be admitted because BOTH their socket peer and Host are loopback,
+// while each attack shape the gate exists for stays rejected: a same-host
+// browser hit by DNS rebinding presents a loopback PEER but the attacker's
+// HOST (Host leg fails), and a remote client forging Host: 127.0.0.1 is not
+// a loopback PEER (peer leg fails). A malformed RemoteAddr fails closed.
+func TestHostAllowlist_loopbackCarveOut(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	t.Setenv("KWEB_ALLOWED_HOSTS", "webterm.example.com") // deliberately no loopback entry
+	h := buildHandler(mux, nil, "default-src 'self'", parseAllowedHosts())
+
+	do := func(url, remoteAddr string) int {
+		req := httptest.NewRequest(http.MethodGet, url, http.NoBody)
+		req.RemoteAddr = remoteAddr
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	cases := []struct {
+		name       string
+		url        string
+		remoteAddr string
+		want       int
+	}{
+		{
+			name: "healthcheck shape: loopback peer + 127.0.0.1 Host admitted",
+			url:  "http://127.0.0.1:9848/ws", remoteAddr: "127.0.0.1:54321",
+			want: http.StatusOK,
+		},
+		{
+			name: "tools shape: loopback peer + localhost Host admitted",
+			url:  "http://localhost:9848/ws", remoteAddr: "127.0.0.1:54321",
+			want: http.StatusOK,
+		},
+		{
+			name: "IPv6 loopback peer + ::1 Host admitted",
+			url:  "http://[::1]:9848/ws", remoteAddr: "[::1]:54321",
+			want: http.StatusOK,
+		},
+		{
+			name: "rebinding via same-host browser: loopback peer + attacker Host rejected",
+			url:  "http://attacker.evil:9848/ws", remoteAddr: "127.0.0.1:54321",
+			want: http.StatusForbidden,
+		},
+		{
+			name: "forged loopback Host from remote peer rejected",
+			url:  "http://127.0.0.1:9848/ws", remoteAddr: "192.168.1.50:44444",
+			want: http.StatusForbidden,
+		},
+		{
+			name: "malformed RemoteAddr fails closed",
+			url:  "http://127.0.0.1:9848/ws", remoteAddr: "not-an-addr",
+			want: http.StatusForbidden,
+		},
+		{
+			name: "allowlisted host from remote peer still passes (unchanged)",
+			url:  "http://webterm.example.com:9848/ws", remoteAddr: "192.168.1.50:44444",
+			want: http.StatusOK,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := do(tc.url, tc.remoteAddr); got != tc.want {
+				t.Errorf("GET %s (peer %s) = %d, want %d", tc.url, tc.remoteAddr, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestHostAllowlist_blankConfigurationStaysPermissive drives a configured but
 // blank KWEB_ALLOWED_HOSTS (only commas and whitespace) through the real
 // parseAllowedHosts into the middleware: the parser's blank-entry filtering
