@@ -18,10 +18,14 @@ func TestIncompatibility(t *testing.T) {
 	}{
 		{name: "current pairing compatible", serverRev: 4, serverMinClient: 3, clientRev: 4, clientMinServer: 3},
 		{name: "skew within floors compatible", serverRev: 5, serverMinClient: 3, clientRev: 4, clientMinServer: 4},
-		{name: "server below client floor", serverRev: 3, serverMinClient: 3, clientRev: 5, clientMinServer: 4,
-			wantSubstr: "bump go.mod"},
-		{name: "client below server floor", serverRev: 5, serverMinClient: 5, clientRev: 4, clientMinServer: 3,
-			wantSubstr: "bump the Dockerfile ARG"},
+		{
+			name: "server below client floor", serverRev: 3, serverMinClient: 3, clientRev: 5, clientMinServer: 4,
+			wantSubstr: "bump go.mod",
+		},
+		{
+			name: "client below server floor", serverRev: 5, serverMinClient: 5, clientRev: 4, clientMinServer: 3,
+			wantSubstr: "bump the Dockerfile ARG",
+		},
 		{name: "equal at both floors compatible", serverRev: 3, serverMinClient: 3, clientRev: 3, clientMinServer: 3},
 	}
 	for _, tc := range cases {
