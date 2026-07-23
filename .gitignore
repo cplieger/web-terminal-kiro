@@ -21,7 +21,7 @@ static/style.css
 **/.refactor/
 **/.steering-maintenance/
 
-# Local rebuild dev loop (scripts/dev-build.sh) — not for CI/release
+# Local dev build (scripts/dev-build.sh) — not for CI/release
 go.work
 go.work.sum
 web-terminal-kiro-dev-bin

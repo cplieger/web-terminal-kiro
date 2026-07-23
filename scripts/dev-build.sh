@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Local dev build of web-terminal-kiro against the LOCAL (working-tree) engine + UI, for
-# the rebuild/restructure effort (docs in web-terminal-engine/docs/REBUILD.md +
-# RESTRUCTURE.md). Produces ./web-terminal-kiro-dev-bin with static assets embedded,
-# built from the sibling ../web-terminal-engine (engine) and ../web-terminal-ui (UI) checkouts
-# instead of the published Go module / npm packages. Run it directly on the dev
-# box, or copy it into a container by hand (the old scripts/dev-deploy.sh was
-# deleted with the dev instance; restore both from git history if one returns).
+# Local dev build of web-terminal-kiro against the LOCAL (working-tree) engine + UI:
+# produces ./web-terminal-kiro-dev-bin with static assets embedded, built from the
+# sibling ../web-terminal-engine (engine) and ../web-terminal-ui (UI) checkouts
+# instead of the published Go module / npm packages — the way to try unpublished
+# engine/UI changes against the real app. Run the binary directly
+# (KWEB_WORK_DIR=... ./web-terminal-kiro-dev-bin; see CONTRIBUTING "Local dev setup").
 #
 # Not for CI or release. go.work and web-terminal-kiro-dev-bin are gitignored.
 # Override the sibling checkouts with ENGINE_DIR=... / UI_DIR=...
