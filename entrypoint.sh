@@ -58,8 +58,11 @@ mkdir -p "$TOOLS/bin" "$HOME/.local/bin" "$HOME/.ssh" "$HOME/.kiro" \
 # umask-wide (root umask 022 -> 0755) and leaves an existing dir's mode alone;
 # the dir lives on the /config host bind mount, where a wider mode lets other
 # host users traverse it and read non-key files (known_hosts, config).
-chmod 700 "$HOME/.ssh" \
-  || printf 'level=warn msg="failed to tighten ~/.ssh permissions" component=entrypoint\n' >&2
+if [ -L "$HOME/.ssh" ]; then
+  printf 'level=warn msg="refusing to chmod symlinked ~/.ssh directory" component=entrypoint\n' >&2
+elif ! chmod 700 "$HOME/.ssh"; then
+  printf 'level=warn msg="failed to tighten ~/.ssh permissions" component=entrypoint\n' >&2
+fi
 
 # mkdir -p succeeds when the directories already exist — even on a read-only
 # bind mount — so it is NOT proof that /config is writable. Prove it with a
