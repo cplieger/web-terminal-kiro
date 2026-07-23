@@ -807,10 +807,18 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 		return rec
 	}
 
-	if rec := create(); rec.Code != http.StatusServiceUnavailable {
+	rec := create()
+	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("create during sync: status = %d, want 503 (body %s)", rec.Code, rec.Body.String())
-	} else if !strings.Contains(rec.Body.String(), "tools installing") {
-		t.Fatalf("create during sync: body %q missing the reason", rec.Body.String())
+	}
+	// The 503 speaks the standard webhttp error envelope (empty code), the
+	// same dialect as the app's 403 gates — not a hand-rolled body.
+	var env webhttp.ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("create during sync: body %q is not the standard envelope: %v", rec.Body.String(), err)
+	}
+	if env.Error != "tools installing" || env.Code != "" {
+		t.Fatalf("create during sync: envelope = {error:%q code:%q}, want {error:%q code:%q}", env.Error, env.Code, "tools installing", "")
 	}
 
 	// Health stays reachable and reports the informational tools state.
@@ -834,7 +842,7 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 		inner++
 		w.WriteHeader(http.StatusCreated)
 	}))
-	rec := httptest.NewRecorder()
+	rec = httptest.NewRecorder()
 	gated.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sessions", http.NoBody))
 	if rec.Code != http.StatusCreated || inner != 1 {
 		t.Fatalf("create after sync: status %d inner %d, want pass-through", rec.Code, inner)

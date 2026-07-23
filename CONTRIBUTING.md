@@ -124,9 +124,15 @@ assert at least once (`expect.requireAssertions`) and `.only` is forbidden.
 ## Conventions and gotchas
 
 - **Always use webhttp's response helpers.** Never hand-craft JSON error
-  bodies (`http.Error` with a JSON string, `w.Write([]byte(...))`). Use
-  `webhttp.WriteJSON`, `webhttp.WriteJSONStatus`, `webhttp.Ok`, and
-  `webhttp.WriteError` (the JSON error envelope).
+  bodies (`http.Error` with a JSON string, `w.Write([]byte(...))`). Every
+  app-owned ERROR response (4xx/5xx) is `webhttp.WriteError` with an empty
+  code — the standard `{error, request_id}` envelope; the two 403 gates and
+  the tools-installing 503 all speak it. `webhttp.WriteJSON` /
+  `webhttp.WriteJSONStatus` / `webhttp.Ok` are for non-error documents only
+  (`/api/health`'s `{status, reason, tools}` is a health-probe contract, not
+  an error envelope). Routes mounted by the pinned engine answer in the
+  engine's own plain-text dialect; that is an engine-repo concern, not a
+  reason to fork the app-owned shape.
 - **Client-local vs library code.** `static-src/app.ts` is the only client
   source Web Terminal for Kiro owns — a `createTerminal(root, { features: presetAgentTabbed(), theme })` call plus a small bootstrap-failure handler (`showFatal`, which surfaces a missing `#terminal` root or a `createTerminal` throw on the pre-JS `#loading` overlay as a `role="alertdialog"` overlay with a focused Reload button) (the theme is Web Terminal for Kiro's purple token set; `presetAgentTabbed` pulls in tabs, the activity monitor, touch toolbar, context menu, clipboard, scroll-to-bottom, predictive echo, connection banner, and animations). The input model,
   IME/composition, predictive echo, viewport, mobile key toolbar, and status

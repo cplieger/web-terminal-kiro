@@ -326,27 +326,22 @@ func buildCSPPolicy(sub fs.FS) (string, error) {
 	return fmt.Sprintf(cspTemplate, strings.Join(hashes, " ")), nil
 }
 
-// errorField is the JSON key carrying the human-readable failure reason in
-// composeGate's hand-rolled 503 body below (the two 403 gates emit the
-// standard webhttp.WriteError envelope).
-const errorField = "error"
-
 // composeGate wraps the session-create gate with the tools-syncing
 // check: while the boot convergence pass runs, only SESSION CREATION
 // (POST terminal.SessionsPath) answers 503, so kiro-cli never spawns
 // before the manifest's tools are on PATH; list/close/title requests
 // routed through the same doubly-mounted handler pass through, matching
 // the engine's WithCreateGate contract. The inner gate (the create rate
-// limit) applies once syncing is over.
+// limit) applies once syncing is over. The 503 speaks the standard
+// webhttp.WriteError envelope with an empty code, like every app-owned
+// error response here (the two 403 gates); /api/health's
+// {status, reason} document is a health-probe contract, not an error.
 func composeGate(inner func(http.Handler) http.Handler, syncing func() bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		gated := inner(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if syncing() && r.Method == http.MethodPost && r.URL.Path == terminal.SessionsPath {
-				webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
-					errorField: "tools installing",
-					"reason":   "tools installing",
-				})
+				webhttp.WriteError(w, r, http.StatusServiceUnavailable, "", "tools installing")
 				return
 			}
 			gated.ServeHTTP(w, r)
