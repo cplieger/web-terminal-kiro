@@ -228,20 +228,27 @@ needs_kiro_cli_install() {
 }
 
 if needs_kiro_cli_install; then
-  # Quarantine the stale dispatcher and its sidecars out of $TOOLS/bin BEFORE
-  # the reinstall. install_kiro_cli stages the replacement in $HOME/.local/bin
-  # and only promotes it on success, so without this a failed reinstall after
+  # Quarantine the stale dispatcher and its sidecars out of BOTH $TOOLS/bin
+  # and the $HOME/.local/bin staging directory BEFORE the reinstall.
+  # install_kiro_cli stages the replacement in $HOME/.local/bin and only
+  # promotes it on success, so without this a failed reinstall after
   # version drift would leave the old, no-longer-pinned binary executable on
   # PATH: /api/health would report unavailable (marker withheld) yet new
   # sessions would still launch the stale CLI, contradicting the pin
-  # guarantee. With the quarantine an install failure leaves the binary
+  # guarantee. Staging is swept here too: install_kiro_cli's failure EXIT
+  # trap is registered only after arch detection and mktemp -d succeed, so
+  # residue staged by an earlier boot would survive those early returns and
+  # stay reachable via bare-name PATH resolution after the canonical binary
+  # was removed. With the quarantine an install failure leaves every binary
   # absent, so new sessions hit the explicit install-failed guard instead.
   # Inability to quarantine is fatal: we cannot guarantee the pin controls
-  # what runs. rm -f is a no-op on the first-boot (binary missing) path.
+  # what runs. rm -f is a no-op on the first-boot (nothing present) path.
   if [ -e "$BIN" ]; then
-    printf 'level=info msg="quarantining stale kiro-cli binaries before reinstall" path="%s" component=entrypoint\n' "$BIN" >&2
+    printf 'level=info msg="quarantining stale kiro-cli binaries (canonical and staging) before reinstall" path="%s" component=entrypoint\n' "$BIN" >&2
   fi
-  if ! rm -f "$BIN" "$TOOLS/bin/kiro-cli-chat" "$TOOLS/bin/kiro-cli-term"; then
+  if ! rm -f \
+    "$BIN" "$TOOLS/bin/kiro-cli-chat" "$TOOLS/bin/kiro-cli-term" \
+    "$HOME/.local/bin/kiro-cli" "$HOME/.local/bin/kiro-cli-chat" "$HOME/.local/bin/kiro-cli-term"; then
     printf 'level=error msg="failed to remove stale kiro-cli binaries before reinstall; refusing to leave an unpinned binary on PATH" path="%s" component=entrypoint\n' "$BIN" >&2
     # Same crash-loop throttle as the other fatal boot errors above.
     sleep 10
