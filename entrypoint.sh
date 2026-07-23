@@ -211,6 +211,25 @@ needs_kiro_cli_install() {
 }
 
 if needs_kiro_cli_install; then
+  # Quarantine the stale dispatcher and its sidecars out of $TOOLS/bin BEFORE
+  # the reinstall. install_kiro_cli stages the replacement in $HOME/.local/bin
+  # and only promotes it on success, so without this a failed reinstall after
+  # version drift would leave the old, no-longer-pinned binary executable on
+  # PATH: /api/health would report unavailable (marker withheld) yet new
+  # sessions would still launch the stale CLI, contradicting the pin
+  # guarantee. With the quarantine an install failure leaves the binary
+  # absent, so new sessions hit the explicit install-failed guard instead.
+  # Inability to quarantine is fatal: we cannot guarantee the pin controls
+  # what runs. rm -f is a no-op on the first-boot (binary missing) path.
+  if [ -e "$BIN" ]; then
+    printf 'level=info msg="quarantining stale kiro-cli binaries before reinstall" path="%s" component=entrypoint\n' "$BIN" >&2
+  fi
+  if ! rm -f "$BIN" "$TOOLS/bin/kiro-cli-chat" "$TOOLS/bin/kiro-cli-term"; then
+    printf 'level=error msg="failed to remove stale kiro-cli binaries before reinstall; refusing to leave an unpinned binary on PATH" path="%s" component=entrypoint\n' "$BIN" >&2
+    # Same crash-loop throttle as the other fatal boot errors above.
+    sleep 10
+    exit 1
+  fi
   if ! install_kiro_cli; then
     printf 'level=warn msg="kiro-cli install failed; web UI starts but the terminal errors until kiro-cli is present" component=entrypoint\n' >&2
   fi
