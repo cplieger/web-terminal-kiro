@@ -247,8 +247,11 @@ func classifyStatus(msg string) (string, bool) {
 		// tool-approval. If a kiro-cli bump reworded "Response complete"/"Permission
 		// required", every notification lands here and the per-tab status dots
 		// silently stop latching. This Debug line is the only runtime trace of that
-		// drift (invisible at the default Info level; raise the level to diagnose a
-		// "status dots stopped working" report after a version bump).
+		// drift (invisible at the default info level; set KWEB_LOG_LEVEL=debug to
+		// diagnose a "status dots stopped working" report after a version bump).
+		// msg is safe to log raw: the engine's sanitizeNotification strips
+		// every runesafe-unsafe rune (C0/C1 controls, Bidi controls, U+2028/29)
+		// and rune-caps the text before the classifier ever sees it.
 		slog.Debug("unrecognized kiro-cli OSC 9 notification; tab status dots will not latch (kiro-cli notification wording may have changed on a version bump)", "message", msg)
 		return "", false
 	}

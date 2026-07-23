@@ -54,6 +54,7 @@ The image ships working defaults; most setups only pick a port and a volume.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `KWEB_ADDR` | `:9848` | Listen address (`host:port`). |
+| `KWEB_LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, or `error` (case-insensitive; slog offset syntax like `warn+1` also parses). `debug` surfaces diagnostic traces such as the unrecognized-notification line that explains stuck tab-status dots after a kiro-cli version bump. An unparseable value falls back to `info` with a startup warning. |
 | `KWEB_WORK_DIR` | `/workspace` | Directory each terminal session starts in (must exist). |
 | `KWEB_CONFIG_DIR` | `/config` | Persistent config directory (kiro-cli home, tool state). When the directory does not exist the tool-provisioning engine is skipped with a warning; terminal sessions still run (the case when running bare `go run` outside the image). |
 | `KIRO_CLI_PATH` | `kiro-cli` | Path to the kiro-cli binary each session launches (resolved via `PATH` when bare). A missing binary reports inside the terminal at session start; the server keeps serving. |

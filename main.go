@@ -161,7 +161,20 @@ exec "$0" chat "$@"`
 }
 
 func main() {
-	slogx.Setup(slogx.Options{})
+	// Parse the level BEFORE Setup so the handler installs at the configured
+	// level; warn AFTER Setup so the warning emits through the configured
+	// handler (the slogx contract). KWEB_LOG_LEVEL=debug surfaces the
+	// diagnostic lines that are invisible at the default info — e.g. the
+	// classifyStatus trace for a kiro-cli notification-wording drift.
+	logLevelRaw := envx.String("KWEB_LOG_LEVEL", "")
+	logLevel, logLevelOK := slogx.ParseLevel(logLevelRaw, slog.LevelInfo)
+	slogx.Setup(slogx.Options{Level: logLevel})
+	if !logLevelOK {
+		// Field-name-only: a compose expansion mistake could put a secret in
+		// the value, so the raw string never reaches the log.
+		slog.Warn("unparseable KWEB_LOG_LEVEL; using the info default",
+			"hint", "use debug, info, warn, or error")
+	}
 
 	addr := envx.String("KWEB_ADDR", ":9848")
 	// Warn for any bind reachable beyond loopback (see isExposedBind): a client
