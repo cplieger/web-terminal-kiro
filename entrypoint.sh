@@ -75,6 +75,15 @@ elif ! chmod 700 "$HOME/.kiro"; then
   printf 'level=warn msg="failed to tighten ~/.kiro permissions" component=entrypoint\n' >&2
 fi
 
+# Tighten ~/.local the same way: the mkdir above creates it umask-wide, and
+# kiro-cli's upstream install.sh persists state under it on the same /config
+# host bind mount. Same symlink guard as ~/.ssh above.
+if [ -L "$HOME/.local" ]; then
+  printf 'level=warn msg="refusing to chmod symlinked ~/.local directory" component=entrypoint\n' >&2
+elif ! chmod 700 "$HOME/.local"; then
+  printf 'level=warn msg="failed to tighten ~/.local permissions" component=entrypoint\n' >&2
+fi
+
 # mkdir -p succeeds when the directories already exist — even on a read-only
 # bind mount — so it is NOT proof that /config is writable. Prove it with a
 # create+remove probe and fail fast (the documented behavior for an
