@@ -40,23 +40,6 @@ import (
 //go:embed static
 var staticFS embed.FS
 
-// isExposedBind reports whether addr binds beyond loopback. The wildcard forms
-// (empty host in ":9848", 0.0.0.0, ::) AND any specific routable IP (LAN/public)
-// are exposed; only an explicit loopback bind (127.0.0.0/8, ::1, or the
-// "localhost" name) is safe. An addr that does not parse as host:port is treated
-// as not exposed (no warn) — it will fail at Listen anyway.
-func isExposedBind(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return false
-	}
-	if strings.EqualFold(host, "localhost") {
-		return false
-	}
-	ip := net.ParseIP(host)
-	return ip == nil || !ip.IsLoopback()
-}
-
 // parseTrustedProxies reads a comma-separated list of CIDRs / bare IPs from the
 // TRUSTED_PROXIES env var into the trusted-proxy set the access log's client-IP
 // resolver consults (webhttp.WithClientIP -> ClientIP). It delegates the
@@ -177,9 +160,12 @@ func main() {
 	}
 
 	addr := envx.String("KWEB_ADDR", ":9848")
-	// Warn for any bind reachable beyond loopback (see isExposedBind): a client
-	// that can reach this port gets an UNAUTHENTICATED kiro-cli PTY.
-	if isExposedBind(addr) {
+	// Warn for any bind reachable beyond loopback (wildcards, routable IPs,
+	// hostnames — webhttp.ClassifyBind's exposure vocabulary): a client that
+	// can reach this port gets an UNAUTHENTICATED kiro-cli PTY. The
+	// fail-silent recipe — only a definite exposure warns; an unparseable
+	// addr (BindInvalid) will fail at Listen anyway with its own error.
+	if webhttp.ClassifyBind(addr) == webhttp.BindExposed {
 		slog.Warn("serving an UNAUTHENTICATED kiro-cli shell on a non-loopback address; front it with an authenticating reverse proxy",
 			"addr", addr,
 			"hint", "any client that can reach this port gets a kiro-cli PTY with filesystem access to /workspace and the /config home (auth tokens, ssh keys, gitconfig)")
