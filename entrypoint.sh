@@ -243,7 +243,7 @@ if needs_kiro_cli_install; then
   # absent, so new sessions hit the explicit install-failed guard instead.
   # Inability to quarantine is fatal: we cannot guarantee the pin controls
   # what runs. rm -f is a no-op on the first-boot (nothing present) path.
-  if [ -e "$BIN" ]; then
+  if [ -e "$BIN" ] || [ -e "$HOME/.local/bin/kiro-cli" ]; then
     printf 'level=info msg="quarantining stale kiro-cli binaries (canonical and staging) before reinstall" path="%s" component=entrypoint\n' "$BIN" >&2
   fi
   if ! rm -f \
