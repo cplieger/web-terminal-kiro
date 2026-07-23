@@ -15,8 +15,8 @@ HOST="${DEPLOY_HOST:?set DEPLOY_HOST to your dev box (ssh host or IP)}"
 # cap. Health-loop inspect samples use a shorter fixed cap (see the poll loop)
 # so one stuck sample cannot overrun the DEPLOY_TIMEOUT budget.
 REMOTE_OP_TIMEOUT="${REMOTE_OP_TIMEOUT:-120}"
-if [[ ! "$REMOTE_OP_TIMEOUT" =~ ^[0-9]{1,9}$ ]]; then
-  printf 'error: REMOTE_OP_TIMEOUT must be a non-negative decimal integer (at most 9 digits), got %q\n' "$REMOTE_OP_TIMEOUT" >&2
+if [[ ! "$REMOTE_OP_TIMEOUT" =~ ^[0-9]{1,9}$ ]] || ((10#$REMOTE_OP_TIMEOUT == 0)); then
+  printf 'error: REMOTE_OP_TIMEOUT must be a positive decimal integer (at most 9 digits), got %q\n' "$REMOTE_OP_TIMEOUT" >&2
   exit 1
 fi
 # DEPLOY_HOST may be an ssh config alias (documented above), which curl/DNS

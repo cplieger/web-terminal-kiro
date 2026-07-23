@@ -48,6 +48,17 @@ ARG TS_VERSION=7.0.2
 # move these — the manual-sha-bump rule in cplieger/.github (scoped to this
 # repo) labels the PR with the recompute commands. Update both alongside
 # TS_VERSION (the linux-x64 and linux-arm64 packages publish in lockstep).
+# Upstream toolchain vuln tracking: the pinned 7.0.2 tsc binaries were built
+# with Go 1.26.4 + golang.org/x/text v0.38.0, which govulncheck -mode=binary
+# flags for GO-2026-5970 / GO-2026-5856 / GO-2026-4970. The compiler lives
+# only in this discarded builder stage, so the residual risk is build/CI
+# denial of service on crafted compiler input — nothing vulnerable ships in
+# the runtime image. No rebuilt upstream package exists yet (7.0.2 is npm's
+# latest). On the next TS native-compiler release: bump TS_VERSION and both
+# shas together, then verify `go version -m` on both downloaded tsc binaries
+# shows Go >= 1.26.5 and x/text >= v0.39.0, and re-run
+# `govulncheck -mode=binary` as the gate. Never drop these sha256 checks or
+# substitute an unpinned latest package while waiting.
 ARG TS_SHA256_X64=7ecad6f67377e831856367ab062ef394f21506a611405bf8ac0ff039348637d3
 ARG TS_SHA256_ARM64=c83d931ac9dd7549cde6e71246aa9d6a9812843023df3e277fe3b5dcf41dd0ea
 RUN ARCH=$(dpkg --print-architecture) && \
