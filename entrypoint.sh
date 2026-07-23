@@ -64,6 +64,17 @@ elif ! chmod 700 "$HOME/.ssh"; then
   printf 'level=warn msg="failed to tighten ~/.ssh permissions" component=entrypoint\n' >&2
 fi
 
+# Tighten ~/.kiro the same way: it holds kiro-cli settings including
+# mcp.json (remote-server URLs and tokens per the MCP docs) and lives on
+# the same /config host bind mount, where the umask-wide 0755 dir plus
+# 0644 files let other host users read secret material. Same symlink
+# guard as ~/.ssh above.
+if [ -L "$HOME/.kiro" ]; then
+  printf 'level=warn msg="refusing to chmod symlinked ~/.kiro directory" component=entrypoint\n' >&2
+elif ! chmod 700 "$HOME/.kiro"; then
+  printf 'level=warn msg="failed to tighten ~/.kiro permissions" component=entrypoint\n' >&2
+fi
+
 # mkdir -p succeeds when the directories already exist — even on a read-only
 # bind mount — so it is NOT proof that /config is writable. Prove it with a
 # create+remove probe and fail fast (the documented behavior for an
@@ -96,7 +107,7 @@ install_kiro_cli() (
   # https://kiro.dev/docs/cli/installation/ ("With a zip file" section).
   # We pin the version (not /latest/) so a given image tag is reproducible,
   # and verify the sha256 before running install.sh.
-  local arch zip_url tmpdir='' zip install_log=''
+  local arch zip_url tmpdir='' zip install_log='' rc=0
   case "$(uname -m)" in
     x86_64) arch="x86_64-linux" ;;
     aarch64) arch="aarch64-linux" ;;
@@ -111,7 +122,13 @@ install_kiro_cli() (
   # Single cleanup owner for both temp resources: the function body runs in a
   # subshell (note the `(` after the function name), so this EXIT trap fires
   # once per invocation on every return path — no per-branch rm bookkeeping.
-  trap 'rm -rf "$tmpdir"; [ -z "$install_log" ] || rm -f "$install_log"' EXIT
+  # On a failure exit, also sweep any staged-but-unpromoted binaries out of
+  # $HOME/.local/bin: staging lives on the persistent /config volume AND on
+  # the image PATH, so leaving it would recreate -- via bare-name resolution,
+  # e.g. the README's `docker exec ... kiro-cli mcp add` -- the unpinned-binary
+  # exposure the pre-reinstall quarantine below exists to close. A success
+  # exit (rc=0) skips the sweep; promotion already consumed the staged files.
+  trap 'rc=$?; rm -rf "$tmpdir"; [ -z "$install_log" ] || rm -f "$install_log"; [ "$rc" -eq 0 ] || rm -f "$HOME/.local/bin/kiro-cli" "$HOME/.local/bin/kiro-cli-chat" "$HOME/.local/bin/kiro-cli-term"' EXIT
   zip="$tmpdir/kirocli.zip"
 
   if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
