@@ -38,6 +38,10 @@ printf '[1/6] go.work -> local engine (replace published module with %s)\n' "$EN
 # hardcoded version here broke the build when go.mod moved to a newer patch; a
 # hardcoded /v2 module path silently no-opped the replace after the v3 bump).
 GO_DIRECTIVE="$(sed -n 's/^go /go /p' go.mod | head -n1)"
+[ -n "$GO_DIRECTIVE" ] || {
+  printf 'error: go directive not found in go.mod\n' >&2
+  exit 1
+}
 ENGINE_MOD="$(sed -n 's|.*\(github.com/cplieger/web-terminal-engine/v[0-9]*\) .*|\1|p' go.mod | head -n1)"
 [ -n "$ENGINE_MOD" ] || {
   printf 'error: engine module path not found in go.mod\n' >&2

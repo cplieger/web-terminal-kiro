@@ -29,6 +29,12 @@ PROBE_HOST=$(timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh -
   exit 1
 }
 : "${PROBE_HOST:?failed to resolve DEPLOY_HOST via ssh -G}"
+# Bracket an IPv6 literal for the curl probe URL below (a bare v6
+# address is not a valid URL host; ssh handles it natively but curl
+# would fail every health sample). No-op for IPv4/hostnames.
+case "$PROBE_HOST" in
+  *:*) PROBE_HOST="[$PROBE_HOST]" ;;
+esac
 # Bound every ssh/scp invocation the same way the health curl is bounded
 # (-m5), at both stages: ConnectTimeout caps connection setup (without it a
 # dev box that stops answering TCP mid-poll blocks a single ssh on the
@@ -77,7 +83,7 @@ timeout --signal=TERM --kill-after=5s "${REMOTE_OP_TIMEOUT}s" ssh "${SSH_OPTS[@]
   exit 1
 }
 # Bounded health poll. The entrypoint's foreground work before the server
-# binds can legally take up to ~1080s on a cold volume (kiro-cli download +
+# binds can legally take up to ~1185s on a cold volume (kiro-cli download +
 # install + probes + optional APT_PACKAGES), so a single early probe would
 # fail a normally progressing boot. DEPLOY_TIMEOUT defaults to the same
 # derived budget as the image HEALTHCHECK start-period (20m) and

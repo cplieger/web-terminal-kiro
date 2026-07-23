@@ -54,6 +54,13 @@ mkdir -p "$TOOLS/bin" "$HOME/.local/bin" "$HOME/.ssh" "$HOME/.kiro" \
     exit 1
   }
 
+# Tighten ~/.ssh to the OpenSSH-conventional 0700. mkdir -p creates new dirs
+# umask-wide (root umask 022 -> 0755) and leaves an existing dir's mode alone;
+# the dir lives on the /config host bind mount, where a wider mode lets other
+# host users traverse it and read non-key files (known_hosts, config).
+chmod 700 "$HOME/.ssh" \
+  || printf 'level=warn msg="failed to tighten ~/.ssh permissions" component=entrypoint\n' >&2
+
 # mkdir -p succeeds when the directories already exist — even on a read-only
 # bind mount — so it is NOT proof that /config is writable. Prove it with a
 # create+remove probe and fail fast (the documented behavior for an

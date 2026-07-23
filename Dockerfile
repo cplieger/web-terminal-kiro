@@ -317,9 +317,11 @@ WORKDIR /workspace
 EXPOSE 9848
 
 # start-period covers the entrypoint's worst-case FOREGROUND path before the
-# server binds: kiro-cli download (curl --max-time 300) + install.sh (120) +
-# version/settings probes (~60) + optional APT_PACKAGES (600) ≈ 1080s, so 20m
-# with headroom. The same derived budget drives tests/image-smoke.conf's
+# server binds: kiro-cli download (curl --max-time 300) + install.sh (120, +15
+# kill-after) + version/settings probes (~120: three --version checks plus five
+# settings calls at 10s each, +5s kill-after) + optional APT_PACKAGES (600, +30
+# kill-after) ≈ 1185s, so the 20m start-period still covers the worst case.
+# The same derived budget drives tests/image-smoke.conf's
 # SMOKE_TIMEOUT and scripts/dev-deploy.sh's DEPLOY_TIMEOUT (both 1260) — move
 # all three together whenever a foreground timeout changes. Tool installs
 # converge in the background AFTER bind (only session creation waits on
