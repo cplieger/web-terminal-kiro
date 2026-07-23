@@ -87,138 +87,41 @@ func parseTrustedProxies() []*net.IPNet {
 }
 
 // parseAllowedHosts reads the comma-separated KWEB_ALLOWED_HOSTS list of exact
-// hostnames / IPs this server answers for, canonicalized via canonicalHost so
-// the runtime comparison is exact-match (no wildcards, no suffix logic). It
-// returns nil when the var is unset or empty — "any Host accepted", the
-// backward-compatible default; main warns about the DNS-rebinding exposure
-// that default leaves open (see hostAllowlist).
-func parseAllowedHosts() map[string]struct{} {
-	v := envx.String("KWEB_ALLOWED_HOSTS", "")
-	if v == "" {
-		return nil
-	}
-	allowed := make(map[string]struct{})
-	for entry := range strings.SplitSeq(v, ",") {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		// A Host header never contains "/", so an entry carrying one (a
-		// pasted URL like http://host, a path, or a CIDR confused with
-		// TRUSTED_PROXIES's format) canonicalizes to a value that cannot
-		// match the operator's intended hostname: every request then 403s
-		// with no hint why. Warn (named, like parseTrustedProxies) but keep
-		// the entry — acceptance is unchanged.
-		if strings.Contains(entry, "/") {
-			slog.Warn("KWEB_ALLOWED_HOSTS entry is not a bare hostname/IP and will not match the intended host",
-				"entry", entry,
-				"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.168.1.5,webterm.example.com")
-		}
-		key := canonicalHost(entry)
-		// A lone ":port" (a pasted KWEB_ADDR value), ".", or "[]" canonicalizes
-		// to an empty key that no browser-sent Host can match: every request would
-		// 403 with no hint why. Warn (named, like the slash-entry case above) but
-		// keep the entry -- acceptance is unchanged.
-		if key == "" {
-			slog.Warn("KWEB_ALLOWED_HOSTS entry canonicalizes to an empty host and cannot match any browser request",
-				"entry", entry,
-				"hint", "use bare hostnames or IPs; a lone port like :9848 belongs in KWEB_ADDR, not the allowlist")
-		}
-		allowed[key] = struct{}{}
-	}
-	if len(allowed) == 0 {
-		return nil
-	}
-	return allowed
-}
-
-// canonicalHost normalizes an HTTP Host header value (or a configured
-// allowlist entry) for exact comparison: strip an optional :port, strip
-// IPv6 brackets, lowercase, trim a trailing FQDN dot, and canonicalize IP
-// literals through net.ParseIP so textually different spellings of the same
-// address (e.g. ::1 vs 0:0:0:0:0:0:0:1) compare equal.
-func canonicalHost(hostport string) string {
-	host := hostport
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
-		host = h
-	}
-	host = strings.TrimPrefix(host, "[")
-	host = strings.TrimSuffix(host, "]")
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.String()
-	}
-	return host
-}
-
-// hostAllowlist rejects any request whose Host header does not canonicalize
-// to a configured entry, closing the DNS-rebinding hole that same-origin
-// checks alone leave open: a rebinding attack makes an attacker-controlled
-// hostname resolve to this server, so Origin and Host AGREE (both carry the
-// attacker's name) and http.CrossOriginProtection plus the WebSocket
-// same-origin check both pass — same-origin proves only that the two headers
-// match, never that the hostname is authorized for this remote-shell service
-// (CWE-346). Comparing r.Host against an exact allowlist breaks that chain:
-// the attacker's hostname is not on it.
+// hostnames / IPs this server answers for into a webhttp.HostPolicy — the
+// shared exact-match Host allowlist that closes the DNS-rebinding hole
+// same-origin checks alone leave open (a rebinding attack makes Origin and
+// Host AGREE, so CrossOriginProtection admits it; only an exact-Host check
+// breaks that chain, CWE-346). The library owns the mechanism
+// (webhttp.CanonicalHost canonicalization, X-Forwarded-Host ignored, the
+// loopback peer+Host carve-out that keeps the baked Docker healthcheck and
+// in-container tools clients working under any allowlist); this parser owns
+// the app policy: the carve-out is enabled, the 403 names KWEB_ALLOWED_HOSTS,
+// and malformed entries are logged (named, like parseTrustedProxies) and
+// dropped per ParseHostList's drop-and-report contract.
 //
-// Only r.Host is consulted — X-Forwarded-Host is deliberately ignored (it is
-// client-controlled and this check must hold on the direct-exposure path).
-// A nil/empty allowlist disables the check entirely (backward compatible;
-// main warns). Runs before CrossOriginProtection so an unauthorized host is
-// rejected before any terminal route, session creation included.
-//
-// One carve-out: a request is admitted regardless of the allowlist when BOTH
-// its socket peer AND its Host are loopback. This keeps the container's own
-// consumers — the baked Docker healthcheck (curl http://127.0.0.1:PORT) and
-// in-container tools clients (curl localhost:9848) — working under any
-// allowlist, so a list of browser-facing hostnames cannot brick the health
-// signal. The carve-out is unreachable by the attacks this gate exists for:
-// a DNS-rebinding request carries the ATTACKER'S hostname in Host (the Host
-// leg fails, even from a browser on this same machine), and a remote client
-// forging Host: 127.0.0.1 is not a loopback peer (the peer leg fails).
-func hostAllowlist(allowed map[string]struct{}) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		if len(allowed) == 0 {
-			return next
-		}
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			host := canonicalHost(r.Host)
-			if _, ok := allowed[host]; ok {
-				next.ServeHTTP(w, r)
-				return
-			}
-			if loopbackHost(host) && loopbackPeer(r.RemoteAddr) {
-				next.ServeHTTP(w, r)
-				return
-			}
-			webhttp.WriteError(w, r, http.StatusForbidden, "",
-				"host not allowed; add it to KWEB_ALLOWED_HOSTS to serve this hostname")
-		})
+// An unset or all-blank var yields an INACTIVE policy — "any Host accepted",
+// the backward-compatible default; main warns about the DNS-rebinding
+// exposure that default leaves open. Any non-blank entry engages the gate, so
+// a var whose entries are ALL malformed (a pasted URL, a lone ":9848") yields
+// an active EMPTY policy: deny-all except the loopback carve-out, failing
+// closed rather than silently unprotected — warned here by name, since every
+// browser request would otherwise 403 with no hint why.
+func parseAllowedHosts() *webhttp.HostPolicy {
+	const key = "KWEB_ALLOWED_HOSTS"
+	policy, invalid := webhttp.ParseHostList(strings.Split(envx.String(key, ""), ","),
+		webhttp.WithLoopbackExempt(),
+		webhttp.WithHostAllowlistError("",
+			"host not allowed; add it to KWEB_ALLOWED_HOSTS to serve this hostname"))
+	if len(invalid) > 0 {
+		slog.Warn("dropping malformed "+key+" entries; they cannot match any browser-sent Host",
+			"invalid", invalid,
+			"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.168.1.5,webterm.example.com; a lone port like :9848 belongs in KWEB_ADDR")
 	}
-}
-
-// loopbackHost reports whether a canonicalHost-normalized value names the
-// local host: the literal "localhost" or any loopback IP (127.0.0.0/8, ::1).
-// Name resolution is deliberately not performed — resolving would reopen the
-// DNS-rebinding race canonicalHost's no-resolution rule exists to avoid.
-func loopbackHost(canon string) bool {
-	if canon == "localhost" {
-		return true
+	if policy.Active() && policy.Size() == 0 {
+		slog.Warn(key+" has no usable entries; rejecting every non-loopback request (fail closed)",
+			"hint", "fix the entries listed in the preceding warning to restore browser access")
 	}
-	ip := net.ParseIP(canon)
-	return ip != nil && ip.IsLoopback()
-}
-
-// loopbackPeer reports whether an http.Request.RemoteAddr belongs to a
-// loopback socket peer. Forwarded headers play no part — RemoteAddr is set
-// by the server from the accepted connection. Malformed values fail closed.
-func loopbackPeer(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		return false
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return policy
 }
 
 // sessionCommand builds the per-session PTY command: `kiro-cli chat` behind a
@@ -310,12 +213,13 @@ func main() {
 
 	// KWEB_ALLOWED_HOSTS names the exact hostnames/IPs this server answers
 	// for; anything else is rejected before the terminal routes (see
-	// hostAllowlist for the DNS-rebinding rationale). Unset ⇒ permissive
-	// (backward compatible), but that leaves rebinding open even on a
-	// loopback/private bind — the attack rides the victim's browser, so the
-	// README's "keep it loopback" mitigation does not cover it. Warn.
-	allowedHosts := parseAllowedHosts()
-	if allowedHosts == nil {
+	// parseAllowedHosts for the DNS-rebinding rationale). Unset ⇒ inactive
+	// policy ⇒ permissive (backward compatible), but that leaves rebinding
+	// open even on a loopback/private bind — the attack rides the victim's
+	// browser, so the README's "keep it loopback" mitigation does not cover
+	// it. Warn.
+	hostPolicy := parseAllowedHosts()
+	if !hostPolicy.Active() {
 		slog.Warn("KWEB_ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
 			"hint", "set KWEB_ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,webterm.example.com)")
 	}
@@ -371,7 +275,7 @@ func main() {
 	// ordering rationale). webhttp.NewServer supplies the streaming-safe defaults
 	// (ReadHeaderTimeout 10s, IdleTimeout 120s, Read/WriteTimeout unset) that the
 	// hijacked /ws stream needs.
-	srv := webhttp.NewServer(buildHandler(mux, trustedProxies, cspPolicy, allowedHosts))
+	srv := webhttp.NewServer(buildHandler(mux, trustedProxies, cspPolicy, hostPolicy))
 	// BaseContext hands every request a context that the WithPreDrain hook below
 	// cancels on shutdown; see that hook's comment for why cancelling baseCtx
 	// (not srv.Shutdown) is what unblocks the always-open SSE stream.
@@ -579,7 +483,7 @@ func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 // buildHandler wraps the route mux in web-terminal-kiro's middleware stack via
 // webhttp.Chain. Chain(h, A, B, C, D) == A(B(C(D(h)))), so the first entry is
 // the outermost wrapper; a request flows Logging -> Recoverer ->
-// SecurityHeaders -> hostAllowlist -> CrossOriginProtection -> mux, and the
+// SecurityHeaders -> host allowlist -> CrossOriginProtection -> mux, and the
 // response unwinds the other way.
 //
 //   - Logging — webhttp's access logger. Outermost so it observes every final
@@ -607,16 +511,17 @@ func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 //     web-terminal-kiro is never embedded in a frame. Placed outside
 //     CrossOriginProtection so even a rejected cross-origin request still
 //     carries the headers.
-//   - hostAllowlist — the KWEB_ALLOWED_HOSTS exact-host check (see its doc
-//     comment for the DNS-rebinding rationale). Placed before
-//     CrossOriginProtection because rebinding makes Origin and Host agree, so
-//     the origin check alone cannot reject it; kept inside SecurityHeaders so
-//     even a rejected host gets the baseline headers and an access-log line.
-//     A nil allowlist (env unset) collapses to a pass-through.
+//   - hostPolicy.Middleware — the KWEB_ALLOWED_HOSTS exact-host check
+//     (webhttp.HostPolicy; see parseAllowedHosts for the DNS-rebinding
+//     rationale). Placed before CrossOriginProtection because rebinding makes
+//     Origin and Host agree, so the origin check alone cannot reject it; kept
+//     inside SecurityHeaders so even a rejected host gets the baseline headers
+//     and an access-log line. An inactive policy (env unset/blank) collapses
+//     to a pass-through per the library's off-contract.
 //   - CrossOriginProtection — the stdlib cross-origin/CSRF guard, kept
 //     innermost (its long-standing position directly in front of the routes) so
 //     it rejects a forged cross-origin unsafe request with 403.
-func buildHandler(mux http.Handler, trustedProxies []*net.IPNet, csp string, allowedHosts map[string]struct{}) http.Handler {
+func buildHandler(mux http.Handler, trustedProxies []*net.IPNet, csp string, hostPolicy *webhttp.HostPolicy) http.Handler {
 	return webhttp.Chain(mux,
 		webhttp.Logging(
 			webhttp.WithLogger(slog.Default()),
@@ -625,7 +530,7 @@ func buildHandler(mux http.Handler, trustedProxies []*net.IPNet, csp string, all
 		),
 		webhttp.Recoverer(webhttp.WithRecoverLogger(slog.Default())),
 		webhttp.SecurityHeaders(webhttp.WithCSP(csp)),
-		hostAllowlist(allowedHosts),
+		hostPolicy.Middleware(),
 		http.NewCrossOriginProtection().Handler,
 	)
 }

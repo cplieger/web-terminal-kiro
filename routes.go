@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -351,6 +352,21 @@ func composeGate(inner func(http.Handler) http.Handler, syncing func() bool) fun
 			gated.ServeHTTP(w, r)
 		})
 	}
+}
+
+// loopbackPeer reports whether an http.Request.RemoteAddr belongs to a
+// loopback socket peer. Forwarded headers play no part — RemoteAddr is set
+// by the server from the accepted connection. Malformed values fail closed.
+// (The KWEB_ALLOWED_HOSTS gate's loopback carve-out lives in
+// webhttp.HostPolicy; this local helper serves only the loopbackOnly tools
+// gate below.)
+func loopbackPeer(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // loopbackOnly admits only requests whose SOCKET PEER is a loopback

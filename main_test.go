@@ -529,10 +529,10 @@ func TestHostAllowlist_loopbackCarveOut(t *testing.T) {
 
 // TestHostAllowlist_blankConfigurationStaysPermissive drives a configured but
 // blank KWEB_ALLOWED_HOSTS (only commas and whitespace) through the real
-// parseAllowedHosts into the middleware: the parser's blank-entry filtering
-// plus the final empty-map-to-nil branch must yield the documented permissive
-// state. Accidentally retaining an empty-string map key would turn a blank
-// configuration into a deny-all outage.
+// parseAllowedHosts into the middleware: blank entries never engage the gate
+// (webhttp.ParseHostList leaves the policy INACTIVE), so the documented
+// permissive state must hold. Accidentally treating a blank entry as
+// non-blank would turn a blank configuration into a deny-all outage.
 func TestHostAllowlist_blankConfigurationStaysPermissive(t *testing.T) {
 	t.Setenv("KWEB_ALLOWED_HOSTS", "  ,  , ")
 	mux := http.NewServeMux()
@@ -680,63 +680,100 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 }
 
 // TestParseAllowedHosts unit-tests the KWEB_ALLOWED_HOSTS parser directly,
-// covering the two branches TestHostAllowlist's middleware-level driving
-// cannot reach: an unset/empty var must return nil (the permissive
+// covering the branches TestHostAllowlist's middleware-level driving cannot
+// reach: an unset/empty var must yield an INACTIVE policy (the permissive
 // backward-compatible default main keys its rebinding warning on), and a
 // URL-shaped entry (scheme/path/CIDR pasted where a bare hostname belongs)
-// must emit exactly one named Warn while KEEPING the entry -- acceptance is
-// unchanged, the Warn exists because such an entry canonicalizes to a value
-// no browser Host header ever matches, silently 403-ing every request.
+// must emit exactly one named Warn while being DROPPED per ParseHostList's
+// drop-and-report contract — the entry canonicalizes to a value no
+// browser-sent Host ever matches, so retaining it (the pre-webhttp behavior)
+// only created an unmatchable key an attacker-chosen Host like "http:9848"
+// could in principle collide with. The valid subset must keep working.
 // Serial: capture.Default mutates the process-global default logger.
 func TestParseAllowedHosts(t *testing.T) {
-	t.Run("unset env yields nil (any Host accepted)", func(t *testing.T) {
+	allows := func(t *testing.T, policy *webhttp.HostPolicy, host, remoteAddr string) bool {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/probe", http.NoBody)
+		if remoteAddr != "" {
+			req.RemoteAddr = remoteAddr
+		}
+		return policy.Allows(req)
+	}
+
+	t.Run("unset env yields an inactive policy (any Host accepted)", func(t *testing.T) {
 		t.Setenv("KWEB_ALLOWED_HOSTS", "")
-		if got := parseAllowedHosts(); got != nil {
-			t.Errorf("parseAllowedHosts() = %v, want nil when KWEB_ALLOWED_HOSTS is unset/empty (the permissive backward-compatible default)", got)
+		policy := parseAllowedHosts()
+		if policy.Active() {
+			t.Error("parseAllowedHosts() is active for an unset/empty KWEB_ALLOWED_HOSTS; want the permissive backward-compatible default")
+		}
+		if !allows(t, policy, "anything.example:9848", "") {
+			t.Error("inactive policy rejected a request; unset KWEB_ALLOWED_HOSTS must accept every Host")
 		}
 	})
 
-	t.Run("URL-shaped entry warns but is kept", func(t *testing.T) {
+	t.Run("URL-shaped entry warns and is dropped", func(t *testing.T) {
 		records := capture.Default(t)
 		t.Setenv("KWEB_ALLOWED_HOSTS", "http://webterm.example.com, localhost")
-		allowed := parseAllowedHosts()
+		policy := parseAllowedHosts()
 
-		if got := countLevel(records, slog.LevelWarn, "not a bare hostname/IP"); got != 1 {
-			t.Errorf("log = %q, want exactly one not-a-bare-hostname Warn (got %d); a pasted URL silently 403-ing every request with no hint is the misconfiguration this Warn exists for", records.Messages(), got)
+		if got := countLevel(records, slog.LevelWarn, "dropping malformed"); got != 1 {
+			t.Errorf("log = %q, want exactly one dropping-malformed Warn (got %d); a pasted URL silently 403-ing every request with no hint is the misconfiguration this Warn exists for", records.Messages(), got)
 		}
-		if len(allowed) != 2 {
-			t.Fatalf("parseAllowedHosts() kept %d entries, want 2 (acceptance is unchanged: the malformed entry is kept, only warned about)", len(allowed))
+		if !policy.Active() {
+			t.Fatal("policy is inactive despite a non-blank configuration; the gate must engage")
 		}
-		if _, ok := allowed["localhost"]; !ok {
+		if got := policy.Size(); got != 1 {
+			t.Fatalf("policy size = %d, want 1 (the malformed entry is dropped, the valid one kept)", got)
+		}
+		if !allows(t, policy, "localhost:9848", "192.168.1.50:44444") {
 			t.Error("valid entry localhost missing from the allowlist")
 		}
-		if _, ok := allowed[canonicalHost("http://webterm.example.com")]; !ok {
-			t.Error("the warned URL-shaped entry was dropped; the documented contract keeps it (acceptance unchanged)")
+		// The pre-webhttp parser RETAINED the malformed entry as the
+		// unmatchable key "http"; the drop-and-report contract removes it, so
+		// a request whose Host canonicalizes to "http" must now be rejected.
+		if allows(t, policy, "http:9848", "192.168.1.50:44444") {
+			t.Error(`Host "http:9848" admitted; the dropped URL-shaped entry must leave no residual key behind`)
 		}
 	})
 }
 
-// TestParseAllowedHosts_warnsForEmptyCanonicalHost pins the empty-key branch
-// TestParseAllowedHosts's other cases never reach: an entry like a lone
-// ":9848" (a pasted KWEB_ADDR value) canonicalizes to an empty host no
-// browser-sent Host can ever match, so the parser must emit exactly one
-// named Warn while KEEPING the entry -- acceptance unchanged, same contract
-// as the URL-shaped case above.
+// TestParseAllowedHosts_allInvalidFailsClosed pins the all-invalid branch
+// TestParseAllowedHosts's other cases never reach: a var whose only entry is a
+// lone ":9848" (a pasted KWEB_ADDR value) canonicalizes to an empty host no
+// browser-sent Host can ever match, so the parser must Warn twice by name —
+// the dropped entry, then the resulting deny-all state — and yield an ACTIVE
+// EMPTY policy: every non-loopback request is rejected (fail closed, never
+// silently unprotected) while the loopback carve-out keeps the container's own
+// healthcheck working.
 // Serial: capture.Default mutates the process-global default logger.
-func TestParseAllowedHosts_warnsForEmptyCanonicalHost(t *testing.T) {
+func TestParseAllowedHosts_allInvalidFailsClosed(t *testing.T) {
 	records := capture.Default(t)
 	t.Setenv("KWEB_ALLOWED_HOSTS", ":9848")
 
-	allowed := parseAllowedHosts()
+	policy := parseAllowedHosts()
 
-	if got := countLevel(records, slog.LevelWarn, "canonicalizes to an empty host"); got != 1 {
-		t.Errorf("log = %q, want exactly one empty-host Warn (got %d)", records.Messages(), got)
+	if got := countLevel(records, slog.LevelWarn, "dropping malformed"); got != 1 {
+		t.Errorf("log = %q, want exactly one dropping-malformed Warn (got %d)", records.Messages(), got)
 	}
-	if len(allowed) != 1 {
-		t.Fatalf("parseAllowedHosts() kept %d entries, want 1", len(allowed))
+	if got := countLevel(records, slog.LevelWarn, "no usable entries"); got != 1 {
+		t.Errorf("log = %q, want exactly one no-usable-entries deny-all Warn (got %d)", records.Messages(), got)
 	}
-	if _, ok := allowed[""]; !ok {
-		t.Error("the warned empty-host entry was dropped; the documented contract keeps malformed entries")
+	if !policy.Active() {
+		t.Fatal("policy is inactive despite a non-blank configuration; an all-invalid list must fail closed, not fall open")
+	}
+	if got := policy.Size(); got != 0 {
+		t.Fatalf("policy size = %d, want 0 (every entry dropped)", got)
+	}
+
+	deny := httptest.NewRequest(http.MethodGet, "http://webterm.example.com:9848/probe", http.NoBody)
+	deny.RemoteAddr = "192.168.1.50:44444"
+	if policy.Allows(deny) {
+		t.Error("non-loopback request admitted by an active empty policy; all-invalid configuration must deny-all")
+	}
+	health := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:9848/probe", http.NoBody)
+	health.RemoteAddr = "127.0.0.1:54321"
+	if !policy.Allows(health) {
+		t.Error("loopback healthcheck shape rejected; the carve-out must survive an all-invalid configuration")
 	}
 }
 
