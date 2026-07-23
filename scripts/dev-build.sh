@@ -3,8 +3,9 @@
 # the rebuild/restructure effort (docs in web-terminal-engine/docs/REBUILD.md +
 # RESTRUCTURE.md). Produces ./web-terminal-kiro-dev-bin with static assets embedded,
 # built from the sibling ../web-terminal-engine (engine) and ../web-terminal-ui (UI) checkouts
-# instead of the published Go module / npm packages. Deploy with
-# scripts/dev-deploy.sh.
+# instead of the published Go module / npm packages. Run it directly on the dev
+# box, or copy it into a container by hand (the old scripts/dev-deploy.sh was
+# deleted with the dev instance; restore both from git history if one returns).
 #
 # Not for CI or release. go.work and web-terminal-kiro-dev-bin are gitignored.
 # Override the sibling checkouts with ENGINE_DIR=... / UI_DIR=...

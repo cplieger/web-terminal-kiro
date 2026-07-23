@@ -341,8 +341,8 @@ EXPOSE 9848
 # settings calls at 10s each, +5s kill-after) + optional APT_PACKAGES (600, +30
 # kill-after) ≈ 1185s, so the 20m start-period still covers the worst case.
 # The same derived budget drives tests/image-smoke.conf's
-# SMOKE_TIMEOUT and scripts/dev-deploy.sh's DEPLOY_TIMEOUT (both 1260) — move
-# all three together whenever a foreground timeout changes. Tool installs
+# SMOKE_TIMEOUT (1260) — move both together whenever a foreground timeout
+# changes. Tool installs
 # converge in the background AFTER bind (only session creation waits on
 # them), so /api/health is reachable throughout that window — it reports the
 # install state in the informational "tools" field without going
