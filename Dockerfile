@@ -156,9 +156,10 @@ ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=4.4.0
 # release (a Go-only release moves the tag without publishing npm, so lockstep
 # is not satisfiable); wire compatibility across the two halves is the
 # engine's own contract (wire_binary protocol version + the conformance
-# suite), not a version-string equality. Renovate moves the ARG+package.json
-# pins in one grouped PR on the routine path; this gate catches the human
-# bypass.
+# suite), not a version-string equality — asserted mechanically by the
+# wire-floor gate after the vendor fetch below. Renovate moves the
+# ARG+package.json pins in one grouped PR on the routine path; this gate
+# catches the human bypass.
 COPY static-src/package.json static-src/package.json
 RUN ENGINE_NPM=$(sed -n 's|.*"@cplieger/web-terminal-engine": "\([^"]*\)".*|\1|p' static-src/package.json) && \
     UI_NPM=$(sed -n 's|.*"@cplieger/web-terminal-ui": "\([^"]*\)".*|\1|p' static-src/package.json) && \
@@ -183,6 +184,24 @@ RUN ENGINE_NPM=$(sed -n 's|.*"@cplieger/web-terminal-engine": "\([^"]*\)".*|\1|p
 # static/vendor/, so the pinned fetches above are never overlaid by local
 # dev copies.
 COPY . ./
+
+# Wire-floor gate (cross-language compatibility): go.mod's engine module and
+# the ARG-pinned npm client version independently (see the pin gate above),
+# so their pairing is governed by the engine's exported wire-compatibility
+# floors, not version strings. Assert both directional floors at build time —
+# a declared-incompatible pairing would refuse every session at first connect
+# (close code 4002) while /api/health stays green, so fail HERE instead.
+# Client constants come from the vendored artifact fetched above (published
+# source, frozen export shape); server constants come from the engine's
+# public Go API inside scripts/wirecheck (no source scraping on the Go half).
+# hadolint ignore=DL3062
+RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    WIRE_TS=static-src/node_modules/@cplieger/web-terminal-engine/src/wire-compatibility.ts && \
+    CLIENT_REV=$(sed -n 's|^export const WIRE_PROTOCOL_VERSION = \([0-9]\{1,\}\);.*|\1|p' "$WIRE_TS") && \
+    CLIENT_MIN_SERVER=$(sed -n 's|^export const MIN_SUPPORTED_SERVER_WIRE_VERSION = \([0-9]\{1,\}\);.*|\1|p' "$WIRE_TS") && \
+    : "${CLIENT_REV:?wire-floor-gate: WIRE_PROTOCOL_VERSION not found in the vendored engine artifact (source layout changed?)}" && \
+    : "${CLIENT_MIN_SERVER:?wire-floor-gate: MIN_SUPPORTED_SERVER_WIRE_VERSION not found in the vendored engine artifact (source layout changed?)}" && \
+    go run ./scripts/wirecheck -client-rev "$CLIENT_REV" -client-min-server "$CLIENT_MIN_SERVER"
 
 # Compile client TypeScript and the engine + UI libs in a single layer.
 # Must run before the binary build because main.go's `//go:embed static`
