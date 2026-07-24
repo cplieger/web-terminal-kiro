@@ -47,6 +47,31 @@ function expectFatalOverlayShape(overlay: HTMLElement): void {
   expect(document.activeElement).toBe(reload);
 }
 
+// Evaluate the inline bootstrap watchdog, capturing the window listener(s) it
+// registers and removing them when the calling test finishes: isolate is
+// false, so window is shared across this file's tests, and a leaked
+// capture-phase error listener would clobber a pristine #loading overlay in
+// any later test that fires a window error event. Every watchdog test MUST
+// evaluate the script through this helper, never via a bare new Function().
+function evaluateWatchdog(source: string): void {
+  const registered: Parameters<typeof window.addEventListener>[] = [];
+  const originalAddEventListener = window.addEventListener.bind(window);
+  const addSpy = vi.spyOn(window, "addEventListener").mockImplementation((...args) => {
+    registered.push(args as Parameters<typeof window.addEventListener>);
+    originalAddEventListener(...(args as Parameters<typeof window.addEventListener>));
+  });
+  onTestFinished(() => {
+    for (const [type, listener, options] of registered) {
+      window.removeEventListener(type, listener, options);
+    }
+  });
+  try {
+    new Function(source)();
+  } finally {
+    addSpy.mockRestore();
+  }
+}
+
 describe("web-terminal-kiro bootstrap (app.ts)", () => {
   beforeEach(() => {
     // resetModules so each dynamic import re-runs app.ts top-level code. Mock
@@ -216,24 +241,10 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     overlay.appendChild(bar);
     document.body.appendChild(overlay);
 
-    // Evaluate the watchdog, then simulate the failure it exists for: a
-    // <script> element (e.g. /app.js) firing a load error on window.
-    // Capture the listener(s) the watchdog registers and remove them when the
-    // test finishes: isolate is false, so window is shared across this file's
-    // tests, and a leaked capture-phase error listener would clobber a pristine
-    // #loading overlay in any later test that fires a window error event.
-    const registered: Parameters<typeof window.addEventListener>[] = [];
-    const originalAddEventListener = window.addEventListener.bind(window);
-    vi.spyOn(window, "addEventListener").mockImplementation((...args) => {
-      registered.push(args as Parameters<typeof window.addEventListener>);
-      originalAddEventListener(...(args as Parameters<typeof window.addEventListener>));
-    });
-    onTestFinished(() => {
-      for (const [type, listener, options] of registered) {
-        window.removeEventListener(type, listener, options);
-      }
-    });
-    new Function(watchdogSource)();
+    // Evaluate the watchdog (via the leak-guarding helper), then simulate the
+    // failure it exists for: a <script> element (e.g. /app.js) firing a load
+    // error on window.
+    evaluateWatchdog(watchdogSource);
     const scriptEl = document.createElement("script");
     const errorEvent = new Event("error");
     Object.defineProperty(errorEvent, "target", { value: scriptEl });
@@ -253,7 +264,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter(
       (m) => !/src\s*=/i.test(m[1] ?? "") && !/importmap/i.test(m[1] ?? ""),
     );
-    new Function(scripts[0]?.[2] ?? "")();
+    evaluateWatchdog(scripts[0]?.[2] ?? "");
 
     const root = document.createElement("div");
     root.id = "terminal";
@@ -285,7 +296,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter(
       (m) => !/src\s*=/i.test(m[1] ?? "") && !/importmap/i.test(m[1] ?? ""),
     );
-    new Function(scripts[0]?.[2] ?? "")();
+    evaluateWatchdog(scripts[0]?.[2] ?? "");
 
     const root = document.createElement("div");
     root.id = "terminal";
@@ -322,7 +333,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter(
       (m) => !/src\s*=/i.test(m[1] ?? "") && !/importmap/i.test(m[1] ?? ""),
     );
-    new Function(scripts[0]?.[2] ?? "")();
+    evaluateWatchdog(scripts[0]?.[2] ?? "");
 
     const root = document.createElement("div");
     root.id = "terminal";
@@ -352,7 +363,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter(
       (m) => !/src\s*=/i.test(m[1] ?? "") && !/importmap/i.test(m[1] ?? ""),
     );
-    new Function(scripts[0]?.[2] ?? "")();
+    evaluateWatchdog(scripts[0]?.[2] ?? "");
 
     const root = document.createElement("div");
     root.id = "terminal";
@@ -403,7 +414,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     overlay.appendChild(bar);
     document.body.appendChild(overlay);
 
-    new Function(watchdogSource)();
+    evaluateWatchdog(watchdogSource);
     const errorEvent = new Event("error");
     Object.defineProperty(errorEvent, "error", { value: new Error("stray runtime error") });
     window.dispatchEvent(errorEvent);
