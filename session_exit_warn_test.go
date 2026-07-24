@@ -61,14 +61,14 @@ func TestSessionFastDeathWarn(t *testing.T) {
 
 	t.Run("spontaneous fast death while serving warns once", func(t *testing.T) {
 		records := runFastDeathSession(t, true)
-		if got := countLevel(records, slog.LevelWarn, warnMsg); got != 1 {
+		if got := records.CountLevel(slog.LevelWarn, warnMsg); got != 1 {
 			t.Errorf("log = %q, want exactly one fast-death Warn (got %d); a broken kiro-cli install must be operator-visible outside the PTY", records.Messages(), got)
 		}
 	})
 
 	t.Run("app-initiated shutdown stays quiet", func(t *testing.T) {
 		records := runFastDeathSession(t, false)
-		if got := countLevel(records, slog.LevelWarn, warnMsg); got != 0 {
+		if got := records.CountLevel(slog.LevelWarn, warnMsg); got != 0 {
 			t.Errorf("log = %q, want no fast-death Warn when readiness is cleared (got %d); a deploy teardown must not raise false broken-install alerts", records.Messages(), got)
 		}
 	})

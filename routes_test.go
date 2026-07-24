@@ -393,6 +393,23 @@ func TestBuildCSPPolicyFailsLoud(t *testing.T) {
 	}
 }
 
+// newWSUpgradeRequest builds the RFC 6455 handshake request the CSWSH test
+// pair shares; the two tests differ ONLY in Origin, so a single builder
+// guarantees the positive and negative cases exercise the same handshake.
+func newWSUpgradeRequest(t *testing.T, srvURL, id, origin string) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, srvURL+"/ws?session="+id, http.NoBody)
+	if err != nil {
+		t.Fatalf("new /ws upgrade request: %v", err)
+	}
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==") // gitleaks:allow (RFC 6455 example key)
+	req.Header.Set("Origin", origin)
+	return req
+}
+
 // TestWSRejectsCrossOrigin pins the WebSocket CSWSH guard. /ws is mounted via
 // mgr.WebSocketHandler() with no WithAcceptOptions, so the engine relies on
 // coder/websocket's secure-by-default same-origin check (nil AcceptOptions ->
@@ -416,12 +433,7 @@ func TestWSRejectsCrossOrigin(t *testing.T) {
 	srv := httptest.NewServer(buildHandler(mux, nil, csp, nil))
 	t.Cleanup(srv.Close)
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/ws?session="+id, http.NoBody)
-	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Upgrade", "websocket")
-	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==") // gitleaks:allow (RFC 6455 example key)
-	req.Header.Set("Origin", "http://evil.example")
+	req := newWSUpgradeRequest(t, srv.URL, id, "http://evil.example")
 	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("cross-origin /ws handshake: %v", err)
@@ -448,12 +460,7 @@ func TestWSAcceptsSameOrigin(t *testing.T) {
 	srv := httptest.NewServer(buildHandler(mux, nil, csp, nil))
 	t.Cleanup(srv.Close)
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/ws?session="+id, http.NoBody)
-	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Upgrade", "websocket")
-	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==") // gitleaks:allow (RFC 6455 example key)
-	req.Header.Set("Origin", srv.URL)                               // same origin as the test server
+	req := newWSUpgradeRequest(t, srv.URL, id, srv.URL) // same origin as the test server
 	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("same-origin /ws handshake: %v", err)

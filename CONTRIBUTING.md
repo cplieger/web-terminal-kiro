@@ -32,7 +32,10 @@ repo, not this one.
 
 Observability is slog-only: webhttp's `Logging` middleware (wired in
 `buildHandler` with `WithClientIP()`) emits a structured access-log line per
-request (method/path/status/duration_ms/request_id/client_ip). There is no
+request (method/path/status/duration_ms/request_id/client_ip), except on the
+long-lived streams (`/ws`, `/api/sessions/events`), the `/api/health` probe,
+and the session-token-bearing `/api/sessions/{id}` paths, which are
+deliberately skipped (the request id is still minted and echoed there). There is no
 Prometheus `/metrics` endpoint. Log timestamps are UTC (`slogx`'s `UTCTime`
 `ReplaceAttr` forces the record time to UTC), so the image needs no `TZ` and
 embeds no `time/tzdata`.

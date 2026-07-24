@@ -18,22 +18,6 @@ import (
 	"github.com/cplieger/webhttp"
 )
 
-// countLevel reports how many captured records at exactly the given level
-// carry sub in their message. capture.Recorder records EVERY level (its
-// Enabled always returns true), so a level-blind Contains would keep passing
-// if a production Warn/Error were silently demoted to Debug; counting at the
-// asserted level keeps these tests level-sensitive like the old
-// HandlerOptions{Level}-threshold handler was.
-func countLevel(records *capture.Recorder, level slog.Level, sub string) int {
-	n := 0
-	for _, r := range records.Records() {
-		if r.Level == level && strings.Contains(r.Message, sub) {
-			n++
-		}
-	}
-	return n
-}
-
 // fakeCLI writes an executable shell stub standing in for kiro-cli. Its whoami
 // exits with whoamiRC (mirroring the real binary: 0 logged in, 1 not); login
 // records its argv to a marker file and succeeds; chat records its argv
@@ -221,7 +205,7 @@ func TestStartTools_configDirMissing(t *testing.T) {
 		t.Error("syncing/state funcs are non-nil; registerRoutes keys the /api/tools mount and the health tools field on nil")
 	}
 	rt.close() // zero-runtime close must not panic
-	if got := countLevel(records, slog.LevelWarn, "tools engine disabled"); got != 1 {
+	if got := records.CountLevel(slog.LevelWarn, "tools engine disabled"); got != 1 {
 		t.Errorf("log = %q, want exactly one config-dir-missing Warn (got %d)", records.Messages(), got)
 	}
 }
@@ -260,7 +244,7 @@ func TestStartTools_engineStartFailure(t *testing.T) {
 		t.Errorf("state after failed engine start = %q, want %q", got, "degraded")
 	}
 	rt.close()
-	if got := countLevel(records, slog.LevelError, "tools engine failed to start"); got != 1 {
+	if got := records.CountLevel(slog.LevelError, "tools engine failed to start"); got != 1 {
 		t.Errorf("log = %q, want exactly one failed-to-start Error (got %d)", records.Messages(), got)
 	}
 
@@ -598,7 +582,7 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 			`{"entries":{"gopls":{"name":"gopls","source":"go:golang.org/x/tools/gopls","lsp":true}}}`)
 		records := capture.Default(t)
 		warnIfNoLSPEnabled(eng)
-		if got := countLevel(records, slog.LevelWarn, warnMsg); got != 0 {
+		if got := records.CountLevel(slog.LevelWarn, warnMsg); got != 0 {
 			t.Errorf("log = %q; an enabled Lsp-marked tool must silence the nudge (got %d Warns)", records.Messages(), got)
 		}
 	})
@@ -610,7 +594,7 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 			`{"entries":{"gopls":{"name":"gopls","source":"go:golang.org/x/tools/gopls","lsp":true}}}`)
 		records := capture.Default(t)
 		warnIfNoLSPEnabled(eng)
-		if got := countLevel(records, slog.LevelWarn, warnMsg); got != 1 {
+		if got := records.CountLevel(slog.LevelWarn, warnMsg); got != 1 {
 			t.Errorf("log = %q, want exactly one %q Warn (no enabled language server; got %d)", records.Messages(), warnMsg, got)
 		}
 	})
@@ -625,7 +609,7 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 		}
 		records := capture.Default(t)
 		warnIfNoLSPEnabled(eng)
-		if got := countLevel(records, slog.LevelWarn, warnMsg); got != 0 {
+		if got := records.CountLevel(slog.LevelWarn, warnMsg); got != 0 {
 			t.Errorf("log = %q; an inventory failure must not produce the LSP Warn (got %d)", records.Messages(), got)
 		}
 	})
@@ -668,7 +652,7 @@ func TestParseAllowedHosts(t *testing.T) {
 		t.Setenv("KWEB_ALLOWED_HOSTS", "http://webterm.example.com, localhost")
 		policy := parseAllowedHosts()
 
-		if got := countLevel(records, slog.LevelWarn, "dropping malformed"); got != 1 {
+		if got := records.CountLevel(slog.LevelWarn, "dropping malformed"); got != 1 {
 			t.Errorf("log = %q, want exactly one dropping-malformed Warn (got %d); a pasted URL silently 403-ing every request with no hint is the misconfiguration this Warn exists for", records.Messages(), got)
 		}
 		if !policy.Active() {
@@ -707,10 +691,10 @@ func TestParseAllowedHosts_allInvalidFailsClosed(t *testing.T) {
 
 	policy := parseAllowedHosts()
 
-	if got := countLevel(records, slog.LevelWarn, "dropping malformed"); got != 1 {
+	if got := records.CountLevel(slog.LevelWarn, "dropping malformed"); got != 1 {
 		t.Errorf("log = %q, want exactly one dropping-malformed Warn (got %d)", records.Messages(), got)
 	}
-	if got := countLevel(records, slog.LevelWarn, "no usable entries"); got != 1 {
+	if got := records.CountLevel(slog.LevelWarn, "no usable entries"); got != 1 {
 		t.Errorf("log = %q, want exactly one no-usable-entries deny-all Warn (got %d)", records.Messages(), got)
 	}
 	invalidCount := int64(-1)
@@ -819,7 +803,7 @@ func TestAwaitBootConvergence_waitFailureLiftsGateDegraded(t *testing.T) {
 	if len(verdicts) != 1 || verdicts[0] != "degraded" {
 		t.Fatalf("verdicts = %v, want exactly one \"degraded\" (the syncing gate must lift even when the job outcome is unknowable)", verdicts)
 	}
-	if got := countLevel(records, slog.LevelWarn, "boot reconcile wait failed"); got != 1 {
+	if got := records.CountLevel(slog.LevelWarn, "boot reconcile wait failed"); got != 1 {
 		t.Errorf("log = %q, want exactly one wait-failed Warn (got %d)", records.Messages(), got)
 	}
 }

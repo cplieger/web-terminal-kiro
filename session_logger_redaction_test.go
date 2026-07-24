@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/slogx/capture"
@@ -61,5 +63,47 @@ func TestSessionLoggerRedactsCommand(t *testing.T) {
 	}
 	if logContains(records, "/bin/sh") {
 		t.Error("captured log carries the session argv; the full command slice must stay out of the log stream")
+	}
+}
+
+// TestCommandRedactingHandler_redactsPreBoundCommandAttr pins the WithAttrs
+// redaction leg: a "command" attr pre-bound via Logger.With never flows
+// through Handle's record clone, so WithAttrs must redact it eagerly before
+// delegating, and non-command attrs must survive untouched.
+func TestCommandRedactingHandler_redactsPreBoundCommandAttr(t *testing.T) {
+	const secret = "with-attrs-hunter2-sekret"
+	var buf bytes.Buffer
+	logger := slog.New(commandRedactingHandler{slog.NewTextHandler(&buf, nil)}).
+		With("command", secret, "session", "abc12345")
+	logger.Info("process started")
+
+	out := buf.String()
+	if !strings.Contains(out, commandRedacted) {
+		t.Errorf("log = %q, want the %q placeholder for a pre-bound command attr", out, commandRedacted)
+	}
+	if strings.Contains(out, secret) {
+		t.Errorf("log = %q; a command attr pre-bound via Logger.With must be redacted before it reaches the inner handler", out)
+	}
+	if !strings.Contains(out, "session=abc12345") {
+		t.Errorf("log = %q, want the non-command attr to survive untouched", out)
+	}
+}
+
+// TestCommandRedactingHandler_redactionSurvivesWithGroup pins the WithGroup
+// rewrap: a handler derived via WithGroup must keep redacting subsequent
+// records' "command" attrs, or a grouped engine logger would leak the argv.
+func TestCommandRedactingHandler_redactionSurvivesWithGroup(t *testing.T) {
+	const secret = "grouped-hunter2-sekret"
+	var buf bytes.Buffer
+	logger := slog.New(commandRedactingHandler{slog.NewTextHandler(&buf, nil)}).
+		WithGroup("engine")
+	logger.Info("process started", "command", secret)
+
+	out := buf.String()
+	if !strings.Contains(out, commandRedacted) {
+		t.Errorf("log = %q, want the %q placeholder for a command attr logged under a group", out, commandRedacted)
+	}
+	if strings.Contains(out, secret) {
+		t.Errorf("log = %q; redaction must survive a WithGroup-derived handler or a grouped engine logger leaks the argv", out)
 	}
 }

@@ -176,6 +176,16 @@
           // overlay into a focus-stealing alertdialog. app.js's own showFatal
           // replaces the bar before it throws.
           if (!overlay || !overlay.querySelector(".bar") || overlay.classList.contains("fade")) return;
+          // Stand down once createTerminal has built the UI inside #terminal:
+          // boot progressed past module load/eval, so a later uncaught error
+          // is a runtime error, not a bootstrap failure. Without this, a
+          // stray error between boot and the first frame converts a live
+          // terminal's overlay into this dialog and inerts #terminal; the
+          // kernel's first-frame dismiss then fades and REMOVES the
+          // overlay-turned-dialog while nothing un-inerts #terminal -- a
+          // frozen, message-less page.
+          const bootedRoot = document.getElementById("terminal");
+          if (bootedRoot && bootedRoot.firstElementChild) return;
           if (!(e.target instanceof HTMLScriptElement) && !e.error) return;
           // alertdialog, not alert: the overlay carries an interactive Reload
           // button and moves focus into it, the alertdialog interaction model

@@ -509,7 +509,8 @@ func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 //     line; the request id is still minted, echoed, and threaded on those paths.
 //     Also skips /api/health so the every-30s Docker HEALTHCHECK probe emits no
 //     routine access line (the same probe-noise skip web-terminal-server applies
-//     to its /healthz).
+//     to its /healthz), and the whole /api/sessions/ subtree via WithSkipFunc
+//     below, whose paths embed the full session capability token.
 //   - Recoverer — turns a downstream panic into a logged 500 (inside the logger
 //     so the access line records the 500, not the recorder's default 200).
 //   - SecurityHeaders — the fleet baseline (nosniff, X-Frame-Options: DENY,

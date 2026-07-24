@@ -243,10 +243,11 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 	mux.HandleFunc("/api/sessions/events", ok)
 	mux.HandleFunc("/api/sessions/", ok) // subtree: catches the id-bearing REST paths (PUT {id}/title, DELETE {id})
 	mux.HandleFunc("/api/health", ok)
+	mux.HandleFunc("/api/sessions", ok) // exact path: create/list access lines are documented as KEPT
 	mux.HandleFunc("/probe", ok)
 
 	h := buildHandler(mux, nil, "default-src 'self'", nil)
-	for _, path := range []string{"/ws", "/api/sessions/events", "/api/sessions/live-token-1234/title", "/api/health", "/probe"} {
+	for _, path := range []string{"/ws", "/api/sessions/events", "/api/sessions/live-token-1234/title", "/api/health", "/api/sessions", "/probe"} {
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, http.NoBody))
 	}
 
@@ -258,5 +259,8 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 	}
 	if !strings.Contains(log, "path=/probe") {
 		t.Errorf("access log = %q, want an access line for the normal request path=/probe (the skip list must not swallow everything)", log)
+	}
+	if !strings.Contains(log, "path=/api/sessions ") {
+		t.Errorf("access log = %q, want a kept access line for the exact path /api/sessions (main.go documents create/list lines as kept; a skip predicate widened to the bare /api/sessions prefix would silently drop them)", log)
 	}
 }

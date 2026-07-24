@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 // app.ts imports createTerminal from the UI package and presetAgentTabbed from
 // its /presets subpath; mock both. presetAgentTabbed returns a sentinel the
@@ -156,6 +156,11 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
 
     expect(loading.classList.contains("fade")).toBe(false);
     expectFatalOverlayShape(loading);
+    // showFatal backs its aria-modal claim with a real inert on the terminal
+    // root; asserted here (the only app.ts failure path where #terminal
+    // exists) so a regression cannot hide behind the watchdog test's own
+    // inert assertion below.
+    expect(root.hasAttribute("inert")).toBe(true);
     const description = loading.querySelector("#bootstrap-failure-message");
     expect(description?.textContent).toContain("Failed to start the terminal");
   });
@@ -213,6 +218,21 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
 
     // Evaluate the watchdog, then simulate the failure it exists for: a
     // <script> element (e.g. /app.js) firing a load error on window.
+    // Capture the listener(s) the watchdog registers and remove them when the
+    // test finishes: isolate is false, so window is shared across this file's
+    // tests, and a leaked capture-phase error listener would clobber a pristine
+    // #loading overlay in any later test that fires a window error event.
+    const registered: Parameters<typeof window.addEventListener>[] = [];
+    const originalAddEventListener = window.addEventListener.bind(window);
+    vi.spyOn(window, "addEventListener").mockImplementation((...args) => {
+      registered.push(args as Parameters<typeof window.addEventListener>);
+      originalAddEventListener(...(args as Parameters<typeof window.addEventListener>));
+    });
+    onTestFinished(() => {
+      for (const [type, listener, options] of registered) {
+        window.removeEventListener(type, listener, options);
+      }
+    });
     new Function(watchdogSource)();
     const scriptEl = document.createElement("script");
     const errorEvent = new Event("error");
@@ -225,5 +245,172 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     // aria-modal made true: the watchdog inerts the terminal root, exactly
     // like showFatal.
     expect(root.hasAttribute("inert")).toBe(true);
+  });
+
+  it("watchdog stands down when the overlay is already fading out (booted terminal)", () => {
+    const sourceRoot = process.env["INIT_CWD"] ?? process.cwd();
+    const html = readFileSync(resolve(sourceRoot, "../static/index.html"), "utf8");
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter(
+      (m) => !/src\s*=/i.test(m[1] ?? "") && !/importmap/i.test(m[1] ?? ""),
+    );
+    new Function(scripts[0]?.[2] ?? "")();
+
+    const root = document.createElement("div");
+    root.id = "terminal";
+    document.body.appendChild(root);
+    const overlay = document.createElement("div");
+    overlay.id = "loading";
+    overlay.setAttribute("role", "status");
+    overlay.setAttribute("aria-label", "Loading");
+    overlay.classList.add("fade"); // first frame rendered; fade-out under way
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    overlay.appendChild(bar);
+    document.body.appendChild(overlay);
+
+    const scriptEl = document.createElement("script");
+    const errorEvent = new Event("error");
+    Object.defineProperty(errorEvent, "target", { value: scriptEl });
+    window.dispatchEvent(errorEvent);
+
+    expect(overlay.getAttribute("role")).toBe("status");
+    expect(overlay.querySelector(".bar")).not.toBeNull();
+    expect(overlay.querySelector("button")).toBeNull();
+    expect(root.hasAttribute("inert")).toBe(false);
+  });
+
+  it("watchdog does not clobber an overlay showFatal already converted", () => {
+    const sourceRoot = process.env["INIT_CWD"] ?? process.cwd();
+    const html = readFileSync(resolve(sourceRoot, "../static/index.html"), "utf8");
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter(
+      (m) => !/src\s*=/i.test(m[1] ?? "") && !/importmap/i.test(m[1] ?? ""),
+    );
+    new Function(scripts[0]?.[2] ?? "")();
+
+    const root = document.createElement("div");
+    root.id = "terminal";
+    document.body.appendChild(root);
+    // Recreate the post-showFatal overlay: bar replaced by the dialog content.
+    const overlay = document.createElement("div");
+    overlay.id = "loading";
+    overlay.setAttribute("role", "alertdialog");
+    overlay.setAttribute("aria-modal", "true");
+    const description = document.createElement("p");
+    description.id = "bootstrap-failure-message";
+    description.textContent = "Web Terminal for Kiro failed to start.";
+    const reload = document.createElement("button");
+    reload.type = "button";
+    reload.textContent = "Reload";
+    overlay.replaceChildren(description, reload);
+    document.body.appendChild(overlay);
+
+    const scriptEl = document.createElement("script");
+    const errorEvent = new Event("error");
+    Object.defineProperty(errorEvent, "target", { value: scriptEl });
+    window.dispatchEvent(errorEvent);
+
+    // showFatal's branch-specific message survives; the watchdog's generic
+    // failed-to-load text never replaces it.
+    expect(overlay.querySelector("#bootstrap-failure-message")?.textContent).toBe(
+      "Web Terminal for Kiro failed to start.",
+    );
+  });
+
+  it("watchdog ignores a non-script resource error (e.g. an image failing to load)", () => {
+    const sourceRoot = process.env["INIT_CWD"] ?? process.cwd();
+    const html = readFileSync(resolve(sourceRoot, "../static/index.html"), "utf8");
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter(
+      (m) => !/src\s*=/i.test(m[1] ?? "") && !/importmap/i.test(m[1] ?? ""),
+    );
+    new Function(scripts[0]?.[2] ?? "")();
+
+    const root = document.createElement("div");
+    root.id = "terminal";
+    document.body.appendChild(root);
+    const overlay = document.createElement("div");
+    overlay.id = "loading";
+    overlay.setAttribute("role", "status");
+    overlay.setAttribute("aria-label", "Loading");
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    overlay.appendChild(bar);
+    document.body.appendChild(overlay);
+
+    const imgEl = document.createElement("img");
+    const errorEvent = new Event("error"); // plain Event: no .error property
+    Object.defineProperty(errorEvent, "target", { value: imgEl });
+    window.dispatchEvent(errorEvent);
+
+    expect(overlay.getAttribute("role")).toBe("status");
+    expect(overlay.querySelector(".bar")).not.toBeNull();
+    expect(overlay.querySelector("button")).toBeNull();
+  });
+
+  it("watchdog fires on an uncaught runtime error (module evaluation failure)", () => {
+    const sourceRoot = process.env["INIT_CWD"] ?? process.cwd();
+    const html = readFileSync(resolve(sourceRoot, "../static/index.html"), "utf8");
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter(
+      (m) => !/src\s*=/i.test(m[1] ?? "") && !/importmap/i.test(m[1] ?? ""),
+    );
+    new Function(scripts[0]?.[2] ?? "")();
+
+    const root = document.createElement("div");
+    root.id = "terminal";
+    document.body.appendChild(root);
+    const overlay = document.createElement("div");
+    overlay.id = "loading";
+    overlay.setAttribute("role", "status");
+    overlay.setAttribute("aria-label", "Loading");
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    overlay.appendChild(bar);
+    document.body.appendChild(overlay);
+
+    // A runtime error surfaces as an error event on window with .error set
+    // and a non-element target; recreate that shape.
+    const errorEvent = new Event("error");
+    Object.defineProperty(errorEvent, "error", { value: new Error("evaluate boom") });
+    Object.defineProperty(errorEvent, "target", { value: window });
+    window.dispatchEvent(errorEvent);
+
+    expectFatalOverlayShape(overlay);
+    expect(overlay.querySelector("#bootstrap-failure-message")?.textContent).toContain(
+      "Web Terminal for Kiro failed to load",
+    );
+    expect(root.hasAttribute("inert")).toBe(true);
+  });
+
+  it("watchdog stands down after createTerminal has built UI inside #terminal", () => {
+    const sourceRoot = process.env["INIT_CWD"] ?? process.cwd();
+    const html = readFileSync(resolve(sourceRoot, "../static/index.html"), "utf8");
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter(
+      (m) => !/src\s*=/i.test(m[1] ?? "") && !/importmap/i.test(m[1] ?? ""),
+    );
+    const watchdogSource = scripts[0]?.[2] ?? "";
+
+    // Booted page: createTerminal built its UI inside #terminal; the overlay
+    // is still pristine (first frame not yet rendered, no fade).
+    const root = document.createElement("div");
+    root.id = "terminal";
+    root.appendChild(document.createElement("div")); // the built UI
+    document.body.appendChild(root);
+    const overlay = document.createElement("div");
+    overlay.id = "loading";
+    overlay.setAttribute("role", "status");
+    overlay.setAttribute("aria-label", "Loading");
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    overlay.appendChild(bar);
+    document.body.appendChild(overlay);
+
+    new Function(watchdogSource)();
+    const errorEvent = new Event("error");
+    Object.defineProperty(errorEvent, "error", { value: new Error("stray runtime error") });
+    window.dispatchEvent(errorEvent);
+
+    // The watchdog must NOT hijack a booted terminal's overlay.
+    expect(overlay.getAttribute("role")).toBe("status");
+    expect(overlay.querySelector(".bar")).not.toBeNull();
+    expect(root.hasAttribute("inert")).toBe(false);
   });
 });
