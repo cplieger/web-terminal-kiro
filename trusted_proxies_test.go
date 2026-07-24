@@ -38,7 +38,7 @@ func mustCIDR(t *testing.T, s string) *net.IPNet {
 // contracts: an unset/blank var yields nil (so ClientIP ignores X-Forwarded-For
 // and logs the spoof-proof socket peer — the directly-exposed default), a valid
 // CIDR + bare-IP mix parses into containment-correct nets, and a malformed entry
-// is warned (named) and skipped while the valid subset is kept — startup is
+// is warned count-only and skipped while the valid subset is kept — startup is
 // never aborted and never falls open. The malformed case mutates the
 // process-global default logger, so the subtests run serially (no t.Parallel).
 func TestParseTrustedProxies(t *testing.T) {
