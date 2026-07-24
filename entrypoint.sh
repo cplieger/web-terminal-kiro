@@ -384,6 +384,7 @@ fi
 # added-line bg to #00FF00 through the truecolor path — unreadable.
 # Pinning both baseTheme and diffPreset to "dark" avoids this.
 theme_file="$HOME/.kiro/settings/kiro_cli_theme.json"
+theme_tmp=''
 if ! mkdir -p "$(dirname "$theme_file")" \
   || ! theme_tmp=$(mktemp "${theme_file}.XXXXXX") \
   || ! printf '{"baseTheme":"dark","diffPreset":"dark"}\n' >"$theme_tmp" \

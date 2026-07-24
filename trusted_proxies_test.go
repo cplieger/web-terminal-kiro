@@ -198,18 +198,19 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 	mux.HandleFunc("/ws", ok)
 	mux.HandleFunc("/api/sessions/events", ok)
+	mux.HandleFunc("/api/sessions/", ok) // subtree: catches the id-bearing REST paths (PUT {id}/title, DELETE {id})
 	mux.HandleFunc("/api/health", ok)
 	mux.HandleFunc("/probe", ok)
 
 	h := buildHandler(mux, nil, "default-src 'self'", nil)
-	for _, path := range []string{"/ws", "/api/sessions/events", "/api/health", "/probe"} {
+	for _, path := range []string{"/ws", "/api/sessions/events", "/api/sessions/live-token-1234/title", "/api/health", "/probe"} {
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, http.NoBody))
 	}
 
 	log := buf.String()
-	for _, skipped := range []string{"path=/ws", "path=/api/sessions/events", "path=/api/health"} {
+	for _, skipped := range []string{"path=/ws", "path=/api/sessions/events", "path=/api/sessions/live-token-1234/title", "path=/api/health"} {
 		if strings.Contains(log, skipped) {
-			t.Errorf("access log = %q, want no line for the long-lived stream %q (WithSkipPaths must keep per-open lines out)", log, skipped)
+			t.Errorf("access log = %q, want no access line for skipped path %q (the skip wiring must keep stream, probe, and token-bearing session lines out)", log, skipped)
 		}
 	}
 	if !strings.Contains(log, "path=/probe") {

@@ -173,20 +173,6 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
-  it("keeps the index.html bootstrap watchdog in sync with showFatal's alertdialog shape", () => {
-    // Resolve from the vitest root (static-src/): under happy-dom
-    // import.meta.url is not a file: URL, so a URL-relative read cannot work.
-    const html = readFileSync(resolve(process.cwd(), "../static/index.html"), "utf8");
-    // The failure-dialog vocabulary duplicated (by necessity) between showFatal
-    // (app.ts) and the inline pre-module watchdog (static/index.html).
-    expect(html).toContain('"alertdialog"');
-    expect(html).toContain('"aria-modal", "true"');
-    expect(html).toContain('"Web Terminal for Kiro startup failure"');
-    expect(html).toContain('description.id = "bootstrap-failure-message"');
-    expect(html).toContain('reload.textContent = "Reload"');
-    expect(html).toContain("reload.focus()");
-  });
-
   it("builds the same alertdialog shape when the real index.html watchdog fires", () => {
     // Execute the REAL inline bootstrap watchdog from static/index.html (the
     // pre-module, CSP-hashed script that catches /app.js load failures before
