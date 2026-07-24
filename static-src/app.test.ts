@@ -182,7 +182,12 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     // code) are pinned to one contract from a single source. Mirrors how
     // routes_test.go independently re-extracts the same inline scripts for
     // the CSP hash check.
-    const html = readFileSync(resolve(process.cwd(), "../static/index.html"), "utf8");
+    // Resolve from INIT_CWD (set by the npm/npx launcher to the real
+    // static-src directory) so the fixture is found even when the runner
+    // changes process.cwd() — Stryker's dry run executes inside its
+    // .stryker-tmp sandbox, where a cwd-relative read ENOENTs.
+    const sourceRoot = process.env["INIT_CWD"] ?? process.cwd();
+    const html = readFileSync(resolve(sourceRoot, "../static/index.html"), "utf8");
     // The watchdog is the only inline <script> that is neither the importmap
     // nor the src-bearing module loader.
     const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter(

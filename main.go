@@ -47,8 +47,9 @@ var staticFS embed.FS
 // whitespace, skips blanks, treats a bare IP as a single host (/32 or /128), and
 // reports invalid entries separately.
 //
-// It is intentionally LENIENT: a malformed entry is logged (named) at Warn and
-// skipped, and the valid subset is used, rather than aborting startup — one typo
+// It is intentionally LENIENT: a malformed entry is logged (count-only; the
+// raw value could carry a misplaced credential) at Warn and skipped, and the
+// valid subset is used, rather than aborting startup — one typo
 // in an operator's proxy list must not disable proxy awareness entirely, and it
 // must never fall open. An unset or empty var yields nil, i.e. "trust nothing",
 // so ClientIP ignores X-Forwarded-For and logs the spoof-proof socket peer — the
@@ -62,8 +63,11 @@ func parseTrustedProxies() []*net.IPNet {
 	}
 	nets, invalid := webhttp.ParseCIDRs(strings.Split(v, ","))
 	if len(invalid) > 0 {
+		// Count-only, like the KWEB_LOG_LEVEL and KIRO_CLI_CHAT_ARGS
+		// treatment: a compose expansion mistake could put a credential in an
+		// entry, so the rejected raw values never reach the log.
 		slog.Warn("ignoring malformed "+key+" entries; using the valid proxy set",
-			"invalid", invalid,
+			"invalid_count", len(invalid),
 			"hint", "each entry must be a CIDR (e.g. 10.0.0.0/8) or a bare IP (e.g. 192.168.1.5)")
 	}
 	return nets
@@ -79,7 +83,7 @@ func parseTrustedProxies() []*net.IPNet {
 // loopback peer+Host carve-out that keeps the baked Docker healthcheck and
 // in-container tools clients working under any allowlist); this parser owns
 // the app policy: the carve-out is enabled, the 403 names KWEB_ALLOWED_HOSTS,
-// and malformed entries are logged (named, like parseTrustedProxies) and
+// and malformed entries are logged (count-only, like parseTrustedProxies) and
 // dropped per ParseHostList's drop-and-report contract.
 //
 // An unset or all-blank var yields an INACTIVE policy — "any Host accepted",
@@ -96,13 +100,15 @@ func parseAllowedHosts() *webhttp.HostPolicy {
 		webhttp.WithHostAllowlistError("",
 			"host not allowed; add it to KWEB_ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
+		// Count-only, like parseTrustedProxies: the rejected raw values could
+		// carry a misplaced credential, so only their count is logged.
 		slog.Warn("dropping malformed "+key+" entries; they cannot match any browser-sent Host",
-			"invalid", invalid,
+			"invalid_count", len(invalid),
 			"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.168.1.5,webterm.example.com; a lone port like :9848 belongs in KWEB_ADDR")
 	}
 	if policy.Active() && policy.Size() == 0 {
 		slog.Warn(key+" has no usable entries; rejecting every non-loopback request (fail closed)",
-			"hint", "fix the entries listed in the preceding warning to restore browser access")
+			"hint", "fix the malformed entries in "+key+" to restore browser access")
 	}
 	return policy
 }

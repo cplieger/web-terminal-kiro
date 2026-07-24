@@ -79,10 +79,15 @@ func TestParseTrustedProxies(t *testing.T) {
 		}
 	})
 
-	t.Run("malformed entries are warned and skipped, valid subset kept", func(t *testing.T) {
+	t.Run("malformed entries are warned count-only and skipped, valid subset kept", func(t *testing.T) {
 		records := capture.Default(t)
 
-		t.Setenv("TRUSTED_PROXIES", "10.0.0.0/8, not-an-ip, 999.999.999.999")
+		// The secret-looking malformed entry models the credential-disclosure
+		// risk: a compose interpolation mistake can place a token in the var,
+		// and the warning must never copy the rejected raw value into the
+		// aggregated log stream (CWE-532).
+		const secretEntry = "hunter2-sekret-token"
+		t.Setenv("TRUSTED_PROXIES", "10.0.0.0/8, not-an-ip, "+secretEntry)
 		nets := parseTrustedProxies()
 
 		// Startup is not aborted; only the one valid CIDR is kept.
@@ -92,32 +97,70 @@ func TestParseTrustedProxies(t *testing.T) {
 		if !trustedContains(nets, "10.1.2.3") {
 			t.Error("kept net does not contain 10.1.2.3; want the 10.0.0.0/8 entry retained")
 		}
-		// The Warn was emitted at LevelWarn, naming each malformed entry in
-		// its `invalid` attr (a structured level+attr assertion, not a
-		// rendered-logfmt substring match).
+		// The Warn was emitted at LevelWarn carrying only the malformed-entry
+		// COUNT (a structured level+attr assertion, not a rendered-logfmt
+		// substring match); the raw values stay out of the log entirely.
 		sawWarn := false
-		var invalid string
+		invalidCount := int64(-1)
 		for _, r := range records.Records() {
 			if r.Level != slog.LevelWarn || !strings.Contains(r.Message, "ignoring malformed") {
 				continue
 			}
 			sawWarn = true
 			r.Attrs(func(a slog.Attr) bool {
-				if a.Key == "invalid" {
-					invalid = a.Value.String()
+				if a.Key == "invalid_count" {
+					invalidCount = a.Value.Int64()
 				}
 				return true
 			})
 		}
 		if !sawWarn {
-			t.Fatalf("log = %q; want the Warn naming the malformed entries", records.Messages())
+			t.Fatalf("log = %q; want the Warn about malformed entries", records.Messages())
 		}
-		for _, bad := range []string{"not-an-ip", "999.999.999.999"} {
-			if !strings.Contains(invalid, bad) {
-				t.Errorf("warn attr invalid=%q does not name malformed entry %q", invalid, bad)
+		if invalidCount != 2 {
+			t.Errorf("warn attr invalid_count = %d, want 2 (both malformed entries counted)", invalidCount)
+		}
+		for _, raw := range []string{secretEntry, "not-an-ip"} {
+			if logContains(records, raw) {
+				t.Errorf("log carries rejected raw entry %q; malformed values may hold credentials and must never be logged", raw)
 			}
 		}
 	})
+}
+
+// logContains reports whether s appears in any captured record's message or
+// attribute keys/values (groups resolved recursively). Used to prove rejected
+// raw config values and command lines never reach the log stream.
+func logContains(records *capture.Recorder, s string) bool {
+	var inValue func(v slog.Value) bool
+	inValue = func(v slog.Value) bool {
+		if v.Kind() == slog.KindGroup {
+			for _, a := range v.Group() {
+				if strings.Contains(a.Key, s) || inValue(a.Value.Resolve()) {
+					return true
+				}
+			}
+			return false
+		}
+		return strings.Contains(v.String(), s)
+	}
+	for _, r := range records.Records() {
+		if strings.Contains(r.Message, s) {
+			return true
+		}
+		found := false
+		r.Attrs(func(a slog.Attr) bool {
+			if strings.Contains(a.Key, s) || inValue(a.Value.Resolve()) {
+				found = true
+				return false
+			}
+			return true
+		})
+		if found {
+			return true
+		}
+	}
+	return false
 }
 
 // TestBuildHandlerClientIPThreading proves the trusted-proxy set is threaded

@@ -690,17 +690,20 @@ func TestParseAllowedHosts(t *testing.T) {
 }
 
 // TestParseAllowedHosts_allInvalidFailsClosed pins the all-invalid branch
-// TestParseAllowedHosts's other cases never reach: a var whose only entry is a
-// lone ":9848" (a pasted KWEB_ADDR value) canonicalizes to an empty host no
-// browser-sent Host can ever match, so the parser must Warn twice by name —
-// the dropped entry, then the resulting deny-all state — and yield an ACTIVE
-// EMPTY policy: every non-loopback request is rejected (fail closed, never
-// silently unprotected) while the loopback carve-out keeps the container's own
-// healthcheck working.
+// TestParseAllowedHosts's other cases never reach: a var whose entries are a
+// lone ":9848" (a pasted KWEB_ADDR value) and a URL-shaped credential paste
+// canonicalizes to an empty host set no browser-sent Host can ever match, so
+// the parser must Warn twice — the dropped-entry count, then the resulting
+// deny-all state — and yield an ACTIVE EMPTY policy: every non-loopback
+// request is rejected (fail closed, never silently unprotected) while the
+// loopback carve-out keeps the container's own healthcheck working. The
+// warnings carry only the count: a rejected raw entry could hold a credential
+// (the secret-looking case below) and must never reach the log (CWE-532).
 // Serial: capture.Default mutates the process-global default logger.
 func TestParseAllowedHosts_allInvalidFailsClosed(t *testing.T) {
 	records := capture.Default(t)
-	t.Setenv("KWEB_ALLOWED_HOSTS", ":9848")
+	const secretEntry = "hunter2-sekret-token"
+	t.Setenv("KWEB_ALLOWED_HOSTS", ":9848,https://user:"+secretEntry+"@proxy.internal")
 
 	policy := parseAllowedHosts()
 
@@ -709,6 +712,24 @@ func TestParseAllowedHosts_allInvalidFailsClosed(t *testing.T) {
 	}
 	if got := countLevel(records, slog.LevelWarn, "no usable entries"); got != 1 {
 		t.Errorf("log = %q, want exactly one no-usable-entries deny-all Warn (got %d)", records.Messages(), got)
+	}
+	invalidCount := int64(-1)
+	for _, r := range records.Records() {
+		if r.Level != slog.LevelWarn || !strings.Contains(r.Message, "dropping malformed") {
+			continue
+		}
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == "invalid_count" {
+				invalidCount = a.Value.Int64()
+			}
+			return true
+		})
+	}
+	if invalidCount != 2 {
+		t.Errorf("warn attr invalid_count = %d, want 2 (both malformed entries counted)", invalidCount)
+	}
+	if logContains(records, secretEntry) {
+		t.Errorf("log carries rejected raw entry containing %q; malformed KWEB_ALLOWED_HOSTS values may hold credentials and must never be logged", secretEntry)
 	}
 	if !policy.Active() {
 		t.Fatal("policy is inactive despite a non-blank configuration; an all-invalid list must fail closed, not fall open")
