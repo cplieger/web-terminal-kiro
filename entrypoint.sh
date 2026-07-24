@@ -216,6 +216,7 @@ install_kiro_cli() (
   }
   mv -f "$HOME/.local/bin/kiro-cli-chat" "$TOOLS/bin/kiro-cli-chat" 2>/dev/null || true
   mv -f "$HOME/.local/bin/kiro-cli-term" "$TOOLS/bin/kiro-cli-term" 2>/dev/null || true
+  printf 'level=info msg="kiro-cli installed and promoted" version=%s path="%s" component=entrypoint\n' "$KIRO_CLI_VERSION" "$BIN" >&2
 )
 
 # Reinstall when either the binary is missing or the on-disk version
@@ -323,6 +324,7 @@ fi
 # probe with no restart loop. If ever run under Swarm/k8s, wire /api/health to a
 # readinessProbe, not a livenessProbe, to keep it loop-free.
 if [ -x "$BIN" ] && [ "$(kiro_cli_version "$BIN")" = "$KIRO_CLI_VERSION" ]; then
+  printf 'level=info msg="kiro-cli verified at pinned version; publishing readiness marker" version=%s component=entrypoint\n' "$KIRO_CLI_VERSION" >&2
   if ! touch "$KIRO_CLI_READY_MARKER"; then
     printf 'level=warn msg="failed to write kiro-cli readiness marker; /api/health will report kiro-cli unavailable" marker="%s" component=entrypoint\n' "$KIRO_CLI_READY_MARKER" >&2
   fi
@@ -349,7 +351,11 @@ if [ -n "${APT_PACKAGES:-}" ]; then
   # keeps such a token literal so the validator below warn-skips it.
   set -f
   for pkg in $APT_PACKAGES; do
-    if [[ "$pkg" =~ ^[a-z0-9][a-z0-9+.-]*$ ]]; then
+    # Also reject a trailing '-': apt-get treats 'pkg-' as a REMOVE request
+    # (and a nonexistent 'name.-' as a regex remove), so a grammar-valid
+    # token ending in '-' smuggles a removal through this install-only
+    # path. No Debian package name ends in '-' (trailing '+' stays: g++).
+    if [[ "$pkg" =~ ^[a-z0-9][a-z0-9+.-]*$ && "$pkg" != *- ]]; then
       apt_pkgs+=("$pkg")
     else
       printf 'level=warn msg="skipping invalid APT_PACKAGES token" token="%s" component=entrypoint\n' "$pkg" >&2
@@ -379,7 +385,10 @@ fi
 # Pinning both baseTheme and diffPreset to "dark" avoids this.
 theme_file="$HOME/.kiro/settings/kiro_cli_theme.json"
 if ! mkdir -p "$(dirname "$theme_file")" \
-  || ! printf '{"baseTheme":"dark","diffPreset":"dark"}\n' >"$theme_file"; then
+  || ! theme_tmp=$(mktemp "${theme_file}.XXXXXX") \
+  || ! printf '{"baseTheme":"dark","diffPreset":"dark"}\n' >"$theme_tmp" \
+  || ! mv "$theme_tmp" "$theme_file"; then
+  [ -z "${theme_tmp:-}" ] || rm -f "$theme_tmp"
   printf 'level=warn msg="failed to write kiro-cli theme file; diff colors may be unreadable" file="%s" component=entrypoint\n' "$theme_file" >&2
 fi
 

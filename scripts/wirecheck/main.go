@@ -8,8 +8,9 @@
 //
 // Exit 0: the pairing is declared-compatible. Exit 1: a declared floor is
 // violated — the pairing would refuse at first connect with close code 4002,
-// so fail the build instead. A MIS-declared floor is out of scope here; that
-// is the engine conformance suite's contract.
+// so fail the build instead. Exit 2: usage error (a missing, malformed, or
+// non-positive -client-rev / -client-min-server flag). A MIS-declared floor
+// is out of scope here; that is the engine conformance suite's contract.
 package main
 
 import (

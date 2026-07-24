@@ -60,7 +60,9 @@ rm -rf "$ENGINE_PKG/src" "$UI_PKG/src"
 mkdir -p "$ENGINE_PKG/src" "$UI_PKG/src"
 cp "$ENGINE_DIR/web/package.json" "$ENGINE_PKG/package.json"
 for f in "$ENGINE_DIR"/web/src/*.ts; do
-  case "$f" in *.test.ts | *fuzz* | *fc-strict-setup*) continue ;; esac
+  # Match the basename, not the full path: ENGINE_DIR is user-overridable
+  # and a checkout path containing 'fuzz' must not skip every source file.
+  case "${f##*/}" in *.test.ts | *fuzz* | *fc-strict-setup*) continue ;; esac
   cp "$f" "$ENGINE_PKG/src/"
 done
 cp "$UI_DIR/package.json" "$UI_PKG/package.json"

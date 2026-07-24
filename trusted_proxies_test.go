@@ -198,15 +198,16 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 	mux.HandleFunc("/ws", ok)
 	mux.HandleFunc("/api/sessions/events", ok)
+	mux.HandleFunc("/api/health", ok)
 	mux.HandleFunc("/probe", ok)
 
 	h := buildHandler(mux, nil, "default-src 'self'", nil)
-	for _, path := range []string{"/ws", "/api/sessions/events", "/probe"} {
+	for _, path := range []string{"/ws", "/api/sessions/events", "/api/health", "/probe"} {
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, http.NoBody))
 	}
 
 	log := buf.String()
-	for _, skipped := range []string{"path=/ws", "path=/api/sessions/events"} {
+	for _, skipped := range []string{"path=/ws", "path=/api/sessions/events", "path=/api/health"} {
 		if strings.Contains(log, skipped) {
 			t.Errorf("access log = %q, want no line for the long-lived stream %q (WithSkipPaths must keep per-open lines out)", log, skipped)
 		}

@@ -6,11 +6,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/webhttp"
 )
 
 // TestSessionFastDeathWarn pins the operator-facing fast-death signal wired in
@@ -38,20 +36,9 @@ func TestSessionFastDeathWarn(t *testing.T) {
 	runFastDeathSession := func(t *testing.T, ready bool) *capture.Recorder {
 		t.Helper()
 		records := capture.Default(t) // before registerRoutes: the factory derives its logger from slog.Default()
-		mux := http.NewServeMux()
-		var r webhttp.Ready
-		r.Set(ready)
-		deps := &routeDeps{
-			staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-			ready:    &r,
-			workDir:  "",
-			cmd:      []string{"/bin/false"}, // exits 1 instantly: the broken-install signature (non-nil Wait error, well under 10s)
-		}
-		mgr, _, err := registerRoutes(mux, deps)
-		if err != nil {
-			t.Fatalf("registerRoutes: %v", err)
-		}
-		t.Cleanup(mgr.Shutdown)
+		deps := newTestDeps(ready)
+		deps.cmd = []string{"/bin/false"} // exits 1 instantly: the broken-install signature (non-nil Wait error, well under 10s)
+		mux, mgr, _ := mustRegisterRoutes(t, deps)
 		if _, err := mgr.Create(); err != nil {
 			t.Fatalf("Create: %v", err)
 		}

@@ -230,7 +230,10 @@ func main() {
 	// string splicing.
 	chatArgs := strings.Fields(envx.String("KIRO_CLI_CHAT_ARGS", ""))
 	if len(chatArgs) > 0 {
-		slog.Info("appending extra kiro-cli chat flags", "chat_args", chatArgs)
+		// Field-count-only, like the KWEB_LOG_LEVEL warning above: a compose
+		// expansion mistake or a value-bearing flag could put a secret in the
+		// args, so the raw values never reach the log.
+		slog.Info("appending extra kiro-cli chat flags", "chat_args_count", len(chatArgs))
 	}
 
 	// Concurrent kiro-cli chat sessions (browser tabs) are uncapped, like a
@@ -498,6 +501,9 @@ func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 //     is its successor. Skips the long-lived streams (/ws and the
 //     /api/sessions/events SSE) so neither emits a misleading open-time access
 //     line; the request id is still minted, echoed, and threaded on those paths.
+//     Also skips /api/health so the every-30s Docker HEALTHCHECK probe emits no
+//     routine access line (the same probe-noise skip web-terminal-server applies
+//     to its /healthz).
 //   - Recoverer — turns a downstream panic into a logged 500 (inside the logger
 //     so the access line records the 500, not the recorder's default 200).
 //   - SecurityHeaders — the fleet baseline (nosniff, X-Frame-Options: DENY,
@@ -524,7 +530,15 @@ func buildHandler(mux http.Handler, trustedProxies []*net.IPNet, csp string, hos
 	return webhttp.Chain(mux,
 		webhttp.Logging(
 			webhttp.WithLogger(slog.Default()),
-			webhttp.WithSkipPaths("/ws", "/api/sessions/events"),
+			webhttp.WithSkipPaths("/ws", "/api/sessions/events", "/api/health"),
+			// DELETE /api/sessions/{id} and PUT /api/sessions/{id}/title embed
+			// the FULL session id (the /ws attach/resume capability token that
+			// routes.go truncates to safeID before logging); skip their access
+			// lines so a live token never reaches log-read consumers. The
+			// exact-path create/list lines (POST/GET /api/sessions) are kept.
+			webhttp.WithSkipFunc(func(r *http.Request) bool {
+				return strings.HasPrefix(r.URL.Path, "/api/sessions/")
+			}),
 			webhttp.WithClientIP(trustedProxies...),
 		),
 		webhttp.Recoverer(webhttp.WithRecoverLogger(slog.Default())),

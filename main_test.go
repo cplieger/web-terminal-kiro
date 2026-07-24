@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/cplieger/slogx/capture"
@@ -268,22 +267,10 @@ func TestStartTools_engineStartFailure(t *testing.T) {
 	// Focused health assertion: an engine-initialization failure surfaces as
 	// {"status":"ok","tools":"degraded"} — readiness is unaffected (kiro-cli
 	// is the only core dependency) but the dependency failure is visible.
-	mux := http.NewServeMux()
-	var ready webhttp.Ready
-	ready.Set(true)
-	deps := &routeDeps{
-		staticFS:   fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-		ready:      &ready,
-		workDir:    "",
-		cmd:        []string{"/bin/cat"},
-		tools:      rt.engine,
-		toolsState: rt.state,
-	}
-	mgr, _, err := registerRoutes(mux, deps)
-	if err != nil {
-		t.Fatalf("registerRoutes: %v", err)
-	}
-	t.Cleanup(mgr.Shutdown)
+	deps := newTestDeps(true)
+	deps.tools = rt.engine
+	deps.toolsState = rt.state
+	mux, _, _ := mustRegisterRoutes(t, deps)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tools":"degraded"`) {
@@ -781,5 +768,37 @@ func TestEmbeddedRequiredToolsNonEmpty(t *testing.T) {
 		if !slices.Contains(names, seed) {
 			t.Errorf("required-tools.txt missing seed name %q", seed)
 		}
+	}
+}
+
+// TestAwaitBootConvergence_waitFailureLiftsGateDegraded pins the Wait-error
+// branch of awaitBootConvergence, which the startTools-driven tests cannot
+// reach (they always hand it a real job ID): when the engine cannot report
+// the boot reconcile job's outcome (Wait errors, e.g. an unknown job id),
+// the verdict must be recorded as "degraded" exactly once -- the gate-lift
+// invariant that keeps session creation from answering 503 "tools
+// installing" forever -- and the failure must be operator-visible as the
+// boot-reconcile-wait Warn. Serial: capture.Default mutates the
+// process-global default logger.
+func TestAwaitBootConvergence_waitFailureLiftsGateDegraded(t *testing.T) {
+	records := capture.Default(t)
+	dir := t.TempDir()
+	eng, err := toolbelt.New(&toolbelt.Config{
+		ConfigDir: dir,
+		ToolsDir:  filepath.Join(dir, "tools"),
+	})
+	if err != nil {
+		t.Fatalf("toolbelt.New: %v", err)
+	}
+	t.Cleanup(eng.Close)
+
+	var verdicts []string
+	awaitBootConvergence(eng, "no-such-job-id", func(v string) { verdicts = append(verdicts, v) })
+
+	if len(verdicts) != 1 || verdicts[0] != "degraded" {
+		t.Fatalf("verdicts = %v, want exactly one \"degraded\" (the syncing gate must lift even when the job outcome is unknowable)", verdicts)
+	}
+	if got := countLevel(records, slog.LevelWarn, "boot reconcile wait failed"); got != 1 {
+		t.Errorf("log = %q, want exactly one wait-failed Warn (got %d)", records.Messages(), got)
 	}
 }

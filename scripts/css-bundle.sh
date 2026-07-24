@@ -11,7 +11,11 @@ out="${2:?usage: css-bundle.sh <ui-css-dir> <out-file>}"
 # replacing the previously usable bundle with a partial file. mktemp in the
 # output directory keeps the rename atomic.
 tmp=$(mktemp "${out}.XXXXXX")
-trap 'rm -f "$tmp"' EXIT HUP INT TERM
+trap 'rm -f "$tmp"' EXIT
+# A trapped signal must terminate the run (the EXIT trap then cleans up);
+# a cleanup-only signal handler would resume assembly with $tmp deleted
+# and mv a partial bundle.
+trap 'exit 1' HUP INT TERM
 css_root=$(realpath "$css_dir")
 # The per-entry regular-file guard below cannot protect the MANIFEST
 # itself: opening a FIFO for the loop redirect blocks the build forever,

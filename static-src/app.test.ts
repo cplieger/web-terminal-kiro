@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // app.ts imports createTerminal from the UI package and presetAgentTabbed from
@@ -24,6 +26,26 @@ const THEME = {
   "--status-done": "oklch(78% 0.15 150deg)",
   "--status-input": "oklch(78% 0.15 95deg)",
 };
+
+// The fatal-overlay alertdialog contract duplicated (by necessity) between
+// showFatal (app.ts) and the inline pre-module bootstrap watchdog
+// (static/index.html). Both builders are asserted through this single helper
+// so the two shapes cannot drift independently: a change to either side that
+// breaks the shared shape fails here.
+function expectFatalOverlayShape(overlay: HTMLElement): void {
+  expect(overlay.getAttribute("role")).toBe("alertdialog");
+  expect(overlay.getAttribute("aria-modal")).toBe("true");
+  expect(overlay.getAttribute("aria-label")).toBe("Web Terminal for Kiro startup failure");
+  expect(overlay.getAttribute("aria-describedby")).toBe("bootstrap-failure-message");
+  // The pristine loading bar is always replaced by the dialog content.
+  expect(overlay.querySelector(".bar")).toBeNull();
+  const reload = overlay.querySelector("button");
+  expect(reload?.type).toBe("button");
+  expect(reload?.textContent).toBe("Reload");
+  // Initial focus lands on the recovery CTA (the alertdialog pattern's
+  // initial focus; Reload is the only actionable element left).
+  expect(document.activeElement).toBe(reload);
+}
 
 describe("web-terminal-kiro bootstrap (app.ts)", () => {
   beforeEach(() => {
@@ -87,14 +109,11 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
       "web-terminal-kiro: missing #terminal root element",
     );
 
-    expect(overlay.getAttribute("role")).toBe("alertdialog");
     // The index.html watchdog only acts while the pristine .bar is present;
-    // showFatal replacing the children is what stops it from clobbering this
-    // message when the rethrown error reaches the window error listener.
-    expect(overlay.querySelector(".bar")).toBeNull();
-    expect(overlay.getAttribute("aria-modal")).toBe("true");
-    expect(overlay.getAttribute("aria-label")).toBe("Web Terminal for Kiro startup failure");
-    expect(overlay.getAttribute("aria-describedby")).toBe("bootstrap-failure-message");
+    // showFatal replacing the children (asserted inside the shape helper) is
+    // what stops it from clobbering this message when the rethrown error
+    // reaches the window error listener.
+    expectFatalOverlayShape(overlay);
     const description = overlay.querySelector("#bootstrap-failure-message");
     expect(description?.textContent).toContain("Web Terminal for Kiro failed to start");
     expect(createTerminalMock).not.toHaveBeenCalled();
@@ -111,11 +130,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     );
 
     const reloadButton = overlay.querySelector("button");
-    expect(reloadButton?.type).toBe("button");
-    expect(reloadButton?.textContent).toBe("Reload");
-    // showFatal moves focus to the recovery CTA: the page content is gone and
-    // Reload is the only actionable element left.
-    expect(document.activeElement).toBe(reloadButton);
+    expectFatalOverlayShape(overlay);
     reloadButton?.click();
     expect(reload).toHaveBeenCalledTimes(1);
   });
@@ -140,11 +155,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     await expect(import("./app.js")).rejects.toThrow("kernel boom");
 
     expect(loading.classList.contains("fade")).toBe(false);
-    expect(loading.getAttribute("role")).toBe("alertdialog");
-    expect(loading.querySelector(".bar")).toBeNull();
-    expect(loading.getAttribute("aria-modal")).toBe("true");
-    expect(loading.getAttribute("aria-label")).toBe("Web Terminal for Kiro startup failure");
-    expect(loading.getAttribute("aria-describedby")).toBe("bootstrap-failure-message");
+    expectFatalOverlayShape(loading);
     const description = loading.querySelector("#bootstrap-failure-message");
     expect(description?.textContent).toContain("Failed to start the terminal");
   });
@@ -160,5 +171,68 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     await expect(import("./app.js")).rejects.toThrow("kernel boom no overlay");
     expect(createTerminalMock).toHaveBeenCalledTimes(1);
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("keeps the index.html bootstrap watchdog in sync with showFatal's alertdialog shape", () => {
+    // Resolve from the vitest root (static-src/): under happy-dom
+    // import.meta.url is not a file: URL, so a URL-relative read cannot work.
+    const html = readFileSync(resolve(process.cwd(), "../static/index.html"), "utf8");
+    // The failure-dialog vocabulary duplicated (by necessity) between showFatal
+    // (app.ts) and the inline pre-module watchdog (static/index.html).
+    expect(html).toContain('"alertdialog"');
+    expect(html).toContain('"aria-modal", "true"');
+    expect(html).toContain('"Web Terminal for Kiro startup failure"');
+    expect(html).toContain('description.id = "bootstrap-failure-message"');
+    expect(html).toContain('reload.textContent = "Reload"');
+    expect(html).toContain("reload.focus()");
+  });
+
+  it("builds the same alertdialog shape when the real index.html watchdog fires", () => {
+    // Execute the REAL inline bootstrap watchdog from static/index.html (the
+    // pre-module, CSP-hashed script that catches /app.js load failures before
+    // app.ts can run) against index.html's pristine pre-JS markup, and assert
+    // it produces the exact overlay shape showFatal builds — via the same
+    // expectFatalOverlayShape helper, so the two builders (which cannot share
+    // code) are pinned to one contract from a single source. Mirrors how
+    // routes_test.go independently re-extracts the same inline scripts for
+    // the CSP hash check.
+    const html = readFileSync(resolve(process.cwd(), "../static/index.html"), "utf8");
+    // The watchdog is the only inline <script> that is neither the importmap
+    // nor the src-bearing module loader.
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter(
+      (m) => !/src\s*=/i.test(m[1] ?? "") && !/importmap/i.test(m[1] ?? ""),
+    );
+    expect(scripts).toHaveLength(1);
+    const watchdogSource = scripts[0]?.[2] ?? "";
+    expect(watchdogSource).toContain("Bootstrap watchdog");
+
+    // Recreate index.html's static body: the terminal root plus the pristine
+    // loading overlay (role=status, .bar child, no fade).
+    const root = document.createElement("div");
+    root.id = "terminal";
+    document.body.appendChild(root);
+    const overlay = document.createElement("div");
+    overlay.id = "loading";
+    overlay.setAttribute("role", "status");
+    overlay.setAttribute("aria-label", "Loading");
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    overlay.appendChild(bar);
+    document.body.appendChild(overlay);
+
+    // Evaluate the watchdog, then simulate the failure it exists for: a
+    // <script> element (e.g. /app.js) firing a load error on window.
+    new Function(watchdogSource)();
+    const scriptEl = document.createElement("script");
+    const errorEvent = new Event("error");
+    Object.defineProperty(errorEvent, "target", { value: scriptEl });
+    window.dispatchEvent(errorEvent);
+
+    expectFatalOverlayShape(overlay);
+    const description = overlay.querySelector("#bootstrap-failure-message");
+    expect(description?.textContent).toContain("Web Terminal for Kiro failed to load");
+    // aria-modal made true: the watchdog inerts the terminal root, exactly
+    // like showFatal.
+    expect(root.hasAttribute("inert")).toBe(true);
   });
 });

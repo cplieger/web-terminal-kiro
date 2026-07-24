@@ -54,6 +54,11 @@ function showFatal(overlay: HTMLElement, message: string): void {
     window.location.reload();
   });
   overlay.replaceChildren(description, reload);
+  // aria-modal claims everything outside the dialog is inert; make it true so
+  // Tab cannot reach focusables inside a partially-built terminal behind the
+  // opaque overlay (APG alertdialog focus containment; WCAG 2.4.11). On the
+  // missing-root path there is no #terminal, so the lookup is a no-op.
+  document.getElementById("terminal")?.setAttribute("inert", "");
   // Move focus to the recovery CTA: the page content is gone and Reload is the
   // only actionable element left (the alertdialog pattern's initial focus).
   reload.focus();

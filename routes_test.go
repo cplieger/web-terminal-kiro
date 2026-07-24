@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -32,19 +33,7 @@ import (
 // release-noted route-set contract plus this test keep it from appearing here
 // silently.
 func TestDebugRoutesNotExposed(t *testing.T) {
-	mux := http.NewServeMux()
-	var ready webhttp.Ready
-	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-		ready:    &ready,
-		workDir:  "",
-		cmd:      []string{"/bin/cat"},
-	}
-	mgr, _, err := registerRoutes(mux, deps)
-	if err != nil {
-		t.Fatalf("registerRoutes: %v", err)
-	}
-	t.Cleanup(mgr.Shutdown)
+	mux, _, _ := mustRegisterRoutes(t, newTestDeps(false))
 
 	// /ws must be registered as its own pattern.
 	if _, pat := mux.Handler(httptest.NewRequest(http.MethodGet, "/ws", http.NoBody)); pat != "/ws" {
@@ -65,19 +54,8 @@ func TestDebugRoutesNotExposed(t *testing.T) {
 // orchestrator holds traffic during startup and shutdown), and once ready it
 // returns 200. The atomic flag is the only thing that flips the branch.
 func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
-	mux := http.NewServeMux()
-	var ready webhttp.Ready
-	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-		ready:    &ready,
-		workDir:  "",
-		cmd:      []string{"/bin/cat"},
-	}
-	mgr, _, err := registerRoutes(mux, deps)
-	if err != nil {
-		t.Fatalf("registerRoutes: %v", err)
-	}
-	t.Cleanup(mgr.Shutdown)
+	deps := newTestDeps(false)
+	mux, _, _ := mustRegisterRoutes(t, deps)
 
 	get := func() *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -89,7 +67,7 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 		t.Errorf("before ready: status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
 	}
 
-	ready.Set(true)
+	deps.ready.Set(true)
 	if rec := get(); rec.Code != http.StatusOK {
 		t.Errorf("after ready: status = %d, want %d", rec.Code, http.StatusOK)
 	}
@@ -107,21 +85,9 @@ func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), ".kiro-cli-ready")
 
 	newMux := func(markerPath string) *http.ServeMux {
-		mux := http.NewServeMux()
-		var ready webhttp.Ready
-		ready.Set(true)
-		deps := &routeDeps{
-			staticFS:        fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-			ready:           &ready,
-			workDir:         "",
-			cmd:             []string{"/bin/cat"},
-			kiroReadyMarker: markerPath,
-		}
-		mgr, _, err := registerRoutes(mux, deps)
-		if err != nil {
-			t.Fatalf("registerRoutes: %v", err)
-		}
-		t.Cleanup(mgr.Shutdown)
+		deps := newTestDeps(true)
+		deps.kiroReadyMarker = markerPath
+		mux, _, _ := mustRegisterRoutes(t, deps)
 		return mux
 	}
 	status := func(mux *http.ServeMux) int {
@@ -191,19 +157,7 @@ func TestKiroCacheControl(t *testing.T) {
 // empty body instead of re-sending the bundle. Mirrors the sibling
 // web-terminal-server's TestStaticHandlerETagAndRevalidation.
 func TestStaticETagRevalidation(t *testing.T) {
-	mux := http.NewServeMux()
-	var ready webhttp.Ready
-	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-		ready:    &ready,
-		workDir:  "",
-		cmd:      []string{"/bin/cat"},
-	}
-	mgr, _, err := registerRoutes(mux, deps)
-	if err != nil {
-		t.Fatalf("registerRoutes: %v", err)
-	}
-	t.Cleanup(mgr.Shutdown)
+	mux, _, _ := mustRegisterRoutes(t, newTestDeps(false))
 
 	// First load: the response carries a quoted content-hash ETag.
 	rec := httptest.NewRecorder()
@@ -244,20 +198,7 @@ func TestStaticETagRevalidation(t *testing.T) {
 // -- also proving the SecurityHeaders/Recoverer layers stay transparent to the
 // SSE stream.
 func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
-	mux := http.NewServeMux()
-	var ready webhttp.Ready
-	ready.Set(true)
-	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-		ready:    &ready,
-		workDir:  "",
-		cmd:      []string{"/bin/cat"},
-	}
-	mgr, csp, err := registerRoutes(mux, deps)
-	if err != nil {
-		t.Fatalf("registerRoutes: %v", err)
-	}
-	t.Cleanup(mgr.Shutdown)
+	mux, mgr, csp := mustRegisterRoutes(t, newTestDeps(true))
 	id, err := mgr.Create()
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -303,19 +244,9 @@ const sessionCreateBurst = 6
 // the mounted path — composition drift the previous direct-preset version
 // could not detect.
 func TestCreateRateLimit(t *testing.T) {
-	mux := http.NewServeMux()
-	var ready webhttp.Ready
-	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-		ready:    &ready,
-		workDir:  "",
-		cmd:      []string{"/bin/true"},
-	}
-	mgr, _, err := registerRoutes(mux, deps)
-	if err != nil {
-		t.Fatalf("registerRoutes: %v", err)
-	}
-	t.Cleanup(mgr.Shutdown)
+	deps := newTestDeps(false)
+	deps.cmd = []string{"/bin/true"}
+	mux, _, _ := mustRegisterRoutes(t, deps)
 
 	for attempt := 1; attempt <= sessionCreateBurst; attempt++ {
 		rec := httptest.NewRecorder()
@@ -353,20 +284,7 @@ func TestCreateRateLimit(t *testing.T) {
 // Driven through the full production chain (buildHandler) so the assertion
 // tracks what the server actually sends.
 func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
-	mux := http.NewServeMux()
-	var ready webhttp.Ready
-	ready.Set(true)
-	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-		ready:    &ready,
-		workDir:  "",
-		cmd:      []string{"/bin/cat"},
-	}
-	mgr, csp, err := registerRoutes(mux, deps)
-	if err != nil {
-		t.Fatalf("registerRoutes: %v", err)
-	}
-	t.Cleanup(mgr.Shutdown)
+	mux, _, csp := mustRegisterRoutes(t, newTestDeps(true))
 
 	rec := httptest.NewRecorder()
 	buildHandler(mux, nil, csp, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
@@ -485,20 +403,7 @@ func TestBuildCSPPolicyFailsLoud(t *testing.T) {
 // guard: a future WithAcceptOptions{InsecureSkipVerify:true} would silently
 // re-open cross-site WebSocket hijacking. This test fails if that happens.
 func TestWSRejectsCrossOrigin(t *testing.T) {
-	mux := http.NewServeMux()
-	var ready webhttp.Ready
-	ready.Set(true)
-	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-		ready:    &ready,
-		workDir:  "",
-		cmd:      []string{"/bin/cat"},
-	}
-	mgr, csp, err := registerRoutes(mux, deps)
-	if err != nil {
-		t.Fatalf("registerRoutes: %v", err)
-	}
-	t.Cleanup(mgr.Shutdown)
+	mux, mgr, csp := mustRegisterRoutes(t, newTestDeps(true))
 	// A valid session id is required: WebSocketHandler returns 404 for an unknown
 	// id BEFORE the upgrade, so the same-origin (CSWSH) guard only runs for an
 	// existing session. Create one so the cross-origin handshake reaches
@@ -534,20 +439,7 @@ func TestWSRejectsCrossOrigin(t *testing.T) {
 // that 403'd unconditionally would still pass the negative test. This pins that
 // the 403 is specifically the same-origin (CSWSH) check, not a blanket refusal.
 func TestWSAcceptsSameOrigin(t *testing.T) {
-	mux := http.NewServeMux()
-	var ready webhttp.Ready
-	ready.Set(true)
-	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-		ready:    &ready,
-		workDir:  "",
-		cmd:      []string{"/bin/cat"},
-	}
-	mgr, csp, err := registerRoutes(mux, deps)
-	if err != nil {
-		t.Fatalf("registerRoutes: %v", err)
-	}
-	t.Cleanup(mgr.Shutdown)
+	mux, mgr, csp := mustRegisterRoutes(t, newTestDeps(true))
 	id, err := mgr.Create()
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -610,21 +502,9 @@ func TestClassifyStatus(t *testing.T) {
 // broken" signal with no failing test. This pins each 503 branch to its reason.
 func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
 	newMux := func(ready bool, markerPath string) *http.ServeMux {
-		mux := http.NewServeMux()
-		var r webhttp.Ready
-		r.Set(ready)
-		deps := &routeDeps{
-			staticFS:        fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-			ready:           &r,
-			workDir:         "",
-			cmd:             []string{"/bin/cat"},
-			kiroReadyMarker: markerPath,
-		}
-		mgr, _, err := registerRoutes(mux, deps)
-		if err != nil {
-			t.Fatalf("registerRoutes: %v", err)
-		}
-		t.Cleanup(mgr.Shutdown)
+		deps := newTestDeps(ready)
+		deps.kiroReadyMarker = markerPath
+		mux, _, _ := mustRegisterRoutes(t, deps)
 		return mux
 	}
 	body := func(mux *http.ServeMux) (int, string) {
@@ -646,6 +526,34 @@ func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
 	if code != http.StatusServiceUnavailable || !strings.Contains(b, "kiro-cli unavailable") {
 		t.Errorf("kiro-cli-absent: (status %d, body %q), want 503 with reason %q", code, b, "kiro-cli unavailable")
 	}
+}
+
+// newTestDeps returns the minimal routeDeps the route tests build
+// repeatedly: the index fixture that satisfies the fail-loud CSP build,
+// a ready flag, and a short-lived cat as the session command. Tests
+// tweak fields (cmd, kiroReadyMarker) before registering.
+func newTestDeps(ready bool) *routeDeps {
+	var r webhttp.Ready
+	r.Set(ready)
+	return &routeDeps{
+		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
+		ready:    &r,
+		workDir:  "",
+		cmd:      []string{"/bin/cat"},
+	}
+}
+
+// mustRegisterRoutes wires deps on a fresh mux, failing the test on
+// error and scheduling manager shutdown.
+func mustRegisterRoutes(t *testing.T, deps *routeDeps) (*http.ServeMux, *terminal.SessionManager, string) {
+	t.Helper()
+	mux := http.NewServeMux()
+	mgr, csp, err := registerRoutes(mux, deps)
+	if err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	t.Cleanup(mgr.Shutdown)
+	return mux, mgr, csp
 }
 
 // newToolsDeps builds routeDeps with a real toolbelt engine on temp dirs
@@ -762,19 +670,7 @@ func TestToolsAPI_LoopbackOnly_malformedPeerFailsClosed(t *testing.T) {
 // / tests outside the container): /api/tools is simply not a registered
 // pattern, falling through to the static catch-all.
 func TestToolsAPI_AbsentWithoutEngine(t *testing.T) {
-	mux := http.NewServeMux()
-	var ready webhttp.Ready
-	deps := &routeDeps{
-		staticFS: fstest.MapFS{"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)}},
-		ready:    &ready,
-		workDir:  "",
-		cmd:      []string{"/bin/cat"},
-	}
-	mgr, _, err := registerRoutes(mux, deps)
-	if err != nil {
-		t.Fatalf("registerRoutes: %v", err)
-	}
-	t.Cleanup(mgr.Shutdown)
+	mux, _, _ := mustRegisterRoutes(t, newTestDeps(false))
 	if _, pat := mux.Handler(httptest.NewRequest(http.MethodGet, "/api/tools", http.NoBody)); pat == "/api/tools" {
 		t.Fatal("/api/tools registered without a tools engine")
 	}
@@ -909,5 +805,45 @@ func TestComposeGate_narrowsToCreateOnly(t *testing.T) {
 					tc.method, tc.path, rec.Code, nextHit, tc.wantCode, tc.wantNext)
 			}
 		})
+	}
+}
+
+// failOpenFS wraps an fs.FS and fails Open for one path, standing in for an
+// unreadable file inside the embedded static tree (a malformed build).
+type failOpenFS struct {
+	fs.FS
+	failPath string
+}
+
+func (f failOpenFS) Open(name string) (fs.File, error) {
+	if name == f.failPath {
+		return nil, errors.New("injected open failure")
+	}
+	return f.FS.Open(name)
+}
+
+// TestRegisterRoutes_failsLoudOnUnreadableStaticTree pins the static-handler
+// leg of buildStaticSurface's fail-loud contract, which
+// TestRegisterRoutes_failsLoudOnMalformedStatic (the CSP leg) does not reach:
+// webhttp.StaticHandler walks and hashes every file at construction, so a
+// static tree with an unreadable file (a malformed build) must abort route
+// registration with an error rather than serve a partial site. index.html
+// itself stays readable so the CSP build succeeds and the failure is
+// attributable to the static-handler leg alone.
+func TestRegisterRoutes_failsLoudOnUnreadableStaticTree(t *testing.T) {
+	base := fstest.MapFS{
+		"static/index.html": &fstest.MapFile{Data: []byte(testIndexHTML)},
+		"static/broken.js":  &fstest.MapFile{Data: []byte("x")},
+	}
+	mux := http.NewServeMux()
+	var ready webhttp.Ready
+	deps := &routeDeps{
+		staticFS: failOpenFS{FS: base, failPath: "static/broken.js"},
+		ready:    &ready,
+		workDir:  "",
+		cmd:      []string{"/bin/cat"},
+	}
+	if _, _, err := registerRoutes(mux, deps); err == nil {
+		t.Fatal("registerRoutes returned nil error for a static tree with an unreadable file; an unhashable asset must abort startup, not serve a partial site")
 	}
 }
