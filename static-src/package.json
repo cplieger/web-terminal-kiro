@@ -16,7 +16,7 @@
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
     "@eslint/js": "10.0.1",
-    "@playwright/test": "1.62.1",
+    "@playwright/test": "1.63.0",
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/typescript-checker": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",
@@ -28,7 +28,7 @@
     "eslint": "10.10.0",
     "html-validate": "11.14.0",
     "knip": "6.34.0",
-    "playwright": "1.62.1",
+    "playwright": "1.63.0",
     "postcss-html": "2.0.0",
     "prettier": "3.9.6",
     "stylelint": "17.15.0",
