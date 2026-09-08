@@ -834,10 +834,7 @@ func TestSessionTitleNeverExposesTheTabIDAsTheJoinKey(t *testing.T) {
 	// reclaim emits none, since forget logs only when os.Remove fails.
 	// The third pass below proves the reclaim adds no record naming the
 	// tab id.
-	var logged strings.Builder
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+	logged := capturedLog(t)
 
 	set := &fakeSetter{live: []terminal.SessionID{tabID}}
 	f.sync.pass(t.Context(), set)
@@ -1000,9 +997,8 @@ func TestSessionTitleRepointWithATitleReplacesWithoutClearing(t *testing.T) {
 func capturedLog(t *testing.T) *strings.Builder {
 	t.Helper()
 	var buf strings.Builder
-	previous := slog.Default()
+	saveLogGlobals(t)
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(previous) })
 	return &buf
 }
 
