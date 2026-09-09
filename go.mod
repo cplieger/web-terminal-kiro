@@ -9,7 +9,7 @@ require (
 	github.com/cplieger/pinstall/v3 v3.0.2
 	github.com/cplieger/runesafe/v2 v2.1.0
 	github.com/cplieger/slogx v1.6.5
-	github.com/cplieger/toolbelt/v3 v3.2.10
+	github.com/cplieger/toolbelt/v3 v3.2.11
 	github.com/cplieger/web-terminal-engine/v5 v5.0.11
 	github.com/cplieger/webhttp/v2 v2.2.0
 )
