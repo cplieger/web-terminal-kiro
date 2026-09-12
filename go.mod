@@ -10,7 +10,7 @@ require (
 	github.com/cplieger/runesafe/v2 v2.1.0
 	github.com/cplieger/slogx v1.6.5
 	github.com/cplieger/toolbelt/v3 v3.2.14
-	github.com/cplieger/web-terminal-engine/v5 v5.0.12
+	github.com/cplieger/web-terminal-engine/v5 v5.1.0
 	github.com/cplieger/webhttp/v2 v2.2.0
 )
 
