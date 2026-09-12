@@ -314,6 +314,40 @@ secure_tools_dir() {
   fi
 }
 
+# Reports an install root the container cannot execute from, which the mode checks
+# above cannot see: the install manager stages the pinned archive in a `.stage-*`
+# tree INSIDE this directory and execs both the upstream installer and the staged
+# binary's --version probe out of it, so a noexec mount fails the install with a
+# permission error naming a staged path, then a no-executable-found error, then the
+# retry ladder, and never names the cause. Probed at the directory the exec
+# actually happens in rather than read from /proc/mounts, because a submount or a
+# security module decides execve independently of the options this container can
+# see -- and a submount one level above the staging tree is not the same question.
+# Warn, never fatal, per "Failure posture": readiness already reports the install
+# as unavailable, and a mount is repairable only from a container that still boots.
+#
+# Must run AFTER secure_tools_dir has stripped this tree's group/other write bits:
+# the probe is created, chmod'ed and then EXECUTED AS ROOT, so on the very volume
+# the taint check exists for, a foreign host user with directory write access could
+# unlink it and substitute their own payload between the chmod and the exec.
+warn_if_tools_noexec() {
+  local dir=$1 probe out
+  # Unwritable is the write probe's verdict, not this one's: warning here would
+  # misattribute that failure to execution. mktemp's own stderr is dropped for the
+  # same reason -- it is an unstructured line naming a temp path, arriving after the
+  # fatal that owns the condition.
+  probe=$(mktemp "$dir/.exec-probe.XXXXXX" 2>/dev/null) || return 0
+  # The interpreter's own message carries the errno that separates a noexec mount
+  # from a mangled binary, so it rides the structured line instead of stderr.
+  if ! out=$({ printf '#!/bin/sh\nexit 0\n' >"$probe" && chmod 700 "$probe" && "$probe"; } 2>&1); then
+    printf 'level=warn msg="the tools tree cannot execute a file this script just created; the kiro-cli install will keep failing with a permission error that names a staged path rather than the cause" dir="%s" error="%s" hint="the filesystem under this path is most likely mounted noexec; mount /config from a filesystem that permits execution" component=entrypoint\n' \
+      "$dir" "$(logfmt_value "$out")" >&2
+  fi
+  if ! rm -f "$probe"; then
+    printf 'level=warn msg="failed to remove the boot-time exec probe; it keeps occupying the /config volume" path="%s" component=entrypoint\n' "$probe" >&2
+  fi
+}
+
 # --- legacy kiro-cli dispatcher sweep -------------------------------------------
 # Older image versions ran the upstream installer with the real HOME, so a volume
 # created by one can still hold kiro-cli dispatchers in $HOME/.local/bin, which
@@ -558,6 +592,12 @@ secure_tools_dir "$TOOLS/npm" 0 1
 secure_tools_dir "$TOOLS/npm/bin" 0 1
 secure_tools_dir "$TOOLS/python" 0 1
 secure_tools_dir "$TOOLS/python/bin" 0 1
+
+# Writable is not executable, and the install needs both (see the function). Placed
+# below the tightening pass on purpose: the probe is exec'd as root, so it must not
+# be created while the tree it lands in is still group/other-writable.
+warn_if_tools_noexec "$TOOLS/kiro-cli-versions"
+
 # One level INSIDE the install root: the version directories and dispatchers.
 # The root's mode says nothing about them (a `.complete` sentinel is a plain
 # file, a --version probe is satisfied by a wrapper), so a rewritable version
@@ -680,11 +720,11 @@ if [ "$tools_tree_was_writable" -eq 1 ]; then
   printf 'level=warn msg="the tools tree was group/other-writable; telling the install manager to distrust every kiro-cli version directory already on the volume and reinstall from the pinned SHA-verified archive" dir="%s" component=entrypoint\n' "$TOOLS" >&2
 fi
 
-# Best-effort: drop the write probe orphaned by a hard container kill (the
-# ordinary path removes it in its own test). `rm -rf` on an unmatched glob is
-# already a silent no-op returning 0, so a non-zero status here is a REAL
-# failure -- an immutable attribute, EPERM, a submount.
-if ! rm -rf "$TOOLS"/.write-probe.*; then
+# Best-effort: drop the write and exec probes orphaned by a hard container kill
+# (the ordinary path removes each one where it is created). `rm -rf` on an
+# unmatched glob is already a silent no-op returning 0, so a non-zero status here
+# is a REAL failure -- an immutable attribute, EPERM, a submount.
+if ! rm -rf "$TOOLS"/.write-probe.* "$TOOLS"/kiro-cli-versions/.exec-probe.*; then
   printf 'level=warn msg="failed to remove orphaned boot-time temp artifacts; they keep occupying the /config volume" dir="%s" component=entrypoint\n' "$TOOLS" >&2
 fi
 
