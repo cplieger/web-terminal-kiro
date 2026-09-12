@@ -66,6 +66,8 @@ Open <http://localhost:9848>. On first launch, kiro-cli signs you in with a devi
 
 Web Terminal for Kiro runs as root so `git`, `gh`, and SSH work; do not add a `user:` line, and expect files under the mounts to be root-owned on the host.
 
+`/config` must be on a filesystem that permits execution. kiro-cli and every tool the container installs live there and are run from there, so a `noexec` mount fails the install; the startup log reports that in one line naming the path, instead of leaving you with a permission error against a temporary path.
+
 ## Configuration reference
 
 The image ships working defaults; most setups only pick a port and a volume.

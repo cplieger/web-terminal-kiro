@@ -9,7 +9,8 @@
 #
 # Covers what tests/image-smoke.sh cannot reach: entrypoint.sh's fail-CLOSED
 # branches (a non-private /config, an unowned PATH segment that resists
-# hardening, an unreadable package index) that a healthy boot never takes. The
+# hardening) that a healthy boot never takes, plus the warn-only diagnoses that
+# need a filesystem CI does not provide (a tools tree mounted noexec). The
 # kiro-cli INSTALL itself is out of scope — the cplieger/pinstall library owns
 # it and carries its own Go tests.
 #

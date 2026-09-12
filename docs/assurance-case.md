@@ -29,6 +29,7 @@ The control is "only the operator can reach Web Terminal for Kiro."
 | WebSocket hijacking / malformed frames | origin and Host checks before the WS upgrade; hardened wire decoding (the shared `web-terminal-engine` wire protocol) | middleware, engine decoder tests |
 | Malformed terminal/wire input crashing the server | property + fuzz suite on the PTY/wire surface, maintained in `web-terminal-engine` | engine fuzz targets, weekly fuzz |
 | Stale/empty embedded UI shipped | CI image smoke test starts the container and asserts it serves | image smoke test (CI docker job) |
+| A third-party payload bump ships a broken kiro-cli, font set, or tool tree | the same smoke test runs a real session and asserts both required kiro-cli dispatchers at the pinned version, every font face the served stylesheet names, and every system command the image must ship | `tests/image-smoke.conf` |
 
 ## Residual risks (stated plainly)
 
