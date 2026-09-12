@@ -6,7 +6,7 @@ require (
 	github.com/cplieger/atomicfile/v3 v3.0.1
 	github.com/cplieger/envx/v2 v2.0.3
 	github.com/cplieger/pathinside/v2 v2.0.1
-	github.com/cplieger/pinstall/v3 v3.0.2
+	github.com/cplieger/pinstall/v3 v3.0.3
 	github.com/cplieger/runesafe/v2 v2.1.0
 	github.com/cplieger/slogx v1.6.5
 	github.com/cplieger/toolbelt/v3 v3.2.13
