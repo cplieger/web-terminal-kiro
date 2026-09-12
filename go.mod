@@ -3,7 +3,7 @@ module github.com/cplieger/web-terminal-kiro
 go 1.27.1
 
 require (
-	github.com/cplieger/atomicfile/v3 v3.0.1
+	github.com/cplieger/atomicfile/v3 v3.1.0
 	github.com/cplieger/envx/v2 v2.0.3
 	github.com/cplieger/pathinside/v2 v2.0.1
 	github.com/cplieger/pinstall/v3 v3.0.3
