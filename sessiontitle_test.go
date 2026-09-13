@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -671,8 +672,8 @@ func TestSessionTitleBoundsFileReads(t *testing.T) {
 	if err := os.WriteFile(huge, []byte(strings.Repeat("a", maxTitleFileBytes*3)), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if _, err := readSmallFile(t.Context(), huge); !errors.Is(err, atomicfile.ErrFileTooLarge) {
-		t.Fatalf("readSmallFile(t.Context(), oversized) = %v, want ErrFileTooLarge", err)
+	if _, err := readSmallFile(t.Context(), huge, maxTitleFileBytes); !errors.Is(err, atomicfile.ErrFileTooLarge) {
+		t.Fatalf("readSmallFile(t.Context(), oversized, maxTitleFileBytes) = %v, want ErrFileTooLarge", err)
 	}
 	set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
 	f.sync.pass(t.Context(), set)
@@ -1185,4 +1186,102 @@ func TestSessionTitleRunStopsWithItsContext(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not return after its context was cancelled; the poller outlives the server it was started for, holding its ticker and re-reading the state dir")
 	}
+}
+
+// TestSessionTitlePublishesTheMappingItResolved pins the surface the
+// workflow watcher joins through. Every case here has to keep failing if a
+// later edit re-points mappedSessions at pushed: that map is written only
+// after a SUCCESSFUL title push, so the fourth case -- a mapped tab whose
+// session record carries no usable title -- is the one it cannot serve.
+func TestSessionTitlePublishesTheMappingItResolved(t *testing.T) {
+	t.Run("one entry per live mapped tab", func(t *testing.T) {
+		f := newTitleFixture(t)
+		const one = "sess_11111111-2222-3333-4444-555555555555"
+		const two = "sess_99999999-8888-7777-6666-555555555555"
+		f.mapping("tab1", one)
+		f.mapping("tab2", two)
+		f.session("hash0", one, titleJSON("the first conversation"))
+		f.session("hash0", two, titleJSON("the second conversation"))
+
+		f.sync.pass(t.Context(), &fakeSetter{live: []terminal.SessionID{"tab1", "tab2"}})
+
+		want := map[terminal.SessionID]string{"tab1": one, "tab2": two}
+		if got := f.sync.mappedSessions(); !maps.Equal(got, want) {
+			t.Errorf("mappedSessions() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a tab whose mapping file is gone drops out on the next sweep", func(t *testing.T) {
+		f := newTitleFixture(t)
+		const id = "sess_11111111-2222-3333-4444-555555555555"
+		f.mapping("tab1", id)
+		f.session("hash0", id, titleJSON("a conversation"))
+		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
+
+		f.sync.pass(t.Context(), set)
+		if got := f.sync.mappedSessions(); len(got) != 1 {
+			t.Fatalf("first sweep published %v, want one entry", got)
+		}
+		if err := os.Remove(filepath.Join(f.sync.stateDir, f.handle("tab1"))); err != nil {
+			t.Fatalf("remove the mapping file: %v", err)
+		}
+		f.sync.pass(t.Context(), set)
+
+		if got := f.sync.mappedSessions(); len(got) != 0 {
+			t.Errorf("second sweep published %v, want nothing: the map is rebuilt per sweep, so it cannot outlive its mapping file", got)
+		}
+	})
+
+	t.Run("an unreadable state dir publishes an empty map", func(t *testing.T) {
+		f := newTitleFixture(t)
+		const id = "sess_11111111-2222-3333-4444-555555555555"
+		f.mapping("tab1", id)
+		f.session("hash0", id, titleJSON("a conversation"))
+		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
+
+		f.sync.pass(t.Context(), set)
+		if got := f.sync.mappedSessions(); len(got) != 1 {
+			t.Fatalf("first sweep published %v, want one entry", got)
+		}
+		// A regular file where the directory was, rather than a chmod: this
+		// suite runs as root in the image, where a mode of 0 still reads.
+		if err := os.RemoveAll(f.sync.stateDir); err != nil {
+			t.Fatalf("remove the state dir: %v", err)
+		}
+		if err := os.WriteFile(f.sync.stateDir, []byte("not a directory"), 0o600); err != nil {
+			t.Fatalf("plant a regular file at the state dir: %v", err)
+		}
+		f.sync.pass(t.Context(), set)
+
+		got := f.sync.mappedSessions()
+		if got == nil || len(got) != 0 {
+			t.Errorf("mappedSessions() = %v, want an empty non-nil map: a stale pairing must not outlive the directory that refreshes it", got)
+		}
+	})
+
+	t.Run("a mapped tab with no usable title is still published", func(t *testing.T) {
+		f := newTitleFixture(t)
+		const id = "sess_11111111-2222-3333-4444-555555555555"
+		f.mapping("tab1", id)
+		f.session("hash0", id, titleJSON(placeholderTitle))
+		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
+
+		f.sync.pass(t.Context(), set)
+
+		if len(set.calls) != 0 {
+			t.Fatalf("pushed %v, want nothing: the placeholder title is treated as absent", set.calls)
+		}
+		want := map[terminal.SessionID]string{"tab1": id}
+		if got := f.sync.mappedSessions(); !maps.Equal(got, want) {
+			t.Errorf("mappedSessions() = %v, want %v: the pairing is recorded at MAPPING time, so a tab with no title yet is still joinable", got, want)
+		}
+	})
+
+	t.Run("nothing is published before the first sweep", func(t *testing.T) {
+		f := newTitleFixture(t)
+
+		if got := f.sync.mappedSessions(); got != nil {
+			t.Errorf("mappedSessions() = %v before any sweep, want nil", got)
+		}
+	})
 }

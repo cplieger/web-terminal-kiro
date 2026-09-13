@@ -1,0 +1,63 @@
+{
+ "workflowId": "wf_2222222222222222",
+ "workflowName": "example-workflow",
+ "status": "paused",
+ "inputs": {},
+ "artifacts": {},
+ "capturedOutputs": {},
+ "root": {
+  "nodeId": "wf_2222222222222222",
+  "type": "sequence",
+  "status": "paused",
+  "children": [
+   {
+    "nodeId": "build-loop",
+    "type": "repeat",
+    "status": "paused",
+    "iteration": 1,
+    "children": [
+     {
+      "nodeId": "plan",
+      "type": "step",
+      "status": "completed",
+      "agentName": "example-agent",
+      "startedAt": "2026-09-01T10:00:01.000Z",
+      "endedAt": "2026-09-01T10:01:00.000Z",
+      "sessionId": "sess_a1b2c3d4-5566-7788-99aa-bbccddeeff00",
+      "completionSignal": "success",
+      "completionSignalSource": "send_message",
+      "capturedOutput": "",
+      "artifacts": {}
+     },
+     {
+      "nodeId": "code",
+      "type": "step",
+      "status": "paused",
+      "agentName": "example-agent",
+      "startedAt": "2026-09-01T10:01:01.000Z",
+      "sessionId": "sess_a1b2c3d4-5566-7788-99aa-bbccddeeff00",
+      "completionSignal": "need_input",
+      "completionSignalSource": "send_message",
+      "capturedOutput": "",
+      "artifacts": {}
+     }
+    ],
+    "startedAt": "2026-09-01T10:00:00.900Z"
+   },
+   {
+    "nodeId": "land",
+    "type": "step",
+    "status": "pending"
+   }
+  ],
+  "startedAt": "2026-09-01T10:00:00.500Z"
+ },
+ "createdAt": "2026-09-01T10:00:00.000Z",
+ "planRevision": 0,
+ "parentSessionId": "sess_c0ffee01-2222-3333-4444-555555555555",
+ "rootConversationId": "sess_c0ffee01-2222-3333-4444-555555555555",
+ "workspacePath": "/workspace",
+ "parentModelId": "example-model",
+ "parentEffortLevel": "high",
+ "pauseReason": "a step requested user input"
+}

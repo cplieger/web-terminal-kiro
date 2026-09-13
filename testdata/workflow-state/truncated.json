@@ -1,0 +1,29 @@
+{
+ "workflowId": "wf_1111111111111111",
+ "workflowName": "example-workflow",
+ "status": "running",
+ "inputs": {},
+ "artifacts": {},
+ "capturedOutputs": {},
+ "root": {
+  "nodeId": "wf_1111111111111111",
+  "type": "sequence",
+  "status": "running",
+  "children": [
+   {
+    "nodeId": "build",
+    "type": "step",
+    "status": "running",
+    "agentName": "example-agent",
+    "startedAt": "2026-09-01T10:00:01.000Z",
+    "modelId": "example-model",
+    "effortLevel": "high",
+    "sessionId": "sess_a1b2c3d4-5566-7788-99aa-bbccddeeff00"
+   },
+   {
+    "nodeId": "review",
+    "type": "step",
+    "status": "pending",
+    "agentName": "example-agent",
+    "modelId": "example-model",
+    "effortLevel": "hig
