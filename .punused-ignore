@@ -12,3 +12,18 @@
 # (TestAtStagePreservesTheMessageAndTheChain). The method is load-bearing and
 # permanently call-site-free.
 method (*stageError).Unwrap
+
+
+# --- Workflow-mark watcher (workflowmark.go): staged behind an unreleased engine
+# API, so its entry point has no production caller YET.
+#
+# Run is the poller's goroutine entry, the shape sessionTitleSync.Run already
+# has. What is missing is the join: main.go can only construct the watcher and
+# pass its reading to terminal.NewSessionManager once the engine publishes
+# WithSessionActivity and go.mod picks that release up. Until then the type is
+# exercised by its tests alone, which is what punused reports.
+#
+# DELETE this entry in the same commit that wires the watcher up. It is the only
+# thing keeping the gap visible, so leaving it behind would hide a watcher that
+# silently never runs.
+method (*workflowWatch).Run
