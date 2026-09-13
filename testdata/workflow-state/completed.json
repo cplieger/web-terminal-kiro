@@ -1,0 +1,34 @@
+{
+ "workflowId": "wf_4444444444444444",
+ "workflowName": "example-workflow",
+ "status": "completed",
+ "inputs": {},
+ "artifacts": {},
+ "capturedOutputs": {},
+ "root": {
+  "nodeId": "wf_4444444444444444",
+  "type": "sequence",
+  "status": "completed",
+  "children": [
+   {
+    "nodeId": "build",
+    "type": "step",
+    "status": "completed",
+    "startedAt": "2026-09-01T10:00:01.000Z",
+    "endedAt": "2026-09-01T10:05:00.000Z",
+    "sessionId": "sess_a1b2c3d4-5566-7788-99aa-bbccddeeff00",
+    "completionSignal": "success",
+    "completionSignalSource": "send_message"
+   }
+  ],
+  "startedAt": "2026-09-01T10:00:00.500Z",
+  "endedAt": "2026-09-01T10:05:00.000Z"
+ },
+ "createdAt": "2026-09-01T10:00:00.000Z",
+ "planRevision": 0,
+ "parentSessionId": "sess_c0ffee01-2222-3333-4444-555555555555",
+ "rootConversationId": "sess_c0ffee01-2222-3333-4444-555555555555",
+ "workspacePath": "/workspace",
+ "parentModelId": "example-model",
+ "parentEffortLevel": "high"
+}

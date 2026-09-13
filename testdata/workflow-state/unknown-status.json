@@ -1,0 +1,20 @@
+{
+ "workflowId": "wf_7777777777777777",
+ "workflowName": "example-workflow",
+ "status": "suspended",
+ "inputs": {},
+ "artifacts": {},
+ "capturedOutputs": {},
+ "root": {
+  "nodeId": "wf_7777777777777777",
+  "type": "sequence",
+  "status": "suspended"
+ },
+ "createdAt": "2026-09-01T10:00:00.000Z",
+ "planRevision": 0,
+ "parentSessionId": "sess_c0ffee01-2222-3333-4444-555555555555",
+ "rootConversationId": "sess_c0ffee01-2222-3333-4444-555555555555",
+ "workspacePath": "/workspace",
+ "parentModelId": "example-model",
+ "parentEffortLevel": "high"
+}

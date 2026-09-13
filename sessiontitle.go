@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -88,6 +89,13 @@ type sessionTitleSync struct {
 	// mapping identity lets syncOne clear the old conversation's title when a hook re-points
 	// a tab. Touched only by the poller goroutine, so it needs no lock.
 	pushed map[terminal.SessionID]pushedTitle
+	// mapped is the tab -> kiro-session pairing pass() resolved, published for
+	// readers outside this type. It is recorded at MAPPING time rather than at
+	// title-push time, which is why it is not pushed: a tab that launched work
+	// before it has a usable title is absent from pushed and present here. Its own
+	// atomic.Pointer rather than mu or pushed's no-lock rule, so both of those
+	// comments stay true.
+	mapped atomic.Pointer[map[terminal.SessionID]string]
 	// handleByTab and tabByHandle are the same per-tab title handle indexed both ways:
 	// sessionEnv needs tab -> handle, the poller needs handle -> tab.
 	//
@@ -358,6 +366,9 @@ func (s *sessionTitleSync) pass(ctx context.Context, mgr titleSetter) {
 		// no-ops forever and nothing re-creates it.
 		slog.Debug("session title: state dir unreadable; no tab can be mapped until it is back",
 			"dir", s.stateDir, "error", err)
+		// An EMPTY publication, not an early return: a stale mapping outliving an
+		// unreadable state directory would keep naming pairings nothing can refresh.
+		s.mapped.Store(&map[terminal.SessionID]string{})
 		return
 	}
 	// One liveness snapshot per sweep rather than per entry: the manager takes its own
@@ -367,6 +378,9 @@ func (s *sessionTitleSync) pass(ctx context.Context, mgr titleSetter) {
 		live[info.ID] = struct{}{}
 	}
 	mapped := 0
+	// Rebuilt every sweep rather than mutated: the loop below already enumerates
+	// exactly the live mapped tabs, so the map is self-cleaning and has no delete site.
+	pairs := make(map[terminal.SessionID]string, len(entries))
 	// How many entries this sweep actually TREATED as mappings, which is what makes it the
 	// discriminator the zero-mapping record claims it is. len(entries) is the raw ReadDir
 	// snapshot and counts the two shapes the sweep never considers a mapping — a
@@ -404,8 +418,11 @@ func (s *sessionTitleSync) pass(ctx context.Context, mgr titleSetter) {
 			continue
 		}
 		mapped++
-		s.syncOne(ctx, mgr, e.Name(), tabID)
+		if kiroID := s.syncOne(ctx, mgr, e.Name(), tabID); kiroID != "" {
+			pairs[tabID] = kiroID
+		}
 	}
+	s.mapped.Store(&pairs)
 	if mapped == 0 && len(live) > 0 {
 		// Tabs exist and not one has a kiro session mapping, so every one keeps the engine's
 		// automatic cwd ladder. state_entries is the discriminator: 0 means no mapping-shaped
@@ -420,18 +437,19 @@ func (s *sessionTitleSync) pass(ctx context.Context, mgr titleSetter) {
 
 // syncOne maps one tab to its kiro session and pushes that session's title. handle is the
 // mapping file's name; tabID is what pass() resolved it to and the only one of the two the
-// engine understands.
-func (s *sessionTitleSync) syncOne(ctx context.Context, mgr titleSetter, handle string, tabID terminal.SessionID) {
+// engine understands. It returns the kiro session id it resolved, "" when it resolved none,
+// so pass() can publish the pairing whatever the title outcome was.
+func (s *sessionTitleSync) syncOne(ctx context.Context, mgr titleSetter, handle string, tabID terminal.SessionID) string {
 	kiroID, ok := s.readMapping(ctx, handle)
 	if !ok {
-		return
+		return ""
 	}
 	previous, pushed := s.pushed[tabID]
 	repointed := pushed && previous.kiroID != kiroID
 	title, ok := s.readTitle(ctx, kiroID)
 	if !ok {
 		if !repointed {
-			return
+			return kiroID
 		}
 		// The hook re-pointed this tab to a conversation with no usable title yet. Clear the
 		// old client rung so the tab falls through to the engine's automatic ladder instead
@@ -441,17 +459,17 @@ func (s *sessionTitleSync) syncOne(ctx context.Context, mgr titleSetter, handle 
 			s.forget(handle)
 		}
 		delete(s.pushed, tabID)
-		return
+		return kiroID
 	}
 	if pushed && !repointed && previous.title == title {
-		return
+		return kiroID
 	}
 	// A false return means the tab closed between this sweep's liveness snapshot and this
 	// push, so this arm is the within-sweep race backstop only.
 	if !mgr.SetSessionTitle(tabID, title) {
 		delete(s.pushed, tabID)
 		s.forget(handle)
-		return
+		return kiroID
 	}
 	s.pushed[tabID] = pushedTitle{kiroID: kiroID, title: title}
 	// The title is kiro-cli's verbatim copy of the user's first message, so this record
@@ -463,13 +481,24 @@ func (s *sessionTitleSync) syncOne(ctx context.Context, mgr titleSetter, handle 
 	slog.Debug("session title: adopted kiro session title",
 		"title_handle", handle, "kiro_session", kiroID,
 		"title_runes", utf8.RuneCountInString(title))
+	return kiroID
+}
+
+// mappedSessions returns the tab -> kiro-session pairing the last sweep published, nil
+// before the first sweep. The returned map is READ-ONLY: every reader shares it, and a
+// sweep replaces it rather than mutating it.
+func (s *sessionTitleSync) mappedSessions() map[terminal.SessionID]string {
+	if pairs := s.mapped.Load(); pairs != nil {
+		return *pairs
+	}
+	return nil
 }
 
 // readMapping reads the handle -> kiro-session-id file the hook wrote. The value is
 // validated as a kiro session id rather than trusted: it is interpolated into a filesystem
 // path below, and the file is written by a shell hook this app does not execute itself.
 func (s *sessionTitleSync) readMapping(ctx context.Context, handle string) (string, bool) {
-	raw, err := readSmallFile(ctx, filepath.Join(s.stateDir, handle))
+	raw, err := readSmallFile(ctx, filepath.Join(s.stateDir, handle), maxTitleFileBytes)
 	if err != nil {
 		// pass() just enumerated this entry, so any failure here is abnormal — EACCES, a
 		// refused symlink/FIFO, an oversized file — not absence.
@@ -522,7 +551,7 @@ func (s *sessionTitleSync) readTitle(ctx context.Context, kiroID string) (string
 // lookup as "no title" rather than sending the scan on. A record that could not be READ at
 // all is the miss that keeps scanning.
 func (s *sessionTitleSync) titleFromRecord(ctx context.Context, hashDir, kiroID string) (string, bool) {
-	raw, err := readSmallFile(ctx, filepath.Join(s.sessionsRoot, hashDir, kiroID, "session.json"))
+	raw, err := readSmallFile(ctx, filepath.Join(s.sessionsRoot, hashDir, kiroID, "session.json"), maxTitleFileBytes)
 	if err != nil {
 		// ENOENT is the normal miss (the session lives under one hash dir); anything else
 		// silently kills this tab's title, the failure class readTitle's comment says a
@@ -565,13 +594,15 @@ func (s *sessionTitleSync) forget(handle string) {
 	}
 }
 
-// readSmallFile reads at most maxTitleFileBytes from one of the two state files.
+// readSmallFile reads at most limit bytes from one machine-written state file. The bound is
+// the caller's because the files differ by orders of magnitude: a title mapping is a line,
+// a workflow run record carries one free-text agent report per step.
 // atomicfile.OpenRegular is the library's open-a-file-in-a-directory-others-can-write
 // sequence — O_NOFOLLOW, O_NONBLOCK so a planted FIFO is refused instead of blocking this
 // goroutine in open(2), and a stat of the OPEN HANDLE rather than of the pathname a second
 // time — and ReadBoundedFile applies the byte bound to that same descriptor, refusing a
 // larger file rather than truncating it.
-func readSmallFile(ctx context.Context, path string) ([]byte, error) {
+func readSmallFile(ctx context.Context, path string, limit int) ([]byte, error) {
 	f, _, err := atomicfile.OpenRegular(path)
 	if err != nil {
 		return nil, err
@@ -580,7 +611,7 @@ func readSmallFile(ctx context.Context, path string) ([]byte, error) {
 	// The sweep's context, not context.Background(): ReadBoundedFile checks
 	// ctx.Err() at entry and mid-read, so a Background context would make the
 	// poller's file reads unabandonable at shutdown for no gain.
-	return atomicfile.ReadBoundedFile(ctx, f, maxTitleFileBytes)
+	return atomicfile.ReadBoundedFile(ctx, f, int64(limit))
 }
 
 // validKiroSessionID gates the id read out of a mapping file before it becomes a path

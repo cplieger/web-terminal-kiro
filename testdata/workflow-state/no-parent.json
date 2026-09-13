@@ -1,0 +1,27 @@
+{
+ "workflowId": "wf_8888888888888888",
+ "workflowName": "example-workflow",
+ "status": "running",
+ "inputs": {},
+ "artifacts": {},
+ "capturedOutputs": {},
+ "root": {
+  "nodeId": "wf_8888888888888888",
+  "type": "sequence",
+  "status": "running",
+  "children": [
+   {
+    "nodeId": "build",
+    "type": "step",
+    "status": "running",
+    "sessionId": "sess_a1b2c3d4-5566-7788-99aa-bbccddeeff00"
+   }
+  ]
+ },
+ "createdAt": "2026-09-01T10:00:00.000Z",
+ "planRevision": 0,
+ "rootConversationId": "sess_c0ffee01-2222-3333-4444-555555555555",
+ "workspacePath": "/workspace",
+ "parentModelId": "example-model",
+ "parentEffortLevel": "high"
+}
