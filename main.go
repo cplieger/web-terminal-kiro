@@ -444,8 +444,12 @@ func run() error {
 	// container. A refused directory is a warn, and it is AUTHORITATIVE for both
 	// consumers: no tab gets the title variables, the poller never starts, and the
 	// engine's automatic ladder names every tab.
-	titles := newSessionTitleSync(titleStateRoot, envx.String("HOME"))
+	home := envx.String("HOME")
+	titles := newSessionTitleSync(titleStateRoot, home)
 	sessionTitleEnv := enableSessionTitles(titles)
+	// The only join from a workflow run's parentSessionId to a tab is the title
+	// poller's mapping, so the two share that verdict: no mapping, no mark.
+	workflows := newWorkflowWatch(home, titles.mappedSessions)
 
 	// The subsystem teardown, named once and deferred once, so a third subsystem is
 	// added in one place. Every return below runs it.
@@ -484,6 +488,7 @@ func run() error {
 		cmd:             kiro.cmd,
 		sessionEnv:      kiro.env,
 		sessionTitleEnv: sessionTitleEnv,
+		sessionActivity: workflows.sessionActivity,
 		workDir:         workDir,
 		scrollback:      scrollback,
 		ready:           &ready,
@@ -537,6 +542,7 @@ func run() error {
 	// verification exists to prevent.
 	if sessionTitleEnv != nil {
 		go titles.Run(baseCtx, mgr)
+		go workflows.Run(baseCtx, mgr)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(),

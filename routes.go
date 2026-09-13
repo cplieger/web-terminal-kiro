@@ -81,6 +81,10 @@ type routeDeps struct {
 	// session id — see sessiontitle.go). A nil function leaves tabs on the engine's
 	// automatic name ladder.
 	sessionTitleEnv func(id terminal.SessionID) []string
+	// sessionActivity reports one tab's SECONDARY state — what a workflow run launched
+	// in it is doing — which the engine carries beside Status and never merges into it.
+	// A nil function OMITS the option, so every tab's activity stays empty.
+	sessionActivity func(id terminal.SessionID) terminal.SessionActivity
 	// scrollback is the operator's retained-history depth, or nil when unset (the
 	// option is then OMITTED and the engine's own default applies). A POINTER
 	// because 0 is a legal depth meaning "retain nothing" — an int sentinel would
@@ -119,10 +123,14 @@ func buildStaticSurface(staticFS fs.FS) (http.Handler, string, error) {
 func registerRoutes(mux *http.ServeMux, deps *routeDeps) *terminal.SessionManager {
 	mux.Handle("/", deps.static)
 
-	mgr := terminal.NewSessionManager(newSessionFactory(deps),
+	mgrOpts := []terminal.ManagerOption{
 		terminal.WithManagerLogger(slog.Default()),
 		terminal.WithStatusClassifier(newStatusClassifier(deps.logOSCText)),
-	)
+	}
+	if deps.sessionActivity != nil {
+		mgrOpts = append(mgrOpts, terminal.WithSessionActivity(deps.sessionActivity))
+	}
+	mgr := terminal.NewSessionManager(newSessionFactory(deps), mgrOpts...)
 
 	// The engine owns its route topology: MountAPI wires exactly its documented set,
 	// so no engine-internal route can appear on this unauthenticated surface

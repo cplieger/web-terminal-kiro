@@ -219,13 +219,23 @@ func (w *workflowWatch) mark(id terminal.SessionID) workflowMark {
 	return workflowMark{}
 }
 
+// sessionActivity is the terminal.WithSessionActivity getter. The engine PULLS it from
+// three goroutines -- the status sweep, every List and each new SSE subscriber -- so it
+// must stay lock-free and do no I/O; mark loads one atomic.Pointer. Count is the TOTAL,
+// which is what the one rendered mark words its tooltip from.
+func (w *workflowWatch) sessionActivity(id terminal.SessionID) terminal.SessionActivity {
+	mark := w.mark(id)
+	return terminal.SessionActivity{State: mark.State, Count: mark.Tally.Total}
+}
+
 // pass runs one sweep: admit every run whose status, parent tab and file age all pass, fold
 // the survivors per tab, and publish.
 func (w *workflowWatch) pass(ctx context.Context, mgr workflowSessions) {
 	// One liveness snapshot per sweep, so every run is judged against the same picture.
-	live := make(map[terminal.SessionID]time.Time)
-	for _, info := range mgr.List() {
-		live[info.ID] = info.CreatedAt
+	sessions := mgr.List()
+	live := make(map[terminal.SessionID]time.Time, len(sessions))
+	for i := range sessions {
+		live[sessions[i].ID] = sessions[i].CreatedAt
 	}
 	admitted := w.admit(ctx, live, w.tabsByKiroSession(live))
 	marks := make(map[terminal.SessionID]workflowMark, len(admitted))
