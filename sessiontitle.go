@@ -374,8 +374,9 @@ func (s *sessionTitleSync) pass(ctx context.Context, mgr titleSetter) {
 	// One liveness snapshot per sweep rather than per entry: the manager takes its own
 	// lock, and every mapping is then judged against the same picture.
 	live := make(map[terminal.SessionID]struct{}, len(entries))
-	for _, info := range mgr.List() {
-		live[info.ID] = struct{}{}
+	sessions := mgr.List()
+	for i := range sessions {
+		live[sessions[i].ID] = struct{}{}
 	}
 	mapped := 0
 	// Rebuilt every sweep rather than mutated: the loop below already enumerates
