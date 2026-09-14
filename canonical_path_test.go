@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/web-terminal-engine/v5/terminal"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // loopbackRequest returns a request shaped like the ONE sender the guarded
