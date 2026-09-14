@@ -23,7 +23,7 @@ import (
 	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v5/terminal"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // fakeCLI writes an executable shell stub standing in for kiro-cli. Its whoami

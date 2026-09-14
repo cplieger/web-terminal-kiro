@@ -28,6 +28,8 @@ github.com/cplieger/web-terminal-engine/v5 v5.2.0 h1:ek5Lg5P5lYEmqZjclWOorj1xS/h
 github.com/cplieger/web-terminal-engine/v5 v5.2.0/go.mod h1:ZAPR9a5oGBjpaWNEUIcoHwwfHn1SufNR0en1T91/JFg=
 github.com/cplieger/webhttp/v2 v2.2.0 h1:o1iHw6ZxWKPRbUaL7arO36XAewhYXgq2arZ8KjkVwyc=
 github.com/cplieger/webhttp/v2 v2.2.0/go.mod h1:g0vbWk/TRByvS72jimOby/VGBdCJzx7/hvUXG+KbeXE=
+github.com/cplieger/webhttp/v3 v3.0.0 h1:CHA5wZyGXVb9wb6VYEbxrhQRIwDpiJs42AVulR4WCns=
+github.com/cplieger/webhttp/v3 v3.0.0/go.mod h1:6WFRE4jqkwTBp/bsgpWyCOm21RMhv4UJaM6Y754y1uE=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
 github.com/expr-lang/expr v1.17.8 h1:W1loDTT+0PQf5YteHSTpju2qfUfNoBt4yw9+wOEU9VM=
