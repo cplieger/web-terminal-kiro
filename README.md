@@ -270,6 +270,8 @@ in `docker ps` without a restart loop.
 | Debian trixie-slim | Base image, digest-pinned; `apt-get upgrade` runs at build time. |
 | `kiro-cli` | Downloaded and digest-verified at first boot, never baked into the image (licensing). |
 | `web-terminal-engine`, `@cplieger/web-terminal-ui` | The PTY/VT engine and the browser UI. |
+| Monaspace Neon NF | The terminal's text webfont, fetched at build time and digest-verified per face. |
+| `web-terminal-glyphs` | The tiling-glyph overlay listed ahead of it (box drawing, blocks, shades, braille, mosaics), fetched at build time and digest-verified. Its released cell contract gates the build against the CSS actually served. |
 | `toolbelt`, `tool-catalog` | The tools engine and the registry it installs from. |
 | `pinstall` | The version-addressed, digest-verified kiro-cli installer. |
 | `webhttp`, `envx`, `slogx`, `atomicfile` | HTTP plumbing, env parsing, slog setup, atomic writes. |
@@ -298,3 +300,10 @@ This project was built with AI-assisted tooling using [Claude](https://claude.co
 ## License
 
 MPL-2.0. See [LICENSE](LICENSE).
+
+The image redistributes two web fonts under their own licences, each served
+beside the font it covers. Monaspace Neon NF is under the SIL Open Font License
+1.1 (`/vendor/fonts/MonaspaceNeonNF-LICENSE`). Web Terminal Glyphs, the tiling
+overlay listed ahead of it, is under Apache-2.0
+(`/vendor/fonts/WebTerminalGlyphs-LICENSE`, with its
+`/vendor/fonts/WebTerminalGlyphs-NOTICE`).

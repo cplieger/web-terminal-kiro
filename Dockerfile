@@ -95,18 +95,31 @@ RUN ARCH=$(dpkg --print-architecture) && \
 # regression in v2.8.0 — these faces declare 0.945em ascent + 0.200em
 # descent where the patched OTFs carried 0.995em + 0.250em, which is
 # shorter than the terminal's 17px cell, so every row of application
-# background gained a 1px unpainted stripe. web-terminal-ui's page.css
-# now restores the OTF pair with ascent-override/descent-override and
-# pins it against the cell height in its own test suite; a Monaspace
-# bump that changes those tables again needs that override re-measured,
-# not just these sha pins refreshed.
+# background gained a 1px unpainted stripe. web-terminal-ui's page.css used to
+# restore the OTF pair with ascent-override/descent-override; it no longer
+# does, because the row background is the run padding now and the cell owes
+# the metrics nothing. What a Monaspace bump that moves those tables DOES
+# need is the overlay's copied metrics re-measured — and no gate in this image
+# can do that. The cell-contract gate below opens no font file, and the
+# overlay's own build is forbidden from reading a Monaspace one, so its
+# companion numbers are constants in cell.json rather than a measurement.
+# Re-measuring them is a manual step in cplieger/web-terminal-glyphs whenever
+# this pin moves.
 # The faces grow the web-terminal-kiro
 # binary via go:embed and ship pre-compressed over the wire.
+#
+# Its LICENSE travels with them: the SIL Open Font License 1.1 requires the
+# copyright notice and the licence text to accompany every copy of the font,
+# and serving the four woff2 files IS a copy. Every licence file lands under
+# the name of the family it covers, because two differently-licensed families
+# share this directory and a bare LICENSE beside five woff2 files names neither.
 # renovate: datasource=github-releases depName=githubnext/monaspace
 ARG MONASPACE_VERSION=v1.400
-# sha256 per face for this tag. Raw files at a git tag are as mutable as
+# sha256 per asset for this tag. Raw files at a git tag are as mutable as
 # GitHub release assets (a force-pushed tag swaps the bytes under a fixed
 # ref), so these gates are the real integrity anchor here.
+# repin: dep=githubnext/monaspace url=https://raw.githubusercontent.com/githubnext/monaspace/{version}/LICENSE dest=MonaspaceNeonNF-LICENSE
+ARG MONASPACE_LICENSE_SHA256=0e84e5f7dd6f05e74a00f2fb828ca43e489d954f5509ff0fa439ea18c0d35fe9
 # repin: dep=githubnext/monaspace url=https://raw.githubusercontent.com/githubnext/monaspace/{version}/fonts/Web%20Fonts/NerdFonts%20Web%20Fonts/Monaspace%20Neon/MonaspaceNeonNF-Regular.woff2
 ARG MONASPACE_REGULAR_SHA256=8063ea45b6997c658035a4d876f996ecfa306c88fd0541d35d533fb1f9400c84
 # repin: dep=githubnext/monaspace url=https://raw.githubusercontent.com/githubnext/monaspace/{version}/fonts/Web%20Fonts/NerdFonts%20Web%20Fonts/Monaspace%20Neon/MonaspaceNeonNF-Bold.woff2
@@ -115,6 +128,38 @@ ARG MONASPACE_BOLD_SHA256=45f56dceff8e569d61b6e3168fe208432e7bf0bc3e56e41b4d754c
 ARG MONASPACE_ITALIC_SHA256=3d77eb9a5ec9e32c5ac7ea49c4325e5d6c8e5fefda7317527de905130a88f3cf
 # repin: dep=githubnext/monaspace url=https://raw.githubusercontent.com/githubnext/monaspace/{version}/fonts/Web%20Fonts/NerdFonts%20Web%20Fonts/Monaspace%20Neon/MonaspaceNeonNF-BoldItalic.woff2
 ARG MONASPACE_BOLDITALIC_SHA256=5dffc9465be18eb63263671f1f3ba266ede49043cb6b3edcd65ea993c909b3aa
+
+# cplieger/web-terminal-glyphs is the tiling-glyph overlay: box drawing, block
+# elements, shades, braille, Powerline and the Unicode mosaic blocks, drawn for
+# Monaspace Neon NF's 1240/2000 em advance at 14px on a 17px row. It carries no
+# letters, no digits and no space, which is why 00-tokens.css lists it FIRST in
+# --font-mono and the text face behind it keeps its metrics and its look. It is
+# what makes those ranges TILE: a font glyph cannot know its cell, so the text
+# face's own box drawing leaves seams between rows and its shade lattices have
+# periods that do not divide the cell. One asset serves four @font-face
+# descriptor sets; the outlines are upright by design and must never be slanted
+# or thickened.
+#
+# LICENSE and NOTICE are served beside the font: this repo is public and the font
+# file is redistributed under Apache-2.0, whose section 4 requires both to travel
+# with it. cell.json is the released CELL CONTRACT — the companion's advance and
+# metrics, and the 14px/17px cell those glyphs are drawn for — and it is fetched
+# for the gate after the CSS bundle rather than for the browser. The gate reads
+# the CSS-side half of it (the stack and the cell numbers); the companion fields
+# describe the font FILE, travel under the same release digest as the font, and
+# are asserted against it in the overlay repo's own geometry tier. It lands in
+# the same directory under the same per-family name so one derivation serves the
+# image and scripts/dev-build.sh.
+# renovate: datasource=github-releases depName=cplieger/web-terminal-glyphs
+ARG WEB_TERMINAL_GLYPHS_VERSION=v1.0.0
+# repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/WebTerminalGlyphs.woff2
+ARG WEB_TERMINAL_GLYPHS_SHA256=96985da8241efdad06fc3d9e95030bb3c3e0fe93733f2885e81e538f7865dc9c
+# repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/cell.json dest=WebTerminalGlyphs-cell.json
+ARG WEB_TERMINAL_GLYPHS_CELL_SHA256=794cc28b5b2fbcf34e860911a6a8bb11bc1628a10ced27ce76cd038a240b35eb
+# repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/LICENSE dest=WebTerminalGlyphs-LICENSE
+ARG WEB_TERMINAL_GLYPHS_LICENSE_SHA256=c95bae1d1ce0235ecccd3560b772ec1efb97f348a79f0fbe0a634f0c2ccefe2c
+# repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/NOTICE dest=WebTerminalGlyphs-NOTICE
+ARG WEB_TERMINAL_GLYPHS_NOTICE_SHA256=fceae1c7790ae9ae77e0dd0e4241c342bde487b2f50a4a09576b779c34c7b2a9
 
 WORKDIR /build
 COPY go.mod go.sum ./
@@ -185,16 +230,17 @@ RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.
     go tool toolcatalog verify -catalog /tmp/tool-catalog.json -require required-tools.txt \
       -overlay bundled-tools.json
 
-# Fetch the Monaspace Neon NF webfonts for the monospace terminal display.
+# Fetch the terminal's two web fonts: the Monaspace Neon NF text faces and the
+# Web Terminal Glyphs tiling overlay listed ahead of them.
 #
-# Each face is verified in the SAME loop iteration that downloads it, so the
-# downloaded set and the verified set are one list by construction: a face added
-# to the loop with no matching sha ARG dies on the `*)` arm instead of shipping
+# Each asset is verified in the SAME loop iteration that downloads it, so the
+# downloaded set and the verified set are one list by construction: an asset added
+# to a loop with no matching sha ARG dies on the `*)` arm instead of shipping
 # unverified. `set -e` is what makes the per-iteration check bite -- a for-loop's
 # status is only its LAST iteration's, so a failure inside an earlier one used to
-# be swallowed. These gates are the only integrity anchor here (the source is a
-# git tag, which a force-push can rewrite under a fixed ref), and the face list is
-# also read by scripts/dev-build.sh from the `# repin:` markers above.
+# be swallowed. These gates are the only integrity anchor here (one source is a
+# git tag, which a force-push can rewrite under a fixed ref), and both asset lists
+# are also read by scripts/dev-build.sh from the `# repin:` markers above.
 RUN set -e; mkdir -p static/vendor/fonts; \
     for face in Regular Bold Italic BoldItalic; do \
       case "$face" in \
@@ -208,6 +254,23 @@ RUN set -e; mkdir -p static/vendor/fonts; \
         -o "static/vendor/fonts/MonaspaceNeonNF-${face}.woff2" \
         "https://raw.githubusercontent.com/githubnext/monaspace/${MONASPACE_VERSION}/fonts/Web%20Fonts/NerdFonts%20Web%20Fonts/Monaspace%20Neon/MonaspaceNeonNF-${face}.woff2"; \
       printf '%s  static/vendor/fonts/MonaspaceNeonNF-%s.woff2\n' "$face_sha" "$face" | sha256sum -c -; \
+    done; \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL \
+      -o static/vendor/fonts/MonaspaceNeonNF-LICENSE \
+      "https://raw.githubusercontent.com/githubnext/monaspace/${MONASPACE_VERSION}/LICENSE"; \
+    printf '%s  static/vendor/fonts/MonaspaceNeonNF-LICENSE\n' "$MONASPACE_LICENSE_SHA256" | sha256sum -c -; \
+    for asset in WebTerminalGlyphs.woff2 cell.json LICENSE NOTICE; do \
+      case "$asset" in \
+        WebTerminalGlyphs.woff2) asset_sha="$WEB_TERMINAL_GLYPHS_SHA256"; dest=WebTerminalGlyphs.woff2 ;; \
+        cell.json) asset_sha="$WEB_TERMINAL_GLYPHS_CELL_SHA256"; dest=WebTerminalGlyphs-cell.json ;; \
+        LICENSE) asset_sha="$WEB_TERMINAL_GLYPHS_LICENSE_SHA256"; dest=WebTerminalGlyphs-LICENSE ;; \
+        NOTICE) asset_sha="$WEB_TERMINAL_GLYPHS_NOTICE_SHA256"; dest=WebTerminalGlyphs-NOTICE ;; \
+        *) echo "ERROR font-sha-missing: no sha256 ARG for glyph asset $asset" >&2; exit 1 ;; \
+      esac; \
+      curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL \
+        -o "static/vendor/fonts/${dest}" \
+        "https://github.com/cplieger/web-terminal-glyphs/releases/download/${WEB_TERMINAL_GLYPHS_VERSION}/${asset}"; \
+      printf '%s  static/vendor/fonts/%s\n' "$asset_sha" "$dest" | sha256sum -c -; \
     done
 
 # Fetch the engine + UI TypeScript from the npm registry. Both publish TS
@@ -227,9 +290,9 @@ ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=5.2.0
 # repin: dep=@cplieger/web-terminal-engine url=https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-{version}.tgz
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=75245585ffff54f64e89a05f6b1b715dd234fbfc3952768277c01268ff69f129
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=7.2.2
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=7.3.0
 # repin: dep=@cplieger/web-terminal-ui url=https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=0c51e93529c27e7d0b8d0ef75d464d84f35ab5f276717fbf9bc8f4b514c1e522
+ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=a19ed90abf0738fd6803805c06039f4fb5f8179ef5dfc9f8aabaf74296fbd360
 # Pin gate (client-bundle parity): the SERVED client bundle is built from the
 # ARG-pinned npm tarballs above while static-src/package.json pins what local
 # dev compiles against — nothing else fails when they disagree, which is
@@ -365,6 +428,34 @@ RUN /tmp/package/lib/tsc --project static-src/tsconfig.json && \
 # Concatenate the UI package's per-feature CSS splits into the served bundle
 # (canonical recipe: scripts/css-bundle.sh, shared with scripts/dev-build.sh).
 RUN sh scripts/css-bundle.sh static-src/node_modules/@cplieger/web-terminal-ui/css static/style.css
+
+# Cell-contract gate (the served CSS vs the released contract): the overlay's
+# glyphs are drawn for ONE cell -- Monaspace's 1240/2000 em advance, its metrics
+# copied, at 14px on a 17px row -- and are wrong at any other, while the overlay
+# pin and the UI pin move in separate Renovate PRs. So the pairing is governed by
+# the released cell.json rather than by version strings, and a bump on either
+# side that moves the cell must fail HERE: the alternative is a silently
+# reflowed terminal, or an emboldened stand-in drawn over box drawing, behind a
+# green build and a healthy /api/health. It runs after the fonts AND after the
+# CSS bundle above, because what it compares is the bundle this build just
+# served plus the assets beside it.
+#
+# It opens NO font file, and that is the design rather than a gap: every asset
+# fetched above is pinned by sha256 from the same release as cell.json, so the
+# bytes are already fixed, and the font's own agreement with that document is
+# asserted in the overlay repo's geometry tier. What only this image can see is
+# the CSS a DIFFERENT release built beside the fonts a third pin fetched.
+# `fontcheck -h` states the whole chain.
+#
+# BUILT, not `go run`, for the reason the wire-floor gate above states: the exit
+# code is the contract (0 the contract holds, 1 a pin or the CSS has to move,
+# 2 the gate itself is broken and no pin should move), and `go run` reports its
+# own 1 for any non-zero program exit, collapsing "fix the gate" into "bump a
+# pin". The binary goes into a tmpfs mount, so it lands in no layer.
+RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=tmpfs,target=/tmp/fontcheck-bin \
+    go build -o /tmp/fontcheck-bin/fontcheck ./scripts/fontcheck && \
+    /tmp/fontcheck-bin/fontcheck -cell static/vendor/fonts/WebTerminalGlyphs-cell.json -css static/style.css -fonts static/vendor/fonts
 
 # Build the Go binary with static assets embedded via go:embed.
 # CGO disabled so the binary runs on any glibc.
