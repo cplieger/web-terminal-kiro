@@ -290,9 +290,9 @@ ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=5.2.0
 # repin: dep=@cplieger/web-terminal-engine url=https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-{version}.tgz
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=75245585ffff54f64e89a05f6b1b715dd234fbfc3952768277c01268ff69f129
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=7.3.0
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=7.3.1
 # repin: dep=@cplieger/web-terminal-ui url=https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=a19ed90abf0738fd6803805c06039f4fb5f8179ef5dfc9f8aabaf74296fbd360
+ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=fade0299d4d0fb2305e7a7580307fd68d1a53310dd9e6204f7f24bf75aa02be3
 # Pin gate (client-bundle parity): the SERVED client bundle is built from the
 # ARG-pinned npm tarballs above while static-src/package.json pins what local
 # dev compiles against — nothing else fails when they disagree, which is
