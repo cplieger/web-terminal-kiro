@@ -1,7 +1,7 @@
 # Roadmap
 
-Web Terminal for Kiro is a browser terminal wrapping a single kiro-cli PTY,
-now at **v2**. This document supersedes the
+Web Terminal for Kiro is a browser terminal wrapping a single kiro-cli PTY.
+This document supersedes the
 [default shared roadmap](https://github.com/cplieger/.github/blob/main/ROADMAP.md)
 for this repository.
 

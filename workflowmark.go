@@ -14,8 +14,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/cplieger/runesafe/v2"
@@ -39,11 +41,16 @@ const (
 
 	workflowsDirName      = "workflows"
 	workflowStateFileName = "workflow-state.json"
+	workflowBeatFileName  = "run.beat"
 
 	// Generous because capturedOutputs holds one free-text agent report per step, and the
 	// read REFUSES an over-bound file rather than truncating it, so too small a bound drops
 	// the biggest runs outright.
 	maxWorkflowStateBytes = 4 << 20
+
+	// Real beats measure 102-106 bytes; the bound exists because the file is written by a
+	// process this app does not run, and an over-bound read admits the run.
+	maxWorkflowBeatBytes = 4 << 10
 
 	workflowPollInterval = 2 * time.Second
 
@@ -58,7 +65,9 @@ const (
 // workflowState is the NARROW decode of one workflow-state.json. Every other field the
 // record carries -- workflowName, runLabel, inputs, artifacts, capturedOutputs -- is
 // deliberately absent: none of them is decoded, so none of them can reach a log sink, which
-// is what keeps the sanitize question answerable in one place (noteUnknownStatus).
+// is what keeps the sanitize question answerable in one place (noteUnknownStatus). The two
+// id families that ARE decoded, parentSessionId and each node's sessionId, are gated by
+// validKiroSessionID before they are used and never logged, so the invariant survives them.
 type workflowState struct {
 	Status          string       `json:"status"`
 	ParentSessionID string       `json:"parentSessionId"`
@@ -66,8 +75,17 @@ type workflowState struct {
 }
 
 type workflowNode struct {
-	CompletionSignal string         `json:"completionSignal"`
-	Children         []workflowNode `json:"children"`
+	CompletionSignal string `json:"completionSignal"`
+	// The kiro session KAS created for this step. Decoded because the tab's mapping names
+	// the RUNNING step's session, not the launching one, for most of a run's life.
+	SessionID string         `json:"sessionId"`
+	Children  []workflowNode `json:"children"`
+}
+
+// workflowBeat is the NARROW decode of one run.beat, for workflowState's reason: neither
+// instanceId nor stampedAt can decide liveness from here, so neither reaches a log sink.
+type workflowBeat struct {
+	PID int `json:"pid"`
 }
 
 // workflowTally is the census behind one tab's fold.
@@ -107,25 +125,59 @@ func knownWorkflowStatus(status string) bool {
 	return false
 }
 
-// anyNodeNeedsInput reports whether any node carries completionSignal == "need_input".
-// Iterative with an explicit stack and a node budget, so a corrupt deeply-nested file cannot
-// spend unbounded work; exhausting the budget answers false, which reads as waiting rather
-// than claiming the user's attention. completionSignalSource is deliberately not decoded:
-// every signalled node in the measured corpus carries source=send_message, so it discriminates
-// nothing.
-func anyNodeNeedsInput(root *workflowNode) bool {
+// walkWorkflowNodes visits every node of one run's tree until visit answers true. Iterative
+// with an explicit stack and a node budget, so a corrupt deeply-nested file cannot spend
+// unbounded work; the budget is spent one node per POP, so an exhausted walk simply stops
+// where it is and every caller has to be correct on a partial answer.
+func walkWorkflowNodes(root *workflowNode, visit func(*workflowNode) bool) {
 	stack := []*workflowNode{root}
 	for budget := maxWorkflowNodes; len(stack) > 0 && budget > 0; budget-- {
 		node := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if node.CompletionSignal == workflowSignalNeedInput {
-			return true
+		if visit(node) {
+			return
 		}
 		for i := range node.Children {
 			stack = append(stack, &node.Children[i])
 		}
 	}
-	return false
+}
+
+// anyNodeNeedsInput reports whether any node carries completionSignal == "need_input".
+// Exhausting the walk's budget answers false, which reads as waiting rather than claiming the
+// user's attention. completionSignalSource is deliberately not decoded: every signalled node
+// in the measured corpus carries source=send_message, so it discriminates nothing.
+func anyNodeNeedsInput(root *workflowNode) bool {
+	needsInput := false
+	walkWorkflowNodes(root, func(node *workflowNode) bool {
+		needsInput = node.CompletionSignal == workflowSignalNeedInput
+		return needsInput
+	})
+	return needsInput
+}
+
+// runSessionIDs returns the kiro sessions that OWN one run: the launching session first, then
+// every step's own session. Both families are the run, because KAS creates a step's session
+// inside the launching tab's kiro-cli process, and a COMPLETED step keeps its sessionId in the
+// tree -- which is what holds the mark lit over the gap between one step ending and the next
+// one prompting. Deduplicated, because a real record repeats one step's session id across
+// nodes and a repeat would count the same run twice in one tab's tally.
+func runSessionIDs(st *workflowState) []string {
+	seen := make(map[string]struct{}, 4)
+	owners := make([]string, 0, 4)
+	admit := func(id string) {
+		if _, dup := seen[id]; dup || !validKiroSessionID(id) {
+			return
+		}
+		seen[id] = struct{}{}
+		owners = append(owners, id)
+	}
+	admit(st.ParentSessionID)
+	walkWorkflowNodes(&st.Root, func(node *workflowNode) bool {
+		admit(node.SessionID)
+		return false
+	})
+	return owners
 }
 
 // foldWorkflowMarks folds one tab's admitted runs. Precedence input > waiting > working.
@@ -164,8 +216,8 @@ type workflowSessions interface{ List() []terminal.SessionInfo }
 // observed. An empty state means the run contributes nothing.
 type workflowVerdict struct {
 	modTime time.Time
-	parent  string
 	state   string
+	owners  []string
 	size    int64
 }
 
@@ -175,8 +227,9 @@ type workflowVerdict struct {
 // carries no mark.
 type workflowWatch struct {
 	// Replaced per pass, never mutated in place, so a reader needs no lock.
-	marks   atomic.Pointer[map[terminal.SessionID]workflowMark]
-	mapping func() map[terminal.SessionID]string
+	marks      atomic.Pointer[map[terminal.SessionID]workflowMark]
+	mapping    func() map[terminal.SessionID]string
+	probeAlive func(pid int) bool
 	// Both maps are touched only by the poller goroutine, so neither needs a lock.
 	verdicts        map[string]workflowVerdict
 	unknownStatuses map[string]struct{}
@@ -184,11 +237,12 @@ type workflowWatch struct {
 }
 
 // newWorkflowWatch builds the watcher. home is the HOME whose .kiro/sessions tree kiro-cli
-// writes; mapping is sessionTitleSync.mappedSessions, which is the only join from a run's
-// parentSessionId to a tab.
+// writes; mapping is sessionTitleSync.mappedSessions, which is the only join from one of a
+// run's own sessions to a tab.
 func newWorkflowWatch(home string, mapping func() map[terminal.SessionID]string) *workflowWatch {
 	return &workflowWatch{
 		mapping:         mapping,
+		probeAlive:      processAlive,
 		verdicts:        make(map[string]workflowVerdict),
 		unknownStatuses: make(map[string]struct{}),
 		sessionsRoot:    filepath.Join(home, ".kiro", "sessions"),
@@ -248,8 +302,8 @@ func (w *workflowWatch) pass(ctx context.Context, mgr workflowSessions) {
 }
 
 // tabsByKiroSession inverts the title poller's mapping to the join direction a run needs,
-// dropping any tab the liveness snapshot does not hold: a run's parentSessionId names a kiro
-// session, and one kiro session can be resumed in more than one tab.
+// dropping any tab the liveness snapshot does not hold: a run's owner set names kiro sessions,
+// and one kiro session can be resumed in more than one tab.
 func (w *workflowWatch) tabsByKiroSession(live map[terminal.SessionID]time.Time) map[string][]terminal.SessionID {
 	tabs := make(map[string][]terminal.SessionID, len(live))
 	for tab, kiroID := range w.mapping() {
@@ -272,20 +326,44 @@ func (w *workflowWatch) admit(ctx context.Context, live map[terminal.SessionID]t
 		}
 		verdict := w.verdictFor(ctx, path, fi)
 		seen[path] = verdict
-		if verdict.state == "" {
+		if w.refusesRun(ctx, path, verdict, tabs) {
 			continue
 		}
-		for _, tab := range tabs[verdict.parent] {
-			// The third admission clause, and deliberately not a freshness window: a run
-			// legitimately sits paused awaiting input overnight. "Written after the tab
-			// started" still refuses a run abandoned before this tab existed.
-			if !fi.ModTime().Before(live[tab]) {
-				admitted[tab] = append(admitted[tab], verdict.state)
+		// A tab carries ONE mapped session, so no tab is reachable through two owners and
+		// the tally cannot double-count a run.
+		for _, owner := range verdict.owners {
+			for _, tab := range tabs[owner] {
+				// The third admission clause, and deliberately not a freshness window: a run
+				// legitimately sits paused awaiting input overnight. "Written after the tab
+				// started" still refuses a run abandoned before this tab existed.
+				if !fi.ModTime().Before(live[tab]) {
+					admitted[tab] = append(admitted[tab], verdict.state)
+				}
 			}
 		}
 	}
 	w.verdicts = seen
 	return admitted
+}
+
+// refusesRun reports whether one run is refused for every tab; a false answer leaves admit's
+// per-tab clause to decide. The dead-writer clause refuses abandonment DURING the tab's life,
+// which admit's mtime clause structurally cannot see; it rests on the run's writer being a
+// descendant of this process, so a per-session PID namespace would make every pid read dead.
+func (w *workflowWatch) refusesRun(ctx context.Context, path string, verdict workflowVerdict, tabs map[string][]terminal.SessionID) bool {
+	// mapsToATab is an economy, not a gate -- admit iterates the owners, so a run no live tab
+	// maps to admits nothing anyway -- and it only spares the beat read.
+	return verdict.state == "" || !mapsToATab(verdict.owners, tabs) || w.writerIsDead(ctx, path)
+}
+
+// mapsToATab reports whether any of a run's owner sessions names a live tab.
+func mapsToATab(owners []string, tabs map[string][]terminal.SessionID) bool {
+	for _, owner := range owners {
+		if len(tabs[owner]) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // verdictFor answers from the cache while the file still carries the identity the cached
@@ -390,12 +468,73 @@ func (w *workflowWatch) classify(ctx context.Context, path string, previous work
 	if !ok {
 		return workflowVerdict{}, true
 	}
-	// The parent id is joined against the title poller's mapping, and the file is written by
-	// a process this app does not run: a value that is not a session id names no tab.
-	if !validKiroSessionID(st.ParentSessionID) {
+	// The owner ids are joined against the title poller's mapping, and the file is written by
+	// a process this app does not run: a record naming no valid session id names no tab. The
+	// return is an early-out, not a gate -- admit iterates the owners, so an empty set already
+	// admits nothing.
+	owners := runSessionIDs(&st)
+	if len(owners) == 0 {
 		return workflowVerdict{}, true
 	}
-	return workflowVerdict{parent: st.ParentSessionID, state: state}, true
+	return workflowVerdict{owners: owners, state: state}, true
+}
+
+// writerIsDead reports the one liveness proof that withdraws a mark: this run's run.beat
+// names a pid the kernel says is gone. Freshness is NOT readable from that file -- kiro-cli
+// only touches it while the run loop runs, and a run paused awaiting input leaves the mtime
+// frozen -- so the pid is the whole signal. Absent, unreadable, undecodable, a non-positive
+// pid or no probe all admit the run: the beat is written without a temp-plus-rename, so a
+// torn read is reachable, and 388 of 392 measured runs carry no run.beat at all.
+func (w *workflowWatch) writerIsDead(ctx context.Context, statePath string) bool {
+	path := filepath.Join(filepath.Dir(statePath), workflowBeatFileName)
+	raw, err := readSmallFile(ctx, path, maxWorkflowBeatBytes)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			slog.Debug("workflow mark: run beat unreadable", "error", err)
+		}
+		return false
+	}
+	var beat workflowBeat
+	if err := json.Unmarshal(raw, &beat); err != nil {
+		slog.Debug("workflow mark: run beat is not decodable", "error", err)
+		return false
+	}
+	return beat.PID > 0 && w.probeAlive != nil && !w.probeAlive(beat.PID)
+}
+
+// processAlive reports whether pid names a LIVE process. Only os.ErrProcessDone -- Go's
+// translation of ESRCH -- and a zombie answer false, because every other errno leaves the
+// question unanswered and an unanswered question must not blank a mark. A non-positive pid
+// answers true without a syscall: kill(0, 0) signals the caller's own process group.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return true
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return true
+	}
+	if errors.Is(proc.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+		return false
+	}
+	return !processIsZombie(pid)
+}
+
+// processIsZombie reports whether pid names a task that has exited and that nobody has reaped,
+// which a signal-0 probe still answers alive for. An unreadable /proc answers false.
+func processIsZombie(pid int) bool {
+	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return false
+	}
+	// comm is parenthesized and can hold spaces and parens itself, so the state is the field
+	// after the LAST ')'.
+	rest := string(raw)
+	if end := strings.LastIndexByte(rest, ')'); end >= 0 {
+		rest = rest[end+1:]
+	}
+	fields := strings.Fields(rest)
+	return len(fields) > 0 && fields[0] == "Z"
 }
 
 // publish stores the new snapshot and records the change. One line per pass in which the

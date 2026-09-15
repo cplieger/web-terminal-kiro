@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -15,6 +19,18 @@ import (
 // workflowFixtureParent is the synthetic parentSessionId every redacted fixture
 // carries; a test rewrites it to the kiro session it joins through.
 const workflowFixtureParent = "sess_c0ffee01-2222-3333-4444-555555555555"
+
+// The two step sessions the fixtures carry on their nodes. They are the run's
+// other owners: KAS runs each step as its own kiro session, so these are the ids a
+// tab's mapping actually names while the run is working.
+const (
+	workflowFixtureStepOne = "sess_a1b2c3d4-5566-7788-99aa-bbccddeeff00"
+	workflowFixtureStepTwo = "sess_b2c3d4e5-6677-8899-aabb-ccddeeff0011"
+)
+
+// workflowFixtureBeatPID is the placeholder pid run-beat.json carries; beat
+// rewrites it to the pid a case wants the probe asked about.
+const workflowFixtureBeatPID = "999999999"
 
 // tabStart is the tab CreatedAt every case is judged against, so the third
 // admission clause (file mtime at or after the tab's start) is exercised with
@@ -73,6 +89,41 @@ func (f *workflowFixture) stage(hash, runID, body string, modTime time.Time) str
 	path := filepath.Join(dir, workflowStateFileName)
 	f.write(path, body, modTime)
 	return path
+}
+
+// beat plants one run's run.beat from the redacted fixture, repointed at pid.
+func (f *workflowFixture) beat(hash, runID string, pid int, modTime time.Time) {
+	f.t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "workflow-state", "run-beat.json"))
+	if err != nil {
+		f.t.Fatalf("read the run-beat fixture: %v", err)
+	}
+	body := strings.ReplaceAll(string(raw), workflowFixtureBeatPID, strconv.Itoa(pid))
+	f.beatBody(hash, runID, body, modTime)
+}
+
+// beatBody plants one run's run.beat from bytes a case built itself, for a body
+// no committed fixture should carry.
+func (f *workflowFixture) beatBody(hash, runID, body string, modTime time.Time) {
+	f.t.Helper()
+	dir := filepath.Join(f.home, ".kiro", "sessions", hash, workflowsDirName, runID)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		f.t.Fatalf("mkdir run %s: %v", runID, err)
+	}
+	f.write(filepath.Join(dir, workflowBeatFileName), body, modTime)
+}
+
+// probeRecorder is the liveness probe a case installs on the watcher: it answers
+// one verdict and records every pid it was asked about, which is how a case
+// asserts what the code did NOT ask.
+type probeRecorder struct {
+	pids  []int
+	alive bool
+}
+
+func (p *probeRecorder) probe(pid int) bool {
+	p.pids = append(p.pids, pid)
+	return p.alive
 }
 
 // write replaces one state file's bytes and stamps its mtime, which is what the
@@ -393,6 +444,316 @@ func TestWorkflowWatchAdmission(t *testing.T) {
 			t.Errorf("mark(tab1).State = %q, want %q", got, workflowMarkWorking)
 		}
 	})
+}
+
+// TestWorkflowMarkSurvivesAStepTransition pins the join across a step boundary,
+// which is the reported defect. Each workflow step runs as its OWN kiro session and
+// kiro-cli fires the session-title hook for it, so the tab's mapping names the
+// RUNNING STEP rather than the launching session for almost the whole life of a
+// run: measured on the live container, one tab's mapping named a step session
+// throughout a 17-minute window and followed the run from one step to the next. A
+// join on parentSessionId alone therefore finds no tab, the run is admitted for
+// nobody, and the mark goes dark the moment the next step's hook fires.
+func TestWorkflowMarkSurvivesAStepTransition(t *testing.T) {
+	// A launching session no tab is mapped to, so every leg below joins through a
+	// STEP session and the parent id can light nothing on its own.
+	const launching = "sess_dddddddd-eeee-ffff-1111-222222222222"
+
+	t.Run("one run stays lit while its mapping moves from step one to step two", func(t *testing.T) {
+		f := newWorkflowFixture(t)
+		f.pairs["tab1"] = workflowFixtureStepOne
+		path := f.run("hash0", "wf_1111", "running.json", launching, tabStart.Add(time.Minute))
+
+		f.watch.pass(t.Context(), liveTabs("tab1"))
+
+		want := workflowMark{State: workflowMarkWorking, Tally: workflowTally{Total: 1, Working: 1}}
+		if got := f.watch.mark("tab1"); got != want {
+			t.Fatalf("mark(tab1) = %+v while step one runs, want %+v", got, want)
+		}
+
+		// The transition: step one completes, step two starts as a new kiro session,
+		// and the hook re-points the tab's mapping to it. Same run, same file.
+		second, err := os.ReadFile(filepath.Join("testdata", "workflow-state", "running-second-step.json"))
+		if err != nil {
+			t.Fatalf("read the second-step fixture: %v", err)
+		}
+		f.write(path, strings.ReplaceAll(string(second), workflowFixtureParent, launching), tabStart.Add(2*time.Minute))
+		f.pairs["tab1"] = workflowFixtureStepTwo
+
+		f.watch.pass(t.Context(), liveTabs("tab1"))
+
+		if got := f.watch.mark("tab1"); got != want {
+			t.Errorf("mark(tab1) = %+v after the run advanced to its second step, want %+v: the mark must not blink at a step boundary", got, want)
+		}
+	})
+
+	t.Run("a completed step's session does not resurrect a terminal run", func(t *testing.T) {
+		// A run's owner set reaches a step whose own status is completed, so the
+		// run's TOP-LEVEL status has to stay the only thing that admits it.
+		f := newWorkflowFixture(t)
+		f.pairs["tab1"] = workflowFixtureStepOne
+		f.run("hash0", "wf_4444", "completed.json", launching, tabStart.Add(time.Minute))
+
+		f.watch.pass(t.Context(), liveTabs("tab1"))
+
+		if got := f.watch.mark("tab1"); got != (workflowMark{}) {
+			t.Errorf("mark(tab1) = %+v, want the zero mark: a completed run still holding its step's session must light nothing", got)
+		}
+	})
+
+	t.Run("a run repeating one step session across nodes is counted once", func(t *testing.T) {
+		// paused-need-input.json carries the same step session on two nodes, which is
+		// what a real record does; an undeduplicated owner set would admit the run
+		// twice for the one tab and report two runs where there is one.
+		f := newWorkflowFixture(t)
+		f.pairs["tab1"] = workflowFixtureStepOne
+		f.run("hash0", "wf_2222", "paused-need-input.json", launching, tabStart.Add(time.Minute))
+
+		f.watch.pass(t.Context(), liveTabs("tab1"))
+
+		want := workflowMark{State: workflowMarkInput, Tally: workflowTally{Total: 1, Input: 1}}
+		if got := f.watch.mark("tab1"); got != want {
+			t.Errorf("mark(tab1) = %+v, want %+v", got, want)
+		}
+	})
+}
+
+// TestWorkflowMarkWithdrawsARunWhoseWriterDied pins the liveness clause. KAS never
+// rewrites a record whose writer died, so its status stays running forever and the tab's
+// mapping keeps naming one of the run's sessions: every other clause admits such a record,
+// and the dead pid in its run.beat is the only thing that does not. It reddens if a dead
+// writer stops withdrawing the mark, if a live writer is refused too, or if the liveness
+// answer is folded into the verdict cache.
+func TestWorkflowMarkWithdrawsARunWhoseWriterDied(t *testing.T) {
+	const kiro = "sess_11111111-2222-3333-4444-555555555555"
+
+	t.Run("a run abandoned during the tab's life lights nothing", func(t *testing.T) {
+		f := newWorkflowFixture(t)
+		f.pairs["tab1"] = kiro
+		f.run("hash0", "wf_dead", "running.json", kiro, tabStart.Add(time.Minute))
+		f.beat("hash0", "wf_dead", 4242, tabStart.Add(time.Minute))
+		probe := &probeRecorder{}
+		f.watch.probeAlive = probe.probe
+
+		f.watch.pass(t.Context(), liveTabs("tab1"))
+
+		if got := f.watch.mark("tab1"); got != (workflowMark{}) {
+			t.Errorf("mark(tab1) = %+v, want the zero mark: the record is newer than the tab and its writer is gone", got)
+		}
+		if want := []int{4242}; !slices.Equal(probe.pids, want) {
+			t.Errorf("the probe was asked about %v, want %v: the pid run.beat names is the whole signal", probe.pids, want)
+		}
+	})
+
+	t.Run("the same record with a live writer stays lit", func(t *testing.T) {
+		// The control that makes the clause a refusal of the DEAD rather than a blanket
+		// one: it reddens if the probe's answer is inverted or ignored.
+		f := newWorkflowFixture(t)
+		f.pairs["tab1"] = kiro
+		f.run("hash0", "wf_live", "running.json", kiro, tabStart.Add(time.Minute))
+		f.beat("hash0", "wf_live", 4242, tabStart.Add(time.Minute))
+		f.watch.probeAlive = (&probeRecorder{alive: true}).probe
+
+		f.watch.pass(t.Context(), liveTabs("tab1"))
+
+		want := workflowMark{State: workflowMarkWorking, Tally: workflowTally{Total: 1, Working: 1}}
+		if got := f.watch.mark("tab1"); got != want {
+			t.Errorf("mark(tab1) = %+v, want %+v: a run.beat naming a live pid refuses nothing", got, want)
+		}
+	})
+
+	t.Run("the writer dying is seen without the record changing", func(t *testing.T) {
+		f := newWorkflowFixture(t)
+		f.pairs["tab1"] = kiro
+		f.run("hash0", "wf_live", "running.json", kiro, tabStart.Add(time.Minute))
+		f.beat("hash0", "wf_live", 4242, tabStart.Add(time.Minute))
+		f.watch.probeAlive = (&probeRecorder{alive: true}).probe
+		f.watch.pass(t.Context(), liveTabs("tab1"))
+		if got := f.watch.mark("tab1").State; got != workflowMarkWorking {
+			t.Fatalf("first pass mark(tab1).State = %q, want %q", got, workflowMarkWorking)
+		}
+
+		// Nothing on disk moves: verdictFor caches on the state file's size and mtime, and
+		// an abandoned record's file never changes again, so a cached liveness answer would
+		// stay lit for the tab's whole life.
+		f.watch.probeAlive = (&probeRecorder{}).probe
+		f.watch.pass(t.Context(), liveTabs("tab1"))
+
+		if got := f.watch.mark("tab1"); got != (workflowMark{}) {
+			t.Errorf("mark(tab1) = %+v after its writer died, want the zero mark: liveness is re-derived every pass", got)
+		}
+	})
+
+	t.Run("the watcher's own probe answers the kernel", func(t *testing.T) {
+		// The only leg that leaves probeAlive as newWorkflowWatch built it, so a default
+		// wired to nothing -- which fails open, silently, for every run in production --
+		// cannot pass while the rest of the suite installs its own probe.
+		f := newWorkflowFixture(t)
+		f.pairs["tab1"] = kiro
+		f.run("hash0", "wf_dead", "running.json", kiro, tabStart.Add(time.Minute))
+		f.beat("hash0", "wf_dead", impossiblePID(t), tabStart.Add(time.Minute))
+
+		f.watch.pass(t.Context(), liveTabs("tab1"))
+
+		if got := f.watch.mark("tab1"); got != (workflowMark{}) {
+			t.Errorf("mark(tab1) = %+v, want the zero mark: the run.beat names a pid the kernel never allocated", got)
+		}
+	})
+}
+
+// TestWorkflowMarkKeepsAPausedRunLitWhileItsWriterLives pins that no freshness window
+// exists on run.beat. kiro-cli's beat loop is scoped to the run loop and that loop returns
+// when a node pauses, so a run awaiting a human has a FROZEN run.beat -- the one measured
+// paused record on disk took no tick after its pause -- while its writer stays alive for as
+// long as the tab is open. It reddens if anyone compares the beat's mtime or a decoded
+// stampedAt against now, which would blank the one state the mark exists to report.
+func TestWorkflowMarkKeepsAPausedRunLitWhileItsWriterLives(t *testing.T) {
+	const kiro = "sess_11111111-2222-3333-4444-555555555555"
+	f := newWorkflowFixture(t)
+	f.pairs["tab1"] = kiro
+	// Both files are stamped weeks behind wall clock, so a window of any plausible size
+	// refuses them.
+	f.run("hash0", "wf_paused", "paused-need-input.json", kiro, tabStart.Add(time.Minute))
+	f.beat("hash0", "wf_paused", 4242, tabStart.Add(time.Minute))
+	f.watch.probeAlive = (&probeRecorder{alive: true}).probe
+
+	f.watch.pass(t.Context(), liveTabs("tab1"))
+
+	want := workflowMark{State: workflowMarkInput, Tally: workflowTally{Total: 1, Input: 1}}
+	if got := f.watch.mark("tab1"); got != want {
+		t.Errorf("mark(tab1) = %+v, want %+v: a paused run's beat is frozen by design", got, want)
+	}
+}
+
+// TestWorkflowMarkFailsOpenWithoutAUsableRunBeat pins the hard invariant: only an explicit
+// dead answer about a positive pid decoded from a readable run.beat withdraws a mark.
+// Absence is the ordinary case -- 388 of 392 measured runs carry no run.beat, an older
+// kiro-cli writes none, and a takeover releases one -- and the file is written without a
+// temp-plus-rename, so a torn read is reachable; reading any of those as death would blank
+// a live tab for a reason that is not about the run. Every leg runs a probe reporting EVERY
+// pid dead, so only the fail-open path can leave the mark lit.
+func TestWorkflowMarkFailsOpenWithoutAUsableRunBeat(t *testing.T) {
+	const kiro = "sess_11111111-2222-3333-4444-555555555555"
+	want := workflowMark{State: workflowMarkWorking, Tally: workflowTally{Total: 1, Working: 1}}
+
+	t.Run("no run.beat at all", func(t *testing.T) {
+		f := newWorkflowFixture(t)
+		f.pairs["tab1"] = kiro
+		f.run("hash0", "wf_open", "running.json", kiro, tabStart.Add(time.Minute))
+		f.watch.probeAlive = (&probeRecorder{}).probe
+
+		f.watch.pass(t.Context(), liveTabs("tab1"))
+
+		if got := f.watch.mark("tab1"); got != want {
+			t.Errorf("mark(tab1) = %+v with no run.beat staged, want %+v", got, want)
+		}
+	})
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"a torn write", `{"pid":40515`},
+		{"a record naming no pid", `{}`},
+		{"pid zero", `{"pid":0,"instanceId":"00000000-1111-2222-3333-444444444444"}`},
+		{"a negative pid", `{"pid":-1,"instanceId":"00000000-1111-2222-3333-444444444444"}`},
+		{"a body past the read bound", `{"pid":4242,"instanceId":"` + strings.Repeat("x", maxWorkflowBeatBytes) + `"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWorkflowFixture(t)
+			f.pairs["tab1"] = kiro
+			f.run("hash0", "wf_open", "running.json", kiro, tabStart.Add(time.Minute))
+			f.beatBody("hash0", "wf_open", tc.body, tabStart.Add(time.Minute))
+			probe := &probeRecorder{}
+			f.watch.probeAlive = probe.probe
+
+			f.watch.pass(t.Context(), liveTabs("tab1"))
+
+			if got := f.watch.mark("tab1"); got != want {
+				t.Errorf("mark(tab1) = %+v over a run.beat of %d bytes starting %.60q, want %+v", got, len(tc.body), tc.body, want)
+			}
+			if len(probe.pids) != 0 {
+				t.Errorf("the probe was asked about %v, want no call: this record names no usable pid, and kill(0, 0) signals the caller's own process group", probe.pids)
+			}
+		})
+	}
+}
+
+// TestWorkflowProcessAliveAnswersTheKernel drives the real probe against the real kernel.
+// Every other case replaces it through the watcher's field, so without this the default
+// could be wired to anything and the suite would stay green.
+func TestWorkflowProcessAliveAnswersTheKernel(t *testing.T) {
+	t.Run("this process reads alive", func(t *testing.T) {
+		if !processAlive(os.Getpid()) {
+			t.Errorf("processAlive(%d) = false, want true for the test binary's own pid", os.Getpid())
+		}
+	})
+
+	t.Run("a non-positive pid reads alive", func(t *testing.T) {
+		// pid 0 addresses the caller's own process group and a negative pid addresses a
+		// group, so neither is evidence about a writer.
+		for _, pid := range []int{0, -1} {
+			if !processAlive(pid) {
+				t.Errorf("processAlive(%d) = false, want true", pid)
+			}
+		}
+	})
+
+	t.Run("a pid the kernel cannot have allocated reads dead", func(t *testing.T) {
+		pid := impossiblePID(t)
+		if processAlive(pid) {
+			t.Errorf("processAlive(%d) = true for pid_max, want false: the dead answer is the only thing that withdraws a mark", pid)
+		}
+	})
+
+	t.Run("a process that exited and nobody reaped reads dead", func(t *testing.T) {
+		// A zombie answers a signal-0 probe ALIVE, so without the state read a writer that died
+		// under a live parent keeps a mark lit for as long as nothing reaps it.
+		cmd := exec.Command("/bin/sleep", "300")
+		if err := cmd.Start(); err != nil {
+			t.Skipf("start a throwaway child: %v", err)
+		}
+		pid := cmd.Process.Pid
+		// This test binary is the parent, so nothing collects the child until it does.
+		t.Cleanup(func() { _ = cmd.Wait() })
+		if err := cmd.Process.Signal(syscall.SIGKILL); err != nil {
+			t.Fatalf("kill child %d: %v", pid, err)
+		}
+		// The state is read here rather than through processIsZombie, so the case does not
+		// wait on its own subject.
+		stat := filepath.Join("/proc", strconv.Itoa(pid), "stat")
+		for deadline := time.Now().Add(10 * time.Second); ; {
+			raw, err := os.ReadFile(stat)
+			if err == nil && strings.Contains(string(raw), ") Z ") {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("child %d never reached state Z, so the case cannot pin the zombie answer", pid)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		if processAlive(pid) {
+			t.Errorf("processAlive(%d) = true for a zombie, want false: a task that has exited will never touch its run's beat again", pid)
+		}
+	})
+}
+
+// impossiblePID returns a pid the kernel never allocates -- pid_max itself, because the
+// kernel's bound is exclusive -- so a case gets a deterministic dead pid where a reaped
+// child's would carry a reuse race.
+func impossiblePID(t *testing.T) int {
+	t.Helper()
+	raw, err := os.ReadFile("/proc/sys/kernel/pid_max")
+	if err != nil {
+		t.Skipf("read pid_max: %v", err)
+	}
+	pidMax, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Skipf("parse pid_max %q: %v", raw, err)
+	}
+	return pidMax
 }
 
 // TestWorkflowWatchTolerates pins what the watcher meets on disk that is not an

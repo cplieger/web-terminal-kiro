@@ -447,8 +447,8 @@ func run() error {
 	home := envx.String("HOME")
 	titles := newSessionTitleSync(titleStateRoot, home)
 	sessionTitleEnv := enableSessionTitles(titles)
-	// The only join from a workflow run's parentSessionId to a tab is the title
-	// poller's mapping, so the two share that verdict: no mapping, no mark.
+	// The only join from a workflow run to a tab is the title poller's mapping, so
+	// the two share that verdict: no mapping, no mark.
 	workflows := newWorkflowWatch(home, titles.mappedSessions)
 
 	// The subsystem teardown, named once and deferred once, so a third subsystem is
