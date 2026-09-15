@@ -20,6 +20,142 @@ TSC="static-src/node_modules/.bin/tsc"
   printf "error: %s not found — run 'cd static-src && npm install' first\n" "$TSC" >&2
   exit 1
 }
+# Reads one ARG's value, stopping at whitespace or a `#` comment (a trailing
+# `# <name> <version>` trailer follows the digest pins below).
+dockerfileArg() {
+  sed -n "s/^ARG $1=\\([^[:space:]#]*\\).*/\\1/p" Dockerfile
+}
+
+# fetch_pinned <dep> <version-arg> <cache-name> <dest-dir>
+#
+# Downloads and verifies every asset the Dockerfile pins for one `# repin:`
+# dep, from the markers themselves rather than from a second copy of the list:
+# the URL template, the destination name and the sha ARG all come off the same
+# two lines Renovate's postUpgradeTask rewrites, so this cannot drift from what
+# the image fetches. A marker's `dest=` token names the destination file (it is
+# how two projects both shipping a file called LICENSE are disambiguated);
+# absent, the URL's own basename is used.
+#
+# Keying on the markers is what makes the asset list unable to drift from the
+# pins: an asset with no marker has no sha256 ARG at all, so it could never be
+# verified, and the image build refuses it on the case statement's `*)` arm.
+fetch_pinned() {
+  local dep=$1 version_arg=$2 cache_name=$3 dest_dir=$4
+  local version
+  version=$(dockerfileArg "$version_arg")
+  [ -n "$version" ] || {
+    echo "error: could not read ARG $version_arg from Dockerfile" >&2
+    exit 1
+  }
+
+  # One "<dest> <url-template> <sha-arg>" row per marker for this dep. The ARG
+  # must sit on the line immediately below its marker, which is the pairing
+  # repin-sha.sh relies on too.
+  local rows
+  rows=$(awk -v dep="$dep" '
+    /^#[[:space:]]*repin:/ {
+      url = ""; dest = ""; d = ""
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^dep=/)  { d = substr($i, 5) }
+        if ($i ~ /^url=/)  { url = substr($i, 5) }
+        if ($i ~ /^dest=/) { dest = substr($i, 6) }
+      }
+      if (d == dep && url != "") {
+        pending_url = url; pending_dest = dest
+      }
+      next
+    }
+    pending_url != "" {
+      if ($0 ~ /^ARG [A-Za-z_][A-Za-z0-9_]*=/) {
+        name = $0; sub(/^ARG /, "", name); sub(/=.*/, "", name)
+        if (pending_dest == "") { pending_dest = pending_url; sub(/^.*\//, "", pending_dest) }
+        printf "%s %s %s\n", pending_dest, pending_url, name
+      }
+      pending_url = ""
+      next
+    }
+  ' Dockerfile)
+  [ -n "$rows" ] || {
+    echo "error: no '# repin: dep=$dep' marker in Dockerfile" >&2
+    exit 1
+  }
+
+  # Cache key: the version AND a digest of every pin, so a repin at an
+  # unchanged version still misses the cache. The `.complete` marker is written
+  # only after every asset downloaded AND verified, so an interrupted fetch
+  # self-heals with a full retry instead of embedding a partial asset.
+  local dests=() urls=() shas=() combined=""
+  local dest url_tmpl sha_arg sha
+  while read -r dest url_tmpl sha_arg; do
+    [ -n "$dest" ] || continue
+    sha=$(dockerfileArg "$sha_arg")
+    [ -n "$sha" ] || {
+      echo "error: could not read ARG $sha_arg from Dockerfile" >&2
+      exit 1
+    }
+    dests+=("$dest")
+    urls+=("${url_tmpl//\{version\}/$version}")
+    shas+=("$sha")
+    combined="${combined}${sha}"
+  done <<<"$rows"
+
+  local key cache
+  key=$(printf '%s\n%s' "$version" "$combined" | sha256sum | cut -c1-16)
+  cache="${HOME}/.cache/${cache_name}/${version}-${key}"
+
+  # Re-verify the whole cache before reusing it. `.complete` records that a
+  # download verified ONCE, which is a different claim from "these bytes are
+  # still the pinned ones": a cache entry can change after the marker is written
+  # (interrupted external tooling, disk corruption, another process under the
+  # same uid), and non-empty is no evidence at all — the WRONG font is non-empty.
+  # A mismatch discards the whole keyed directory rather than repairing one
+  # entry, because whatever changed one is not known to have stopped at one. The
+  # image build verifies every byte it fetches, so a dev build trusting a warm
+  # cache would be the single path that embeds an unverified font in the
+  # //go:embed static tree.
+  local need=0 i
+  [ -f "$cache/.complete" ] || need=1
+  if [ "$need" = 0 ]; then
+    for i in "${!dests[@]}"; do
+      [ -s "$cache/${dests[$i]}" ] || {
+        need=1
+        break
+      }
+      printf '%s  %s\n' "${shas[$i]}" "$cache/${dests[$i]}" | sha256sum -c --status - || {
+        printf '  cached %s %s no longer matches its pin (%s); discarding the cache\n' \
+          "$dep" "$version" "${dests[$i]}" >&2
+        need=1
+        break
+      }
+    done
+  fi
+  if [ "$need" = 1 ]; then
+    echo "  downloading $dep $version (${#dests[@]} assets)..."
+    rm -rf "$cache"
+    mkdir -p "$cache"
+    for i in "${!dests[@]}"; do
+      curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
+        --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 \
+        -o "$cache/${dests[$i]}" "${urls[$i]}"
+      printf '%s  %s\n' "${shas[$i]}" "$cache/${dests[$i]}" | sha256sum -c -
+    done
+    : >"$cache/.complete"
+  fi
+
+  # Copy rather than link, and let the caller own the destination's lifetime: a
+  # dev build reuses the working tree, so an asset dropped from the Dockerfile
+  # must not survive there and keep landing in the //go:embed static tree.
+  mkdir -p "$dest_dir"
+  for i in "${!dests[@]}"; do
+    cp "$cache/${dests[$i]}" "$dest_dir/${dests[$i]}"
+    # Verify what was actually COPIED, not what passed a check a moment ago: the
+    # reuse check above and this copy are two operations on a path anything
+    # sharing the uid can rewrite in between, and only the destination's bytes
+    # reach the embedded tree.
+    printf '%s  %s\n' "${shas[$i]}" "$dest_dir/${dests[$i]}" | sha256sum -c --quiet -
+  done
+}
+
 # Validate every required checkout input BEFORE go.work is written or the
 # destructive node_modules overlay below starts, so a missing sibling checkout
 # or a typo'd ENGINE_DIR/UI_DIR override fails cleanly instead of half-deleting
@@ -40,7 +176,7 @@ for required in "$ENGINE_DIR/web/src" "$UI_DIR/src"; do
 done
 # A src directory that EXISTS but holds no file the overlay would copy is the
 # same failure the image build gates on (engine-src-empty / ui-src-empty), and
-# it has to be caught here too: step [2/6] deletes both installed package src
+# it has to be caught here too: step [2/7] deletes both installed package src
 # trees before copying, so an empty (or test-only) source tree otherwise slips
 # past preflight and leaves node_modules broken — cp exits on a literal
 # unmatched *.ts, or tsc exits 1 with no input files, in both cases only after
@@ -50,7 +186,7 @@ done
 # carry no *.test.ts basename) into the vendor emit and make the dev build depend
 # on test-only code typechecking under --strict — the published tarball excludes
 # them, so this keeps the local overlay matching what the image gets. The list
-# captured here IS the list step [2/6] copies, so preflight and execution cannot
+# captured here IS the list step [2/7] copies, so preflight and execution cannot
 # drift.
 mapfile -d '' -t engine_src < <(cd "$ENGINE_DIR/web/src" && find . \
   -type d -name 'test-helpers' -prune -o \
@@ -68,7 +204,7 @@ mapfile -d '' -t ui_src < <(cd "$UI_DIR/src" && find . \
   exit 1
 }
 
-printf '[1/6] go.work -> local engine (replace published module with %s)\n' "$ENGINE_DIR"
+printf '[1/7] go.work -> local engine (replace published module with %s)\n' "$ENGINE_DIR"
 # Mirror go.mod's go directive and engine module path so neither can drift (a
 # hardcoded version here broke the build when go.mod moved to a newer patch; a
 # hardcoded /v2 module path silently no-opped the replace after the v3 bump).
@@ -90,7 +226,7 @@ use .
 replace ${ENGINE_MOD} => ${ENGINE_DIR}
 EOF
 
-printf '[2/6] overlay local engine + UI TS into the bundler-resolved packages\n'
+printf '[2/7] overlay local engine + UI TS into the bundler-resolved packages\n'
 rm -rf "$ENGINE_PKG/src" "$UI_PKG/src"
 mkdir -p "$ENGINE_PKG/src" "$UI_PKG/src"
 cp "$ENGINE_DIR/web/package.json" "$ENGINE_PKG/package.json"
@@ -138,8 +274,8 @@ go build -o "$wirecheck_bin" ./scripts/wirecheck
 rm -f "$wirecheck_bin"
 trap - EXIT
 
-printf '[3/6] tsc: app -> static/app.js (resolves @cplieger/web-terminal-ui)\n'
-# Drop the previous emit first so the assertion after step [4/6] observes THIS
+printf '[3/7] tsc: app -> static/app.js (resolves @cplieger/web-terminal-ui)\n'
+# Drop the previous emit first so the assertion after step [4/7] observes THIS
 # run's output: static/app.js is gitignored but persistent, so an outDir/rootDir
 # change would otherwise leave a stale file that satisfies the check. The vendor
 # dirs below already get the same treatment via rm -rf. (The image build is
@@ -147,7 +283,7 @@ printf '[3/6] tsc: app -> static/app.js (resolves @cplieger/web-terminal-ui)\n'
 rm -f static/app.js
 "$TSC" --project static-src/tsconfig.json
 
-printf '[4/6] tsc: engine + UI libs -> static/vendor/\n'
+printf '[4/7] tsc: engine + UI libs -> static/vendor/\n'
 rm -rf static/vendor/cplieger-web-terminal-engine static/vendor/cplieger-web-terminal-ui
 # Canonical recipe: scripts/vendor-tsc.sh, shared with the Dockerfile builder, so
 # the dev binary and the image cannot end up compiled with different flags. It
@@ -164,88 +300,41 @@ bash scripts/vendor-tsc.sh "$TSC" ui "$UI_PKG/src" \
 # page's own importmap rather than restating it here.
 sh scripts/assert-emit.sh
 
-printf '[5/6] fonts (Monaspace Neon NF webfonts, cached) + CSS bundle (from UI package)\n'
-# Single source of truth: the Dockerfile's Renovate-managed MONASPACE_* ARGs
-# and its fetch layer. Stop at whitespace or a `#` trailer: the repo's other
-# manually-bumped sha pins (GO_SHA256_*, TOOL_CATALOG_SHA256) carry a
-# `# <name> <version>` Renovate anchor, and swallowing one here would feed
-# garbage to sha256sum.
-FONT_VER="$(sed -n 's/^ARG MONASPACE_VERSION=\([^[:space:]#]*\).*/\1/p' Dockerfile)"
-: "${FONT_VER:?failed to parse MONASPACE_VERSION from Dockerfile}"
-# Face set: read from the Dockerfile's own `# repin:` markers, one per face —
-# the same lines the FONT_URL_TMPL parse below keys on, and the same lines
-# Renovate's postUpgradeTask rewrites. Keying on the markers rather than on a
-# literal path inside a RUN is what makes this list unable to drift from the
-# pins: a face with no marker has no sha256 ARG at all, so it could never be
-# verified, and the image build refuses it.
-mapfile -t fonts < <(sed -n 's|^# repin: dep=githubnext/monaspace url=.*/\([^/]*\.woff2\)$|\1|p' Dockerfile | sort -u)
-[ "${#fonts[@]}" -gt 0 ] || {
-  printf 'error: failed to parse the Monaspace face list from Dockerfile\n' >&2
-  exit 1
-}
-# Fetch base: the repin marker's URL template (the same literal Renovate's
-# postUpgradeTask reads), {version} substituted — so the URL too is
-# single-sourced in the Dockerfile.
-FONT_URL_TMPL="$(sed -n 's|^# repin: dep=githubnext/monaspace url=\(.*\)/[^/]*$|\1|p' Dockerfile | head -n1)"
-: "${FONT_URL_TMPL:?failed to parse the monaspace repin URL from Dockerfile}"
-FONT_BASE_URL="${FONT_URL_TMPL//\{version\}/$FONT_VER}"
-# Per-face pins, keyed by the face token in the filename
-# (MonaspaceNeonNF-<Face>.woff2 -> ARG MONASPACE_<FACE>_SHA256). The cache dir
-# is keyed by version AND a digest of all four pins so a MONASPACE_VERSION
-# bump — or a same-version sha correction — misses the cache instead of
-# silently reusing stale fonts. A .complete marker inside the keyed dir gates
-# reuse: it is written only after every face downloaded AND verified, so an
-# interrupted fetch self-heals with a full retry on the next build instead of
-# embedding a corrupt face.
-declare -A font_sha
-combined=""
-for font in "${fonts[@]}"; do
-  face="${font##*-}"
-  face="${face%.woff2}"
-  arg_name="MONASPACE_$(printf '%s' "$face" | tr '[:lower:]' '[:upper:]')_SHA256"
-  sha="$(sed -n "s/^ARG ${arg_name}=\([^[:space:]#]*\).*/\1/p" Dockerfile)"
-  [ -n "$sha" ] || {
-    printf 'error: failed to parse %s from Dockerfile\n' "$arg_name" >&2
-    exit 1
-  }
-  font_sha["$font"]="$sha"
-  combined="${combined}${sha}"
-done
-FONT_CACHE="${HOME}/.cache/web-terminal-kiro-fonts/${FONT_VER}-$(printf '%s' "$combined" | sha256sum | cut -c1-16)"
-FONT_CACHE_MARKER="$FONT_CACHE/.complete"
-mkdir -p "$FONT_CACHE"
-need_fonts=0
-[ -f "$FONT_CACHE_MARKER" ] || need_fonts=1
-for font in "${fonts[@]}"; do
-  [ -s "$FONT_CACHE/$font" ] || need_fonts=1
-done
-if [ "$need_fonts" = 1 ]; then
-  printf '  downloading Monaspace Neon NF %s...\n' "$FONT_VER"
-  rm -f "$FONT_CACHE_MARKER"
-  for font in "${fonts[@]}"; do
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL \
-      "${FONT_BASE_URL}/${font}" -o "$FONT_CACHE/$font"
-    printf '%s  %s\n' "${font_sha[$font]}" "$FONT_CACHE/$font" | sha256sum -c -
-    [ -s "$FONT_CACHE/$font" ] || {
-      printf 'error: downloaded font is missing or empty: %s\n' "$FONT_CACHE/$font" >&2
-      exit 1
-    }
-  done
-  : >"$FONT_CACHE_MARKER"
-fi
-# Recreate the generated destination so a face dropped from the Dockerfile list
-# does not survive in the dev tree: the image build starts from a clean builder
-# and extracts only the current members, but a dev build reuses the working tree
-# and `cp` cannot delete what the source list no longer names — the stale OTF
-# would keep landing in the //go:embed static tree. $FONT_CACHE stays persistent.
+printf '[5/7] fonts (Monaspace Neon NF + the Web Terminal Glyphs overlay, cached) + CSS bundle (from UI package)\n'
+# Same sources, filenames and digests as the Dockerfile, derived from its own
+# `# repin:` markers (fetch_pinned above), so neither the asset list nor the URL
+# nor a pin can drift from the image build.
+#
+# Recreate the generated destination first, so an asset dropped from the marker
+# list does not survive in the dev tree: the image build starts from a clean
+# builder and fetches only the current members, but a dev build reuses the
+# working tree and `cp` cannot delete what the list no longer names — the stale
+# file would keep landing in the //go:embed static tree. The per-dep caches
+# stay persistent.
 rm -rf static/vendor/fonts
-mkdir -p static/vendor/fonts
-for font in "${fonts[@]}"; do
-  cp "$FONT_CACHE/$font" static/vendor/fonts/
-done
+fetch_pinned githubnext/monaspace MONASPACE_VERSION \
+  web-terminal-kiro-fonts static/vendor/fonts
+fetch_pinned cplieger/web-terminal-glyphs WEB_TERMINAL_GLYPHS_VERSION \
+  web-terminal-kiro-glyphs static/vendor/fonts
 
 sh scripts/css-bundle.sh "$UI_DIR/css" static/style.css
 
-printf '[6/6] go build (CGO off, host arch = image arch)\n'
+printf '[6/7] cell-contract gate (the released cell contract vs the CSS this build serves)\n'
+# Mirrors the Dockerfile step after its own CSS bundle: the overlay's glyphs are
+# drawn for one cell, and here the CSS comes from a LOCAL UI checkout, which is
+# exactly where it can move ahead of the released contract. Built and then
+# invoked, never `go run`, which collapses the gate's exit 2 ("the gate is
+# broken, do NOT bump a pin") into a plain 1.
+fontcheck_bin="$(mktemp)"
+trap 'rm -f "$fontcheck_bin"' EXIT
+go build -o "$fontcheck_bin" ./scripts/fontcheck
+"$fontcheck_bin" \
+  -cell static/vendor/fonts/WebTerminalGlyphs-cell.json \
+  -css static/style.css \
+  -fonts static/vendor/fonts
+rm -f "$fontcheck_bin"
+trap - EXIT
+
+printf '[7/7] go build (CGO off, host arch = image arch)\n'
 CGO_ENABLED=0 go build -trimpath -o web-terminal-kiro-dev-bin .
 printf 'OK -> %s/web-terminal-kiro-dev-bin (%s)\n' "$(pwd)" "$(du -h web-terminal-kiro-dev-bin | cut -f1)"
