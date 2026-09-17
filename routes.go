@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -563,17 +564,42 @@ func newStatusClassifier(logText bool) func(string) (string, bool) {
 	}
 }
 
-// kiroCacheControl is the per-asset Cache-Control policy handed to webhttp.StaticHandler,
-// which supplies the ETag/gzip mechanism (asset paths arrive normalized, no leading slash).
-//
-// Fonts get 30 days but NOT `immutable`: the @font-face URLs come from the vendored UI's
-// own CSS under fixed names, so the bytes DO change under one filename on a Monaspace
-// bump, and without `immutable` a reload revalidates against the content-hash ETag.
+// Cache-Control policies handed to webhttp.StaticHandler. Only a content-addressed asset may
+// promise its bytes never change, so `immutable` is earned by the name.
+const (
+	fontAssetPrefix    = "vendor/fonts/"
+	fingerprintedAsset = "public, max-age=31536000, immutable"
+	revalidatedAsset   = "no-cache, must-revalidate"
+)
+
+// kiroCacheControl is the per-asset policy; asset paths arrive normalized, no leading slash.
+// Reading the hash off the NAME rather than trusting the directory is what makes dropping
+// scripts/font-fingerprint.sh degrade to revalidation instead of to a stale face.
 func kiroCacheControl(assetPath string) string {
-	if strings.HasPrefix(assetPath, "vendor/fonts/") {
-		return "public, max-age=2592000"
+	if strings.HasPrefix(assetPath, fontAssetPrefix) && fingerprintedName(path.Base(assetPath)) {
+		return fingerprintedAsset
 	}
-	return "no-cache, must-revalidate"
+	return revalidatedAsset
+}
+
+// fingerprintedName reports whether name carries the `<stem>.<8 lowercase hex>.<ext>` hash
+// scripts/font-fingerprint.sh stamps.
+func fingerprintedName(name string) bool {
+	ext := path.Ext(name)
+	if ext == "" {
+		return false
+	}
+	stem := strings.TrimSuffix(name, ext)
+	hash := path.Ext(stem)
+	if len(hash) != 9 { // a dot plus eight hex digits
+		return false
+	}
+	for _, r := range hash[1:] {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // cspTemplate is the Content-Security-Policy applied to every response, with a %s

@@ -426,8 +426,13 @@ RUN /tmp/package/lib/tsc --project static-src/tsconfig.json && \
     sh scripts/assert-emit.sh
 
 # Concatenate the UI package's per-feature CSS splits into the served bundle
-# (canonical recipe: scripts/css-bundle.sh, shared with scripts/dev-build.sh).
-RUN sh scripts/css-bundle.sh static-src/node_modules/@cplieger/web-terminal-ui/css static/style.css
+# (canonical recipe: scripts/css-bundle.sh, shared with scripts/dev-build.sh), then
+# content-address the fonts that bundle just named so routes.go may serve them immutably.
+# index.html is rewritten too: its font preload gates the first frame, so a stale href there
+# spends a round trip on a 404 instead of starting the fetch the hint exists for. One RUN
+# because they are one step of the build and hadolint's DL3059 objects to the split.
+RUN sh scripts/css-bundle.sh static-src/node_modules/@cplieger/web-terminal-ui/css static/style.css && \
+    sh scripts/font-fingerprint.sh static/vendor/fonts static/style.css static/index.html
 
 # Cell-contract gate (the served CSS vs the released contract): the overlay's
 # glyphs are drawn for ONE cell -- Monaspace's 1240/2000 em advance, its metrics
