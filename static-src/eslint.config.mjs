@@ -1,9 +1,7 @@
 // App-local ESLint config for web-terminal-kiro's front end.
 //
-// The shared, org-synced ruleset lives in eslint.config.base.mjs (synced from
-// cplieger/ci). Do NOT edit the base here -- the next sync would clobber it. This
-// file imports it and layers on the one repo-specific delta: the scratch trees
-// below.
+// The shared ruleset lives in ./eslint.config.base.mjs; this file imports it and
+// layers on the one repo-specific delta, the scratch trees below.
 //
 // The base sits in THIS directory rather than the repo root, and that is what
 // makes importing it possible at all. Node resolves a bare specifier from the
@@ -14,11 +12,15 @@
 //   Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@eslint/js'
 //     imported from <repo>/eslint.config.base.mjs
 //
-// So this file used to be a full COPY of the base, and every canonical
-// improvement silently bypassed the linter that actually runs. cplieger/ci's
-// classify-repos.py now syncs the base beside each TS package.json, which also
-// fixes the base's `tsconfigRootDir: import.meta.dirname`: from here it resolves
-// to the directory that actually holds tsconfig.json.
+// It also fixes the base's `tsconfigRootDir: import.meta.dirname`, which from
+// here resolves to the directory that actually holds tsconfig.json.
+//
+// THIS COPY IS HAND-MAINTAINED. sync.yaml writes cplieger/ci's canonical config
+// to <repo>/eslint.config.base.mjs, the ROOT, which nothing reads (the
+// package-dir dest was tried in ci #371 and reverted by #372). So a canonical
+// improvement lands in the unread root file and does NOT reach this one: when
+// the root copy changes, copy it here too. Measured 2026-09-16, this file had
+// been 3 lines stale since ci 1fa49d5. Nothing detects that.
 import baseConfig from "./eslint.config.base.mjs";
 
 export default [
