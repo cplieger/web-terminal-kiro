@@ -115,22 +115,29 @@ func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
 // accepts it, mirroring the real page.
 const testIndexHTML = `<!doctype html><style>body{margin:0}</style><script type="importmap">{}</script>`
 
-// TestKiroCacheControl pins the two-branch cache POLICY handed to
-// webhttp.StaticHandler (the ETag/gzip mechanism now lives in webhttp and is
-// tested there): assets under vendor/fonts/ are cached for 30 days but stay
-// revalidatable (no `immutable`) while
-// everything else is no-cache + must-revalidate so deploys take effect at
-// once. Paths arrive normalized (no leading slash; "index.html" for "/"), and
-// the fonts prefix's trailing slash is load-bearing -- "vendor/fonts-list.json"
-// must NOT be treated as a font.
+// TestKiroCacheControl pins the cache POLICY handed to webhttp.StaticHandler (the ETag/gzip
+// mechanism now lives in webhttp and is tested there): a font whose name carries a
+// build-stamped content hash is immutable for a year, and everything else revalidates so a
+// deploy takes effect at once. Paths arrive normalized (no leading slash; "index.html" for
+// "/"), and the fonts prefix's trailing slash is load-bearing -- "vendor/fonts-list.json" must
+// NOT be treated as a font.
+//
+// The un-stamped font cases are the load-bearing ones: they are what makes dropping
+// scripts/font-fingerprint.sh degrade to revalidation rather than to a month of staleness.
 func TestKiroCacheControl(t *testing.T) {
 	cases := []struct {
 		name      string
 		assetPath string
 		wantCache string
 	}{
-		{name: "font is long-lived but revalidatable", assetPath: "vendor/fonts/iosevka.woff2", wantCache: "public, max-age=2592000"},
-		{name: "nested font is long-lived but revalidatable", assetPath: "vendor/fonts/sub/x.woff2", wantCache: "public, max-age=2592000"},
+		{name: "fingerprinted font is immutable", assetPath: "vendor/fonts/iosevka.a1b2c3d4.woff2", wantCache: "public, max-age=31536000, immutable"},
+		{name: "nested fingerprinted font is immutable", assetPath: "vendor/fonts/sub/x.0123abcd.woff2", wantCache: "public, max-age=31536000, immutable"},
+		{name: "un-stamped font revalidates", assetPath: "vendor/fonts/iosevka.woff2", wantCache: "no-cache, must-revalidate"},
+		{name: "licence beside the fonts revalidates", assetPath: "vendor/fonts/WebTerminalGlyphs-LICENSE", wantCache: "no-cache, must-revalidate"},
+		{name: "short hex is not a fingerprint", assetPath: "vendor/fonts/x.a1b2c3.woff2", wantCache: "no-cache, must-revalidate"},
+		{name: "non-hex segment is not a fingerprint", assetPath: "vendor/fonts/x.a1b2c3g4.woff2", wantCache: "no-cache, must-revalidate"},
+		{name: "uppercase hex is not a fingerprint", assetPath: "vendor/fonts/x.A1B2C3D4.woff2", wantCache: "no-cache, must-revalidate"},
+		{name: "fingerprint outside the fonts dir is not honoured", assetPath: "app.a1b2c3d4.js", wantCache: "no-cache, must-revalidate"},
 		{name: "html is no-cache", assetPath: "index.html", wantCache: "no-cache, must-revalidate"},
 		{name: "js bundle is no-cache", assetPath: "app.js", wantCache: "no-cache, must-revalidate"},
 		{name: "vendor non-font prefix is no-cache", assetPath: "vendor/fonts-list.json", wantCache: "no-cache, must-revalidate"},
