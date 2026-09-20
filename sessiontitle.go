@@ -28,7 +28,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/web-terminal-engine/v5/terminal"
+	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
 const (

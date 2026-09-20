@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/web-terminal-engine/v5/terminal"
+	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
 // fakeSetter records what the syncer pushed onto the engine's client title

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/web-terminal-engine/v5/terminal"
+	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
 // workflowFixtureParent is the synthetic parentSessionId every redacted fixture

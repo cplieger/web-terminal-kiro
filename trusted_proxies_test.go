@@ -14,7 +14,7 @@ import (
 
 	"github.com/cplieger/slogx"
 	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/web-terminal-engine/v5/terminal"
+	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
 // trustedContains reports whether ip is inside any of the parsed trusted nets.

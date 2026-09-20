@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/web-terminal-engine/v5/terminal"
+	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
 // TestSessionActivityWiredIntoManager pins the WIRING of the workflow mark:
