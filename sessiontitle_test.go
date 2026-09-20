@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -13,10 +12,9 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/web-terminal-engine/v5/terminal"
+	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
 // fakeSetter records what the syncer pushed onto the engine's client title
@@ -180,7 +178,7 @@ func TestEnsureStateDirRefusesOnlyAPreExistingWidenedLevel(t *testing.T) {
 // created check and the group/other-writable check, so OWNERSHIP is the
 // only thing standing between a level another local user controls and
 // pass()/forget() sweeping it with os.ReadDir and os.Remove every
-// titlePollInterval.
+// sessionPollInterval.
 //
 // The foreign owner is the point rather than the mode: its holder can
 // rename the checked path or replace it with a symlink AFTER the verdict,
@@ -1164,28 +1162,6 @@ func TestNewSessionTitleSyncWarnsOnlyOnAnEmptyHome(t *testing.T) {
 			t.Errorf("newSessionTitleSync with a real home logged %q, want silence: the image always sets HOME", out)
 		}
 	})
-}
-
-// TestSessionTitleRunStopsWithItsContext pins Run's whole contract: it
-// sweeps until its context is cancelled and then RETURNS. main starts it
-// as a goroutine for the life of the process, so nothing else in this
-// file reaches it -- every other test drives pass() directly.
-func TestSessionTitleRunStopsWithItsContext(t *testing.T) {
-	f := newTitleFixture(t)
-	ctx, cancel := context.WithCancel(t.Context())
-
-	returned := make(chan struct{})
-	go func() {
-		defer close(returned)
-		f.sync.Run(ctx, &fakeSetter{})
-	}()
-	cancel()
-
-	select {
-	case <-returned:
-	case <-time.After(10 * time.Second):
-		t.Fatal("Run did not return after its context was cancelled; the poller outlives the server it was started for, holding its ticker and re-reading the state dir")
-	}
 }
 
 // TestSessionTitlePublishesTheMappingItResolved pins the surface the

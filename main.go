@@ -31,7 +31,7 @@ import (
 	"github.com/cplieger/pinstall/v3/kirocli"
 	"github.com/cplieger/slogx"
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/web-terminal-engine/v5/terminal"
+	"github.com/cplieger/web-terminal-engine/v6/terminal"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -438,18 +438,8 @@ func run() error {
 	mux := http.NewServeMux()
 	var ready webhttp.Ready
 
-	// Tab names come from kiro-cli's own session record. The state root is
-	// container-local on purpose: a mapping is only meaningful for a LIVE tab, and
-	// this app persists no session state, so nothing here should outlive the
-	// container. A refused directory is a warn, and it is AUTHORITATIVE for both
-	// consumers: no tab gets the title variables, the poller never starts, and the
-	// engine's automatic ladder names every tab.
-	home := envx.String("HOME")
-	titles := newSessionTitleSync(titleStateRoot, home)
-	sessionTitleEnv := enableSessionTitles(titles)
-	// The only join from a workflow run to a tab is the title poller's mapping, so
-	// the two share that verdict: no mapping, no mark.
-	workflows := newWorkflowWatch(home, titles.mappedSessions)
+	// sessionPollers owns the state-directory verdict: refused means inject nothing, sweep nothing.
+	pollers := newSessionPollers(titleStateRoot, envx.String("HOME"))
 
 	// The subsystem teardown, named once and deferred once, so a third subsystem is
 	// added in one place. Every return below runs it.
@@ -487,8 +477,8 @@ func run() error {
 		listenHint:      loopbackHint(addr),
 		cmd:             kiro.cmd,
 		sessionEnv:      kiro.env,
-		sessionTitleEnv: sessionTitleEnv,
-		sessionActivity: workflows.sessionActivity,
+		sessionTitleEnv: pollers.sessionEnv,
+		sessionActivity: pollers.workflows.sessionActivity,
 		workDir:         workDir,
 		scrollback:      scrollback,
 		ready:           &ready,
@@ -536,14 +526,8 @@ func run() error {
 	// srv.Shutdown is what unblocks the always-open SSE stream.
 	srv.BaseContext = func(net.Listener) context.Context { return baseCtx }
 
-	// Bound to baseCtx, which the pre-drain hook cancels. Skipped entirely when the
-	// state directory was refused: the poller's sweep is os.ReadDir + os.Remove over
-	// that path, so running it against a rejected one is the delete loop the
-	// verification exists to prevent.
-	if sessionTitleEnv != nil {
-		go titles.Run(baseCtx, mgr)
-		go workflows.Run(baseCtx, mgr)
-	}
+	// Bound to baseCtx, which the pre-drain hook cancels.
+	go pollers.Run(baseCtx, mgr)
 
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM)

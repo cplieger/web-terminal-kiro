@@ -115,10 +115,12 @@ One thing to configure on the proxy: the terminal WebSocket URL carries the sess
 **Made for touch**, via the [web-terminal-ui](https://github.com/cplieger/web-terminal-ui) front end:
 
 - **Multiple tabs**: open, close, drag to reorder, plus a swipeable mobile tab switcher.
+- **Two-pane split view**: the split button in the tab row shows two sessions side by side, with a draggable divider; right-click or long-press a tab to snap it to either side, or drag it onto a half of the screen. The layout survives a reload and a device switch.
 - An on-screen **key toolbar** (Tab, Esc, arrows, Enter, and a sticky-Ctrl modifier) for keys a phone keyboard lacks.
 - Native **text selection**, copy/paste, and a **long-press / right-click context menu**.
 - **Predictive echo** so typing feels instant over slow links, tap-to-focus, and a scroll-to-bottom control with auto-follow.
 - **Per-tab status dots**: see at a glance which session is working, done, or waiting for input.
+- The waiting-for-input dot clears on its own once the prompt is answered, denied, or cancelled, including a prompt raised by a workflow step or a subagent.
 - IME/composition support, keyboard accessibility, theming, and reduced-motion support.
 
 **Resilient by default:**

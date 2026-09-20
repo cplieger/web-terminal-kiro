@@ -34,6 +34,7 @@ const options: CreateTerminalOptions = {
   // mechanism and the iOS jetsam rationale). README's "Stored scrollback"
   // section is the operator-facing statement of what this puts on the device.
   persistScrollback: localScrollbackStorage(),
+  split: true,
   // web-terminal-kiro's purple theme; see web-terminal-ui.md's theme option docs
   // for what each token reaches and the OKLab/sRGB-gamut reasoning behind
   // --status-working being a literal hex while its siblings stay in oklch.
