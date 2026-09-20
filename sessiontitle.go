@@ -23,24 +23,17 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/web-terminal-engine/v5/terminal"
+	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
 const (
 	// titleStateDirName is the directory under the app's state root where hooks drop one
 	// file per tab, named for that tab's TITLE HANDLE (not its id).
 	titleStateDirName = "session-titles"
-
-	// titlePollInterval is how often each mapped tab's session.json is re-read. A title
-	// changes at most a few times per conversation, so this is deliberately slow relative
-	// to the engine's 250ms status sweep: that sweep drives a live activity dot, this
-	// drives a label.
-	titlePollInterval = 2 * time.Second
 
 	// maxTitleFileBytes bounds a read of either state file. Both are small and
 	// machine-written; anything larger is a corrupt or hostile file, not a title.
@@ -335,22 +328,6 @@ func enableSessionTitles(titles *sessionTitleSync) func(tabID terminal.SessionID
 		return nil
 	}
 	return titles.sessionEnv
-}
-
-// Run polls until ctx is cancelled. ONE goroutine for every tab, not one per tab: the work
-// is a directory listing plus a small read per mapped tab, so a single ticker is both
-// simpler and cheaper than a per-session watcher.
-func (s *sessionTitleSync) Run(ctx context.Context, mgr titleSetter) {
-	t := time.NewTicker(titlePollInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			s.pass(ctx, mgr)
-		}
-	}
 }
 
 // pass runs one sweep: reclaim every mapping whose tab is gone, then for the ones that

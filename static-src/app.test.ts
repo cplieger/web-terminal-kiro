@@ -21,7 +21,7 @@ import faviconInputSvg from "../static/favicon-input.svg?raw";
 // Two files the UI package's `exports` map does not publish, read as source
 // text via relative node_modules paths (a non-exported subpath can't be
 // imported by package name).
-import kernelSource from "./node_modules/@cplieger/web-terminal-ui/src/kernel/kernel.ts?raw";
+import fatalSource from "./node_modules/@cplieger/web-terminal-ui/src/kernel/fatal.ts?raw";
 import pageCss from "./node_modules/@cplieger/web-terminal-ui/css/page.css?raw";
 
 // app.ts imports createTerminal and presetAgentTabbed; mock both.
@@ -442,6 +442,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     expect(createTerminalMock).toHaveBeenCalledWith("#terminal", {
       features: expect.any(Function),
       persistScrollback: { kind: "scrollback-store" },
+      split: true,
       theme: THEME,
     });
     // Passing the function must NOT call it here.
@@ -480,6 +481,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     expect(createTerminalMock).toHaveBeenCalledWith("#terminal", {
       features: expect.any(Function),
       persistScrollback: { kind: "scrollback-store" },
+      split: true,
       theme: THEME,
       loading,
     });
@@ -964,7 +966,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     // adds). If the kernel renames it, the stand-down silently stops firing
     // and a stray uncaught error converts an already-lowered overlay into a
     // dialog the kernel then removes.
-    expect(kernelSource).toContain('classList.add("fade")');
+    expect(fatalSource).toContain('classList.add("fade")');
     expect(readWatchdogSource()).toContain('classList.contains("fade")');
   });
 

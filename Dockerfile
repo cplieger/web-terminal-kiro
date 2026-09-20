@@ -273,44 +273,23 @@ RUN set -e; mkdir -p static/vendor/fonts; \
       printf '%s  static/vendor/fonts/%s\n' "$asset_sha" "$dest" | sha256sum -c -; \
     done
 
-# Fetch the engine + UI TypeScript from the npm registry. Both publish TS
-# source only (no precompiled JS) — same pattern as @cplieger/reactive,
-# matching how local TS files in static-src/ are treated. Extracted side by
-# side under static-src/node_modules/@cplieger so tsc's bundler resolution
-# finds the engine when compiling the UI's `@cplieger/web-terminal-engine` import.
-# Integrity note: all four of the Go, tsc, Nerd Font and tool-catalog fetches
-# above are sha256-gated, and so are both @cplieger npm tarballs below — each
-# carries a `# repin:`-marked sha256 ARG that the Renovate postUpgradeTask
-# recomputes in the same commit that bumps its version.
+# Both packages ship TS source only; they are extracted side by side under
+# static-src/node_modules/@cplieger so tsc resolves the UI's engine import.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=5.2.0
-# sha256 of the published tarball. npm publishes SHA-512 (dist.integrity), not this
-# digest, so the version and the digest come from different sources: Renovate bumps
-# the version and the repin postUpgradeTask recomputes this line in the same commit.
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.0.0
+# sha256 of the tarball: npm's dist.integrity is SHA-512, so this digest cannot be
+# copied from the registry; a hand bump of the version re-runs scripts/repin-sha.sh.
 # repin: dep=@cplieger/web-terminal-engine url=https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=75245585ffff54f64e89a05f6b1b715dd234fbfc3952768277c01268ff69f129
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=0bbd2d0e427589051bf32fc419e0ae7c357e1e0a3515b44cef7036d1e7ac3697
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=7.3.2
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.0.0
 # repin: dep=@cplieger/web-terminal-ui url=https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=da6099b24f4d22cbcd27f3c6bc76f27b2b7a0e2a26fb23155b3121248b9957ef
-# Pin gate (client-bundle parity): the SERVED client bundle is built from the
-# ARG-pinned npm tarballs above while static-src/package.json pins what local
-# dev compiles against — nothing else fails when they disagree, which is
-# exactly how v1.1.3 shipped a 2.4.0 client against a 2.5.0 server. Assert
-# engine ARG == package.json engine pin and UI ARG == package.json UI pin
-# (the docker-builds dev/prod parity rule) BEFORE fetching, so a manual bump
-# that misses a pin dies here with a named error. go.mod is deliberately NOT
-# compared: the engine's Go module and npm package version independently per
-# release (a Go-only release moves the tag without publishing npm, so lockstep
-# is not satisfiable); wire compatibility across the two halves is the
-# engine's own contract (wire_binary protocol version + the conformance
-# suite), not a version-string equality — asserted mechanically by the
-# wire-floor gate after the vendor fetch below. Renovate moves the
-# ARG+package.json pins in one grouped PR on the routine path; this gate
-# catches the human bypass. The tsc compiler pair (ARG TS_VERSION vs
-# static-src/package.json's @typescript/native pin) is asserted for the same
-# dev/prod-parity reason: the served bundle must be compiled by the same tsc
-# version local dev typechecked against.
+ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=e4c9cd042f21f716303a3e6936f775c6a8b4f59f4c21be3fbcc6fb79a4a063d9
+# The served bundle is built from the ARG pins while local dev compiles against
+# static-src/package.json, and nothing else fails when the two disagree. go.mod
+# is deliberately not compared: the engine's Go module and npm package version
+# independently, and their wire compatibility is asserted by the wirecheck gate
+# below rather than by version equality.
 COPY static-src/package.json static-src/package.json
 RUN ENGINE_NPM=$(sed -n 's|.*"@cplieger/web-terminal-engine": "\([^"]*\)".*|\1|p' static-src/package.json) && \
     UI_NPM=$(sed -n 's|.*"@cplieger/web-terminal-ui": "\([^"]*\)".*|\1|p' static-src/package.json) && \

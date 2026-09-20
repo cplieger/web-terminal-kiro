@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/web-terminal-engine/v5/terminal"
+	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
 // workflowFixtureParent is the synthetic parentSessionId every redacted fixture
@@ -233,28 +233,29 @@ func TestWorkflowNeedsInputWalk(t *testing.T) {
 	})
 
 	t.Run("a chain within the budget is walked to its end", func(t *testing.T) {
-		if !anyNodeNeedsInput(chainOfNodes(maxWorkflowNodes-1, workflowSignalNeedInput)) {
+		if !anyNodeNeedsInput(chainOfNodes(maxWorkflowNodes-1, askingLeaf)) {
 			t.Errorf("anyNodeNeedsInput(chain of %d) = false, want true", maxWorkflowNodes-1)
 		}
 	})
 
 	t.Run("a chain past the budget stops and answers no input", func(t *testing.T) {
-		if anyNodeNeedsInput(chainOfNodes(maxWorkflowNodes+50, workflowSignalNeedInput)) {
+		if anyNodeNeedsInput(chainOfNodes(maxWorkflowNodes+50, askingLeaf)) {
 			t.Errorf("anyNodeNeedsInput(chain of %d) = true, want false: the budget must stop the walk", maxWorkflowNodes+50)
 		}
 	})
 }
 
-// deepRecord is a paused run whose tree is one chain past the node budget, with the
-// need-input signal on the leaf the walk cannot reach. Generated rather than
-// committed, so it tracks maxWorkflowNodes instead of silently stopping testing the
-// budget the next time that constant is raised.
-func deepRecord(t *testing.T, parent string) string {
+var askingLeaf = workflowNode{CompletionSignal: workflowSignalNeedInput}
+
+// deepRecord is a paused run whose tree is one chain past the node budget, with leaf as the
+// node the walk cannot reach. Generated rather than committed, so it tracks maxWorkflowNodes
+// instead of silently stopping testing the budget the next time that constant is raised.
+func deepRecord(t *testing.T, parent string, leaf workflowNode) string {
 	t.Helper()
 	raw, err := json.Marshal(workflowState{
 		Status:          workflowStatusPaused,
 		ParentSessionID: parent,
-		Root:            *chainOfNodes(maxWorkflowNodes+50, workflowSignalNeedInput),
+		Root:            *chainOfNodes(maxWorkflowNodes+50, leaf),
 	})
 	if err != nil {
 		t.Fatalf("marshal a chain of %d nodes: %v", maxWorkflowNodes+50, err)
@@ -262,11 +263,10 @@ func deepRecord(t *testing.T, parent string) string {
 	return string(raw)
 }
 
-// chainOfNodes builds a single-child chain of n nodes carrying signal on the
-// deepest one, which is the worst case for both the stack and the budget.
-func chainOfNodes(n int, signal string) *workflowNode {
-	deepest := workflowNode{CompletionSignal: signal}
-	node := &deepest
+// chainOfNodes builds a single-child chain of n nodes ending in leaf, which is the worst
+// case for both the stack and the budget.
+func chainOfNodes(n int, leaf workflowNode) *workflowNode {
+	node := &leaf
 	for range n - 1 {
 		node = &workflowNode{Children: []workflowNode{*node}}
 	}
@@ -860,7 +860,7 @@ func TestWorkflowWatchTolerates(t *testing.T) {
 	t.Run("a record nested past the node budget is folded rather than crashing", func(t *testing.T) {
 		f := newWorkflowFixture(t)
 		f.pairs["tab1"] = kiro
-		f.stage("hash0", "wf_deep", deepRecord(t, kiro), tabStart.Add(time.Minute))
+		f.stage("hash0", "wf_deep", deepRecord(t, kiro, askingLeaf), tabStart.Add(time.Minute))
 
 		f.watch.pass(t.Context(), liveTabs("tab1"))
 
@@ -1073,23 +1073,143 @@ func TestWorkflowWatchRecordsTheChangeAndNotTheTabID(t *testing.T) {
 	}
 }
 
-// TestWorkflowWatchRunStopsWithItsContext pins Run's whole contract: it sweeps
-// until its context is cancelled and then RETURNS. Every other case here drives
-// pass() directly.
-func TestWorkflowWatchRunStopsWithItsContext(t *testing.T) {
+func TestWorkflowWatchPublishesLiveRunOwners(t *testing.T) {
+	const kiro = "sess_11111111-2222-3333-4444-555555555555"
+	const stranger = "sess_99999999-8888-7777-6666-555555555555"
 	f := newWorkflowFixture(t)
-	ctx, cancel := context.WithCancel(t.Context())
-
-	returned := make(chan struct{})
-	go func() {
-		defer close(returned)
-		f.watch.Run(ctx, liveTabs())
-	}()
-	cancel()
-
-	select {
-	case <-returned:
-	case <-time.After(10 * time.Second):
-		t.Fatal("Run did not return after its context was cancelled; the watcher outlives the server it was started for, holding its ticker and re-scanning the session store")
+	if got, ok := f.watch.runOwners(); ok || got != nil {
+		t.Errorf("runOwners() = (%v, %v) before any pass, want (nil, false)", got, ok)
 	}
+	f.pairs["tab1"] = kiro
+	f.run("hash0", "wf_live", "running.json", kiro, tabStart.Add(time.Minute))
+	f.run("hash0", "wf_done", "completed.json", kiro, tabStart.Add(time.Minute))
+	f.run("hash0", "wf_orphan", "running.json", stranger, tabStart.Add(time.Minute))
+	f.run("hash0", "wf_unplaced", "unknown-status.json", kiro, tabStart.Add(time.Minute))
+
+	f.watch.pass(t.Context(), liveTabs("tab1"))
+
+	want := [][]string{{kiro, workflowFixtureStepOne}, {kiro}}
+	if got, ok := f.watch.runOwners(); !ok || !slices.EqualFunc(got, want, slices.Equal) {
+		t.Errorf("runOwners() = (%v, %v), want (%v, true): the live run's parent and step and the unplaced run's parent, nothing from the completed run or the run no live tab maps to", got, ok, want)
+	}
+	if got := f.watch.mark("tab1"); got != (workflowMark{State: workflowMarkWorking, Tally: workflowTally{Total: 1, Working: 1}}) {
+		t.Errorf("mark(tab1) = %+v, want working from the live run alone: a run of unknown status stays reachable and lights nothing", got)
+	}
+
+	f.watch.pass(t.Context(), liveTabs())
+	if got, ok := f.watch.runOwners(); !ok || len(got) != 0 {
+		t.Errorf("runOwners() = (%v, %v) with no live tab, want (none, true): a run no tab reaches has no file worth reading", got, ok)
+	}
+}
+
+// Every leg stages a live run a tab maps to beside the defect, so a set that reads as complete
+// would hand the pending poller a real-looking answer with a run missing from it.
+func TestWorkflowWatchReportsAnIncompleteOwnerSet(t *testing.T) {
+	const kiro = "sess_11111111-2222-3333-4444-555555555555"
+	cases := []struct {
+		name  string
+		ctx   func(t *testing.T) context.Context
+		plant func(f *workflowFixture)
+	}{
+		{
+			name: "the session store is not a directory",
+			plant: func(f *workflowFixture) {
+				root := filepath.Join(f.home, ".kiro", "sessions")
+				if err := os.RemoveAll(root); err != nil {
+					f.t.Fatal(err)
+				}
+				if err := os.WriteFile(root, nil, 0o600); err != nil {
+					f.t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "one hash directory's workflow store is not a directory",
+			plant: func(f *workflowFixture) {
+				if err := os.MkdirAll(filepath.Join(f.home, ".kiro", "sessions", "hash1"), 0o750); err != nil {
+					f.t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(f.home, ".kiro", "sessions", "hash1", workflowsDirName), nil, 0o600); err != nil {
+					f.t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "one run's state file is a directory",
+			plant: func(f *workflowFixture) {
+				if err := os.MkdirAll(filepath.Join(f.home, ".kiro", "sessions", "hash0", workflowsDirName, "wf_odd", workflowStateFileName), 0o750); err != nil {
+					f.t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "one run's read is refused",
+			ctx:  refusedRead,
+			plant: func(f *workflowFixture) {
+				f.run("hash0", "wf_bbbb", "running.json", kiro, tabStart.Add(time.Minute))
+			},
+		},
+		{
+			name: "a new run's state file is undecodable",
+			plant: func(f *workflowFixture) {
+				f.run("hash0", "wf_torn", "truncated.json", kiro, tabStart.Add(time.Minute))
+			},
+		},
+		{
+			name: "a changed run's torn record names a step its carried verdict lacks",
+			plant: func(f *workflowFixture) {
+				f.stage("hash0", "wf_aaaa", tornSecondStep(f.t, kiro), tabStart.Add(2*time.Minute))
+			},
+		},
+		{
+			name: "a run's asking step lies past the node budget",
+			plant: func(f *workflowFixture) {
+				leaf := workflowNode{CompletionSignal: workflowSignalNeedInput, SessionID: workflowFixtureStepTwo}
+				f.stage("hash0", "wf_deep", deepRecord(f.t, kiro, leaf), tabStart.Add(time.Minute))
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWorkflowFixture(t)
+			f.pairs["tab1"] = kiro
+			f.run("hash0", "wf_aaaa", "running.json", kiro, tabStart.Add(time.Minute))
+			f.watch.pass(t.Context(), liveTabs("tab1"))
+			if got, ok := f.watch.runOwners(); !ok || len(got) != 1 {
+				t.Fatalf("runOwners() = (%v, %v) over one readable run, want one owner set and ok", got, ok)
+			}
+			tc.plant(f)
+			ctx := t.Context()
+			if tc.ctx != nil {
+				ctx = tc.ctx(t)
+			}
+
+			f.watch.pass(ctx, liveTabs("tab1"))
+
+			if got, ok := f.watch.runOwners(); ok {
+				t.Errorf("runOwners() = (%v, true), want ok=false: a run the sweep could not see may be the one whose step is asking", got)
+			}
+			// Nothing on disk moves, so every verdict comes from the cache.
+			f.watch.pass(ctx, liveTabs("tab1"))
+			if got, ok := f.watch.runOwners(); ok {
+				t.Errorf("runOwners() = (%v, true) one pass later, want ok=false still: a cached verdict must carry the gap it was measured with", got)
+			}
+		})
+	}
+}
+
+// tornSecondStep is running-second-step.json cut mid-write, after the second step's node and
+// before the record closes: the bytes name a step the run's earlier record did not.
+func tornSecondStep(t *testing.T, parent string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "workflow-state", "running-second-step.json"))
+	if err != nil {
+		t.Fatalf("read the second-step fixture: %v", err)
+	}
+	body := strings.ReplaceAll(string(raw), workflowFixtureParent, parent)
+	cut := strings.LastIndex(body, `"startedAt"`)
+	if cut < 0 || !strings.Contains(body[:cut], workflowFixtureStepTwo) || json.Valid([]byte(body[:cut])) {
+		t.Fatal("running-second-step.json no longer closes its children before the root's startedAt, so the cut cannot leave a torn record naming the second step")
+	}
+	return body[:cut]
 }

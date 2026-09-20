@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/web-terminal-engine/v5/terminal"
+	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
 const (
@@ -51,8 +51,6 @@ const (
 	// Real beats measure 102-106 bytes; the bound exists because the file is written by a
 	// process this app does not run, and an over-bound read admits the run.
 	maxWorkflowBeatBytes = 4 << 10
-
-	workflowPollInterval = 2 * time.Second
 
 	// The largest real tree measured holds 30 nodes at depth 5; the bound exists because a
 	// corrupt or hostile file can nest without limit and the walk runs per changed file.
@@ -127,20 +125,21 @@ func knownWorkflowStatus(status string) bool {
 
 // walkWorkflowNodes visits every node of one run's tree until visit answers true. Iterative
 // with an explicit stack and a node budget, so a corrupt deeply-nested file cannot spend
-// unbounded work; the budget is spent one node per POP, so an exhausted walk simply stops
-// where it is and every caller has to be correct on a partial answer.
-func walkWorkflowNodes(root *workflowNode, visit func(*workflowNode) bool) {
+// unbounded work; the budget is spent one node per POP. exhausted is true when the budget
+// ran out with nodes still unvisited, so a caller can tell a partial answer from a whole one.
+func walkWorkflowNodes(root *workflowNode, visit func(*workflowNode) bool) (exhausted bool) {
 	stack := []*workflowNode{root}
 	for budget := maxWorkflowNodes; len(stack) > 0 && budget > 0; budget-- {
 		node := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		if visit(node) {
-			return
+			return false
 		}
 		for i := range node.Children {
 			stack = append(stack, &node.Children[i])
 		}
 	}
+	return len(stack) > 0
 }
 
 // anyNodeNeedsInput reports whether any node carries completionSignal == "need_input".
@@ -161,10 +160,11 @@ func anyNodeNeedsInput(root *workflowNode) bool {
 // inside the launching tab's kiro-cli process, and a COMPLETED step keeps its sessionId in the
 // tree -- which is what holds the mark lit over the gap between one step ending and the next
 // one prompting. Deduplicated, because a real record repeats one step's session id across
-// nodes and a repeat would count the same run twice in one tab's tally.
-func runSessionIDs(st *workflowState) []string {
+// nodes and a repeat would count the same run twice in one tab's tally. partial is true when
+// the node budget stopped the walk, so owners may omit a step the record names.
+func runSessionIDs(st *workflowState) (owners []string, partial bool) {
 	seen := make(map[string]struct{}, 4)
-	owners := make([]string, 0, 4)
+	owners = make([]string, 0, 4)
 	admit := func(id string) {
 		if _, dup := seen[id]; dup || !validKiroSessionID(id) {
 			return
@@ -173,11 +173,11 @@ func runSessionIDs(st *workflowState) []string {
 		owners = append(owners, id)
 	}
 	admit(st.ParentSessionID)
-	walkWorkflowNodes(&st.Root, func(node *workflowNode) bool {
+	partial = walkWorkflowNodes(&st.Root, func(node *workflowNode) bool {
 		admit(node.SessionID)
 		return false
 	})
-	return owners
+	return owners, partial
 }
 
 // foldWorkflowMarks folds one tab's admitted runs. Precedence input > waiting > working.
@@ -213,13 +213,19 @@ func foldWorkflowMarks(states []string) workflowMark {
 type workflowSessions interface{ List() []terminal.SessionInfo }
 
 // workflowVerdict is one state file's classification, cached under the identity the pass
-// observed. An empty state means the run contributes nothing.
+// observed. An empty state lights no mark; owners with an empty state is a run whose status
+// this build cannot place, kept reachable because its steps may still be asking. partial
+// marks owners that may omit a session the record names: the bytes did not decode and an
+// earlier pass's answer is carried, or the tree ran past the node budget.
 type workflowVerdict struct {
 	modTime time.Time
 	state   string
 	owners  []string
 	size    int64
+	partial bool
 }
+
+var errWorkflowStateIrregular = errors.New("workflow state is not a regular file")
 
 // workflowWatch reports what a workflow run launched in a tab is doing, by polling
 // kiro-cli's own on-disk run state. It owns no tab list: the live set is the engine's and
@@ -230,10 +236,12 @@ type workflowWatch struct {
 	marks      atomic.Pointer[map[terminal.SessionID]workflowMark]
 	mapping    func() map[terminal.SessionID]string
 	probeAlive func(pid int) bool
-	// Both maps are touched only by the poller goroutine, so neither needs a lock.
+	// Everything below is touched only by the poller goroutine, so none of it needs a lock.
 	verdicts        map[string]workflowVerdict
 	unknownStatuses map[string]struct{}
 	sessionsRoot    string
+	owners          [][]string
+	ownersComplete  bool
 }
 
 // newWorkflowWatch builds the watcher. home is the HOME whose .kiro/sessions tree kiro-cli
@@ -246,22 +254,6 @@ func newWorkflowWatch(home string, mapping func() map[terminal.SessionID]string)
 		verdicts:        make(map[string]workflowVerdict),
 		unknownStatuses: make(map[string]struct{}),
 		sessionsRoot:    filepath.Join(home, ".kiro", "sessions"),
-	}
-}
-
-// Run polls until ctx is cancelled. ONE goroutine for every tab, the same shape the title
-// poller uses: one directory listing plus a stat per run, and a read only for a run whose
-// file changed.
-func (w *workflowWatch) Run(ctx context.Context, mgr workflowSessions) {
-	t := time.NewTicker(workflowPollInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			w.pass(ctx, mgr)
-		}
 	}
 }
 
@@ -282,6 +274,15 @@ func (w *workflowWatch) sessionActivity(id terminal.SessionID) terminal.SessionA
 	return terminal.SessionActivity{State: mark.State, Count: mark.Tally.Total}
 }
 
+// runOwners returns the owner sessions of every run the last pass found live and joined to a
+// mapped tab, one slice per run. ok is false before the first pass and after a pass in which
+// any run could not be listed, read, decoded or walked to the end of its tree, so a reader
+// that needs the whole set treats the answer as unavailable rather than as empty. The slices
+// are read-only and shared.
+func (w *workflowWatch) runOwners() (owners [][]string, ok bool) {
+	return w.owners, w.ownersComplete
+}
+
 // pass runs one sweep: admit every run whose status, parent tab and file age all pass, fold
 // the survivors per tab, and publish.
 func (w *workflowWatch) pass(ctx context.Context, mgr workflowSessions) {
@@ -291,13 +292,14 @@ func (w *workflowWatch) pass(ctx context.Context, mgr workflowSessions) {
 	for i := range sessions {
 		live[sessions[i].ID] = sessions[i].CreatedAt
 	}
-	admitted := w.admit(ctx, live, w.tabsByKiroSession(live))
+	admitted, owners, complete := w.admit(ctx, live, w.tabsByKiroSession(live))
 	marks := make(map[terminal.SessionID]workflowMark, len(admitted))
 	for tab, states := range admitted {
 		if mark := foldWorkflowMarks(states); mark.State != "" {
 			marks[tab] = mark
 		}
 	}
+	w.owners, w.ownersComplete = owners, complete
 	w.publish(marks)
 }
 
@@ -316,44 +318,63 @@ func (w *workflowWatch) tabsByKiroSession(live map[terminal.SessionID]time.Time)
 
 // admit collects each live tab's admitted run states and refreshes the verdict cache. The
 // cache is REBUILT from the paths seen here, so a removed run drops out with no eviction.
-func (w *workflowWatch) admit(ctx context.Context, live map[terminal.SessionID]time.Time, tabs map[string][]terminal.SessionID) map[terminal.SessionID][]string {
+// complete is false when any run could not be listed, stat'ed, read, decoded or walked whole,
+// refused or not: the owner set is then short, and a consumer that must know every file a
+// tab can reach has to wait. A partial verdict is checked before the refusal because the
+// sessions it omits may be the ones a live tab is mapped to.
+func (w *workflowWatch) admit(ctx context.Context, live map[terminal.SessionID]time.Time, tabs map[string][]terminal.SessionID) (admitted map[terminal.SessionID][]string, owners [][]string, complete bool) {
 	seen := make(map[string]workflowVerdict, len(w.verdicts))
-	admitted := make(map[terminal.SessionID][]string)
-	for _, path := range w.statePaths() {
-		fi, ok := statWorkflowState(path)
-		if !ok {
+	admitted = make(map[terminal.SessionID][]string)
+	paths, complete := w.statePaths()
+	for _, path := range paths {
+		fi, err := statWorkflowState(path)
+		if err != nil {
+			complete = complete && errors.Is(err, fs.ErrNotExist)
 			continue
 		}
-		verdict := w.verdictFor(ctx, path, fi)
+		verdict, decided := w.verdictFor(ctx, path, fi)
+		if !decided {
+			complete = false
+			continue
+		}
 		seen[path] = verdict
-		if w.refusesRun(ctx, path, verdict, tabs) {
+		complete = complete && !verdict.partial
+		if w.refusesRun(ctx, path, &verdict, tabs) {
 			continue
 		}
-		// A tab carries ONE mapped session, so no tab is reachable through two owners and
-		// the tally cannot double-count a run.
-		for _, owner := range verdict.owners {
-			for _, tab := range tabs[owner] {
-				// The third admission clause, and deliberately not a freshness window: a run
-				// legitimately sits paused awaiting input overnight. "Written after the tab
-				// started" still refuses a run abandoned before this tab existed.
-				if !fi.ModTime().Before(live[tab]) {
-					admitted[tab] = append(admitted[tab], verdict.state)
-				}
+		owners = append(owners, verdict.owners)
+		admitRun(admitted, &verdict, fi.ModTime(), live, tabs)
+	}
+	w.verdicts = seen
+	return admitted, owners, complete
+}
+
+// A tab carries ONE mapped session, so no tab is reachable through two owners and the tally
+// cannot double-count a run.
+func admitRun(admitted map[terminal.SessionID][]string, verdict *workflowVerdict, written time.Time, live map[terminal.SessionID]time.Time, tabs map[string][]terminal.SessionID) {
+	if verdict.state == "" {
+		return
+	}
+	for _, owner := range verdict.owners {
+		for _, tab := range tabs[owner] {
+			// The third admission clause, and deliberately not a freshness window: a run
+			// legitimately sits paused awaiting input overnight. "Written after the tab
+			// started" still refuses a run abandoned before this tab existed.
+			if !written.Before(live[tab]) {
+				admitted[tab] = append(admitted[tab], verdict.state)
 			}
 		}
 	}
-	w.verdicts = seen
-	return admitted
 }
 
 // refusesRun reports whether one run is refused for every tab; a false answer leaves admit's
 // per-tab clause to decide. The dead-writer clause refuses abandonment DURING the tab's life,
 // which admit's mtime clause structurally cannot see; it rests on the run's writer being a
 // descendant of this process, so a per-session PID namespace would make every pid read dead.
-func (w *workflowWatch) refusesRun(ctx context.Context, path string, verdict workflowVerdict, tabs map[string][]terminal.SessionID) bool {
+func (w *workflowWatch) refusesRun(ctx context.Context, path string, verdict *workflowVerdict, tabs map[string][]terminal.SessionID) bool {
 	// mapsToATab is an economy, not a gate -- admit iterates the owners, so a run no live tab
 	// maps to admits nothing anyway -- and it only spares the beat read.
-	return verdict.state == "" || !mapsToATab(verdict.owners, tabs) || w.writerIsDead(ctx, path)
+	return len(verdict.owners) == 0 || !mapsToATab(verdict.owners, tabs) || w.writerIsDead(ctx, path)
 }
 
 // mapsToATab reports whether any of a run's owner sessions names a live tab.
@@ -367,87 +388,96 @@ func mapsToATab(owners []string, tabs map[string][]terminal.SessionID) bool {
 }
 
 // verdictFor answers from the cache while the file still carries the identity the cached
-// verdict was measured under, and classifies it otherwise.
-func (w *workflowWatch) verdictFor(ctx context.Context, path string, fi os.FileInfo) workflowVerdict {
+// verdict was measured under, and classifies it otherwise. decided is false when the read
+// failed and nothing was measured.
+func (w *workflowWatch) verdictFor(ctx context.Context, path string, fi os.FileInfo) (workflowVerdict, bool) {
 	verdict, cached := w.verdicts[path]
 	if cached && verdict.size == fi.Size() && verdict.modTime.Equal(fi.ModTime()) {
-		return verdict
+		return verdict, true
 	}
-	verdict, decided := w.classify(ctx, path, verdict)
+	verdict, decided := w.classify(ctx, path, &verdict)
 	if !decided {
 		// A failed read measured nothing, so stamping the identity onto it would let one
 		// failure freeze the mark: a paused run's record never changes again.
-		return verdict
+		return verdict, false
 	}
 	verdict.modTime, verdict.size = fi.ModTime(), fi.Size()
-	return verdict
+	return verdict, true
 }
 
-// statWorkflowState reports the file identity the verdict cache keys on, or false when the
-// path holds no run state to read.
-func statWorkflowState(path string) (os.FileInfo, bool) {
+// statWorkflowState reports the file identity the verdict cache keys on. fs.ErrNotExist is
+// the normal miss: workflows/ also holds generated/, which carries definitions and no run
+// state, and a wf_ prefix filter would only guess at naming.
+func statWorkflowState(path string) (os.FileInfo, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
-		// ENOENT is the normal miss: workflows/ also holds generated/, which carries
-		// definitions and no run state, and a wf_ prefix filter would only guess at naming.
 		if !errors.Is(err, fs.ErrNotExist) {
 			slog.Debug("workflow mark: run state could not be stat'ed", "error", err)
 		}
-		return nil, false
+		return nil, err
 	}
-	return fi, fi.Mode().IsRegular()
+	if !fi.Mode().IsRegular() {
+		return nil, errWorkflowStateIrregular
+	}
+	return fi, nil
 }
 
 // statePaths lists every run's state file across the workspace-hash level. workflows/ is a
 // SIBLING of the sess_<uuid> directories under a hash dir, not a child of one, so a run is
 // not reachable by walking down from the session directory the title poller reads -- and
-// only one hash dir has a workflows/ at all, so an absent one is the normal case.
-func (w *workflowWatch) statePaths() []string {
+// only one hash dir has a workflows/ at all, so an absent one is the normal case. complete
+// is false when a directory could not be listed.
+func (w *workflowWatch) statePaths() (paths []string, complete bool) {
 	hashDirs, err := os.ReadDir(w.sessionsRoot)
 	if err != nil {
 		// An absent tree is normal before kiro-cli's first session; anything else kills every
 		// tab's mark, so it is recorded.
-		if !errors.Is(err, fs.ErrNotExist) {
-			slog.Debug("workflow mark: kiro session store unreadable",
-				"dir", w.sessionsRoot, "error", err)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, true
 		}
-		return nil
+		slog.Debug("workflow mark: kiro session store unreadable",
+			"dir", w.sessionsRoot, "error", err)
+		return nil, false
 	}
-	var paths []string
+	complete = true
 	for _, hd := range hashDirs {
 		if !hd.IsDir() {
 			continue
 		}
-		paths = append(paths, runStatePaths(filepath.Join(w.sessionsRoot, hd.Name(), workflowsDirName))...)
+		runs, listed := runStatePaths(filepath.Join(w.sessionsRoot, hd.Name(), workflowsDirName))
+		paths = append(paths, runs...)
+		complete = complete && listed
 	}
-	return paths
+	return paths, complete
 }
 
-// runStatePaths lists one hash directory's runs. An absent workflows/ is silent.
-func runStatePaths(dir string) []string {
+// runStatePaths lists one hash directory's runs. An absent workflows/ is silent and complete.
+func runStatePaths(dir string) (paths []string, complete bool) {
 	runs, err := os.ReadDir(dir)
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			slog.Debug("workflow mark: workflow store unreadable", "dir", dir, "error", err)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, true
 		}
-		return nil
+		slog.Debug("workflow mark: workflow store unreadable", "dir", dir, "error", err)
+		return nil, false
 	}
-	paths := make([]string, 0, len(runs))
+	paths = make([]string, 0, len(runs))
 	for _, run := range runs {
 		if run.IsDir() {
 			paths = append(paths, filepath.Join(dir, run.Name(), workflowStateFileName))
 		}
 	}
-	return paths
+	return paths, true
 }
 
 // classify reads and decodes one state file. decided=false means the READ failed, which is
 // not a verdict about the file at all: nothing was measured, so nothing may be cached.
 //
-// A DECODE failure carries the path's PREVIOUS verdict forward. That holds the mark steady
-// across a LIVE writer's torn write, which is the case it is for; a writer killed mid-write
-// leaves a permanently torn record, and its mark then stands until the tab closes.
-func (w *workflowWatch) classify(ctx context.Context, path string, previous workflowVerdict) (verdict workflowVerdict, decided bool) {
+// A DECODE failure carries the path's PREVIOUS verdict forward, marked partial: the mark
+// holds steady across a live writer's torn write, and the owner set goes unavailable because
+// the torn bytes may name a step the carried verdict does not. A record torn for good, its
+// writer killed mid-write, keeps both effects for as long as it exists.
+func (w *workflowWatch) classify(ctx context.Context, path string, previous *workflowVerdict) (verdict workflowVerdict, decided bool) {
 	raw, err := readSmallFile(ctx, path, maxWorkflowStateBytes)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
@@ -458,25 +488,25 @@ func (w *workflowWatch) classify(ctx context.Context, path string, previous work
 	var st workflowState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		slog.Debug("workflow mark: run state is not decodable", "error", err)
-		return previous, true
+		carried := *previous
+		carried.partial = true
+		return carried, true
 	}
 	if !knownWorkflowStatus(st.Status) {
+		// Liveness unknown, so the run lights nothing and stays reachable.
 		w.noteUnknownStatus(st.Status)
-		return workflowVerdict{}, true
+		return runVerdict(&st, ""), true
 	}
 	state, ok := classifyWorkflowState(&st)
 	if !ok {
 		return workflowVerdict{}, true
 	}
-	// The owner ids are joined against the title poller's mapping, and the file is written by
-	// a process this app does not run: a record naming no valid session id names no tab. The
-	// return is an early-out, not a gate -- admit iterates the owners, so an empty set already
-	// admits nothing.
-	owners := runSessionIDs(&st)
-	if len(owners) == 0 {
-		return workflowVerdict{}, true
-	}
-	return workflowVerdict{owners: owners, state: state}, true
+	return runVerdict(&st, state), true
+}
+
+func runVerdict(st *workflowState, state string) workflowVerdict {
+	owners, partial := runSessionIDs(st)
+	return workflowVerdict{owners: owners, state: state, partial: partial}
 }
 
 // writerIsDead reports the one liveness proof that withdraws a mark: this run's run.beat

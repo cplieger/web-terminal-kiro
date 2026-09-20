@@ -117,28 +117,14 @@ test.describe("served page boots", () => {
       .toBe(true);
   });
 
-  // Runtime accessibility. html-validate's :a11y preset already gates the static
-  // markup, but it cannot see what the terminal library RENDERS, which is most of
-  // this page. The first run of this test found three violations; all three live
-  // in @cplieger/web-terminal-ui's rendered tree, not in this app's markup, so
-  // they cannot be fixed here.
-  //
-  // They are baselined by RULE ID rather than suppressed. A rule already on the
-  // list is reported and tolerated; anything new fails. That keeps the check
-  // meaningful from day one without gating on a defect this repo cannot fix, and
-  // it makes the debt visible in test output instead of hiding it behind a
-  // disabled assertion. Removing an entry once the library fixes it is the whole
-  // maintenance burden.
-  //
-  // Known, as measured 2026-08-03 against web-terminal-ui's rendered shell:
-  //   aria-required-children (critical) - a role whose required children are absent
-  //   nested-interactive     (serious)  - an interactive control inside another
-  //   color-contrast         (serious)  - two nodes below the AA ratio
-  const KNOWN_AXE_RULES = new Set([
-    "aria-required-children",
-    "nested-interactive",
-    "color-contrast",
-  ]);
+  // Runtime accessibility over what the library RENDERS, which html-validate's
+  // static :a11y gate cannot see. The violations found so far live in
+  // @cplieger/web-terminal-ui's tree, so they are baselined by RULE ID rather
+  // than suppressed: a listed rule is reported and tolerated, anything new
+  // fails, and an entry goes once the library fixes it.
+  // Measured against web-terminal-ui 8.0.0's rendered shell:
+  //   nested-interactive (serious) - an interactive control inside another
+  const KNOWN_AXE_RULES = new Set(["nested-interactive"]);
 
   test("has no NEW axe-core accessibility violations", async ({ page }) => {
     await page.goto("/", { waitUntil: "load" });
@@ -173,5 +159,67 @@ test.describe("served page boots", () => {
     if (stale.length > 0) {
       console.log(`KNOWN_AXE_RULES entries no longer firing (remove them): ${stale.join(", ")}`);
     }
+  });
+
+  test("boots into the split topology with a keyboard-reachable split button", async ({ page }) => {
+    await page.goto("/", { waitUntil: "load" });
+    const splitButton = page.locator("#terminal .wt-tab-split");
+    await expect(splitButton, "the tabs feature must build the split button").toBeAttached({
+      timeout: 15_000,
+    });
+
+    await expect(page.locator("#terminal.wt-root.wt-split")).toHaveCount(1);
+    await expect(page.locator("#terminal > .wt-split-pane")).toHaveCount(1);
+
+    // The 1280px viewport is above the 730px floor under which the button hides.
+    await expect(splitButton).toBeVisible();
+    await expect(splitButton).toHaveAttribute("aria-expanded", "false");
+    await expect(splitButton).not.toHaveAttribute("tabindex");
+
+    // Walked with real Tab presses rather than read off the DOM: a focusable
+    // ancestor, an inert overlay or a focus trap would keep sequential focus
+    // navigation off the button while the attributes above stayed correct.
+    await page.evaluate(() => {
+      (document.activeElement as HTMLElement | null)?.blur();
+    });
+    const focusPath: string[] = [];
+    let reached = false;
+    for (let i = 0; i < 20 && !reached; i++) {
+      await page.keyboard.press("Tab");
+      focusPath.push(
+        await page.evaluate(() => {
+          const el = document.activeElement;
+          if (!el) {
+            return "none";
+          }
+          const cls = el.className ? `.${el.className.trim().split(/\s+/).join(".")}` : "";
+          return `${el.tagName.toLowerCase()}${cls}`;
+        }),
+      );
+      reached = await splitButton.evaluate((el) => el === document.activeElement);
+    }
+    expect(
+      reached,
+      `Tab never reached the split button; focus path: ${focusPath.join(" -> ")}`,
+    ).toBe(true);
+
+    const results = await new AxeBuilder({ page })
+      .include("#terminal")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    const describe = (v: (typeof results.violations)[number]) =>
+      `${v.id} (${v.impact}): ${v.help} [${v.nodes.map((n) => n.target.join(" ")).join(", ")}]`;
+    const fresh = results.violations.filter((v) => !KNOWN_AXE_RULES.has(v.id));
+    expect(fresh.map(describe), "NEW axe-core violations in the split topology").toEqual([]);
+    // The baseline tolerates the library's known debt elsewhere in the tree, not
+    // on the two controls this test is about.
+    const onSplitChrome = results.violations.filter((v) =>
+      v.nodes.some((n) =>
+        n.target.some(
+          (t) => String(t).includes("wt-tab-split") || String(t).includes("wt-split-handle"),
+        ),
+      ),
+    );
+    expect(onSplitChrome.map(describe), "axe-core violations on the split controls").toEqual([]);
   });
 });
