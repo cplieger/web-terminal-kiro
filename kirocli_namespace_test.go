@@ -156,7 +156,7 @@ func (e *nsEnv) plantOwnVersion() string {
 
 // plantLegacyResidue plants the genuine shell-era residue THIS APP's own
 // installer left, so a sweep assertion cannot pass by doing nothing. Unlike
-// vibekit, this app's installer promoted in place, so its residue includes
+// marotte, this app's installer promoted in place, so its residue includes
 // the update journal, the `.prev` hard-link backups with their `.absent`
 // tombstones, and both install markers -- every fixed-path artifact
 // kiroLegacyPurge names -- plus an orphan staging tree and any dispatcher

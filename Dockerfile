@@ -41,7 +41,7 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 
 # tsc — the TypeScript 7 native compiler (a Go binary) — compiles the browser
 # client at build time (emit lands in static/app.js for go:embed). Matches
-# apps/vibekit's approach. Now that TS7 shipped stable, the native compiler is
+# apps/marotte's approach. Now that TS7 shipped stable, the native compiler is
 # the `typescript` package's per-platform `tsc`
 # (@typescript/typescript-linux-<arch>, published in lockstep with the
 # metapackage). Runtime LSPs are not baked — the toolbelt engine installs
@@ -215,10 +215,10 @@ ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/download/
 # latest version to report a deprecation; a 404 on either is the documented
 # trigger to fall through to `direct`, direct means VCS, and this stage installs
 # no git -- so a proxy hiccup failed the build on `unable to resolve git version`
-# and said nothing about the catalog (measured on vibekit's main, 2026-08-22, at
+# and said nothing about the catalog (measured on marotte's main, 2026-08-22, at
 # this same step). Resolving through go.mod asks for neither query.
 #
-# Deliberately NOT `GOPROXY=off`, which vibekit's copy of this step does carry:
+# Deliberately NOT `GOPROXY=off`, which marotte's copy of this step does carry:
 # there `go mod download` writes into an image LAYER, while here it writes into a
 # cache MOUNT, and a mount is not restored when its RUN is a layer-cache hit. So
 # a cold module cache is legitimate at this point and must stay able to fetch.
@@ -282,9 +282,9 @@ ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.0.1
 # repin: dep=@cplieger/web-terminal-engine url=https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-{version}.tgz
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=6fc672747390bbda3a8b707b7ba70eca8ac5cff0aca13d419dda6399d0796915
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.0.1
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.1.0
 # repin: dep=@cplieger/web-terminal-ui url=https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=cb10db2cd0cd2a6da9e7c443a361d2eb5a2c2f398f2f0b6e13349bf61136d850
+ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=23924e0b27744a5d223eef18b0d7e11c1a3efaae501c2551080a31dc82eb31e8
 # The served bundle is built from the ARG pins while local dev compiles against
 # static-src/package.json, and nothing else fails when the two disagree. go.mod
 # is deliberately not compared: the engine's Go module and npm package version
@@ -510,7 +510,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # That was an APT_PACKAGES value; it is an `apt:gcc` manifest entry now, and
 # the entry is per-deployment, so the dependency is even less reliable than
 # it was. A deployment without it got
-# sister app vibekit's failure instead: every npm-sourced tool dying with
+# sister app marotte's failure instead: every npm-sourced tool dying with
 # `npm failed: exit status 127`.
 # hadolint ignore=DL3008
 RUN echo "OS package refresh: ${PKG_REFRESH}" \

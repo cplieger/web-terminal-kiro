@@ -280,7 +280,7 @@ the `window` identifier for a single evaluation.
   Don't drop `kiro-cli-chat` from `Config.Require`: the library requires only the
   primary artifact by itself, and `chat` over a PTY is this app's product, so a
   directory without the sidecar would count as a complete install and then kill
-  every terminal at chat (vibekit's required set is deliberately smaller; don't
+  every terminal at chat (marotte's required set is deliberately smaller; don't
   copy either app's set into the other).
   `/config/tools/bin/kiro-cli` is a convenience symlink for
   `docker exec … kiro-cli`; nothing in the product reads it, so don't gate

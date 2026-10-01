@@ -276,7 +276,7 @@ sha256. Updates arrive as automated pull requests and ship in a fresh image buil
 
 ## Related projects
 
-- [vibekit](https://github.com/cplieger/vibekit): the sister app, a chat-first Kiro web UI (chat history, MCP, agent tools) instead of a raw terminal.
+- [marotte](https://github.com/cplieger/marotte): the sister app, a chat-first Kiro web UI (chat history, MCP, agent tools) instead of a raw terminal.
 - [web-terminal-engine](https://github.com/cplieger/web-terminal-engine): the terminal engine (Go PTY/VT + TypeScript renderer) behind this app.
 - [web-terminal-ui](https://github.com/cplieger/web-terminal-ui): the touch-first browser UI.
 - [web-terminal-server](https://github.com/cplieger/web-terminal-server): a generic browser terminal for any command, built on the same engine.

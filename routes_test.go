@@ -280,7 +280,7 @@ func TestCreateRateLimit(t *testing.T) {
 // is TIGHTENED from webhttp's strict-origin-when-cross-origin default to
 // same-origin, so a UI bump that drops the vendored `rel="noreferrer"` cannot
 // leak this server's hostname to a page an OSC 8 link points at (see
-// buildHandler's rationale, and vibekit pins the same value); and the
+// buildHandler's rationale, and marotte pins the same value); and the
 // Content-Security-Policy is the
 // hash-pinned policy buildCSPPolicy assembles from the embedded index.html
 // (asserted below: script-src AND style-src each pin a sha256 token, and no
