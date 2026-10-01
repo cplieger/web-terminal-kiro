@@ -39,3 +39,6 @@ static-src/stryker-setup-*.js
 # screenshot: only-on-failure write to the default outputDir). Traces record every
 # request URL including /ws?session=<id> — a live session capability token.
 static-src/test-results/
+
+# Agent workflow scratch
+.agents/
