@@ -1207,9 +1207,9 @@ func tornSecondStep(t *testing.T, parent string) string {
 		t.Fatalf("read the second-step fixture: %v", err)
 	}
 	body := strings.ReplaceAll(string(raw), workflowFixtureParent, parent)
-	cut := strings.LastIndex(body, `"startedAt"`)
-	if cut < 0 || !strings.Contains(body[:cut], workflowFixtureStepTwo) || json.Valid([]byte(body[:cut])) {
+	torn, _, found := strings.CutLast(body, `"startedAt"`)
+	if !found || !strings.Contains(torn, workflowFixtureStepTwo) || json.Valid([]byte(torn)) {
 		t.Fatal("running-second-step.json no longer closes its children before the root's startedAt, so the cut cannot leave a torn record naming the second step")
 	}
-	return body[:cut]
+	return torn
 }
