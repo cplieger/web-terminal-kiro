@@ -109,7 +109,7 @@ func parseAllowedHosts() *webhttp.HostPolicy {
 // resolveScrollback reads the retained-history depth from the env var the ENGINE
 // owns (terminal.ScrollbackEnvVar), returning nil when the operator set nothing so
 // the session factory omits the option and the engine's own default applies. The
-// variable is shared with web-terminal-server and vibekit, so its name and its
+// variable is shared with web-terminal-server and marotte, so its name and its
 // clamping policy live in the engine. This app owns only the failure posture: warn
 // by NAME and fall back, because retained history is not a safety property.
 func resolveScrollback() *int {
@@ -758,14 +758,14 @@ func kiroInstallConfig(cfg *baseKiro) *pinstall.Config {
 		// version directory holding only the main dispatcher answers --version correctly
 		// and then kills every terminal at chat. The library always requires the release's
 		// primary artifact, so this names only the addition. No Optional set, so
-		// kiro-cli-term is not installed here at all; vibekit's set differs, and neither
+		// kiro-cli-term is not installed here at all; marotte's set differs, and neither
 		// should be copied across without a caller that needs it.
 		Require: []string{kirocli.Name + "-chat"},
 		Assert:  kiroSettings(),
 		Purge:   kiroLegacyPurge(),
 		// With the taint set, no pre-existing version directory may be activated at
 		// all: a forgeable sentinel is worthless evidence on a tree another host
-		// user could write. vibekit deliberately leaves this UNSET — it has no
+		// user could write. marotte deliberately leaves this UNSET — it has no
 		// hardening pass that could make the observation.
 		Untrusted: cfg.tainted,
 		// Empty by default so the library's custody check applies in full; setting
@@ -805,7 +805,7 @@ func kiroSettings() []pinstall.Assertion {
 // volume — caller data, since the residue is a fact about this app's history rather
 // than about the release. Nothing in the list is read by anything any more.
 //
-// Larger than vibekit's on purpose (this installer promoted in place, so it wrote a
+// Larger than marotte's on purpose (this installer promoted in place, so it wrote a
 // journal, `.prev` backups and three markers), so do not copy it there. The dispatcher
 // NAMES come from the library profile, which is what makes the sweep safe in a
 // directory toolbelt co-owns: a `kiro-cli*` prefix sweep deleted a live symlink.

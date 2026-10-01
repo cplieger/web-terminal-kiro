@@ -19,7 +19,7 @@ import (
 //
 // It used to pin a literal wired into registerRoutes (5000, then 20000). That was
 // the wrong thing to guard: the depth is a sizing decision shared by this app,
-// web-terminal-server and vibekit, so a number here made it three numbers that
+// web-terminal-server and marotte, so a number here made it three numbers that
 // drift, and the test only asserted that someone had typed the same digits twice.
 // What is worth guarding is the PLUMBING — that the app adds no opinion of its
 // own, that the shared variable actually reaches the ring, and that the one
