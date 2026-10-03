@@ -17,7 +17,7 @@ require (
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
-	github.com/cplieger/atomicfile/v3 v3.1.0 // indirect
+	github.com/cplieger/atomicfile/v4 v4.0.0 // indirect
 	github.com/cplieger/httpx/v5 v5.0.3 // indirect
 	github.com/cplieger/keyenc v1.0.8 // indirect
 	github.com/cplieger/scheduler/v4 v4.2.1 // indirect
