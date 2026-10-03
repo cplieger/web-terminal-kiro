@@ -9,7 +9,7 @@ require (
 	github.com/cplieger/pinstall/v3 v3.0.3
 	github.com/cplieger/runesafe/v2 v2.1.0
 	github.com/cplieger/slogx v1.6.5
-	github.com/cplieger/toolbelt/v3 v3.4.2
+	github.com/cplieger/toolbelt/v3 v3.5.1
 	github.com/cplieger/web-terminal-engine/v6 v6.0.2
 	github.com/cplieger/webhttp/v3 v3.0.0
 )
@@ -17,7 +17,6 @@ require (
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
-	github.com/cplieger/atomicfile/v3 v3.1.0 // indirect
 	github.com/cplieger/httpx/v5 v5.0.3 // indirect
 	github.com/cplieger/keyenc v1.0.8 // indirect
 	github.com/cplieger/scheduler/v4 v4.2.1 // indirect
