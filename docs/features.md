@@ -29,7 +29,7 @@ The page comes from [web-terminal-ui](https://github.com/cplieger/web-terminal-u
 
 - The page reconnects on its own and replays the screen and history after a laptop sleeps, the network drops, or a proxy times out.
 - Typing sent during an outage is delivered on reconnect, with nothing lost or doubled, and a restarted server is detected and the page resyncs.
-- iOS often reclaims the memory of a tab in the background, which reloads the page when you come back. The sessions live on the server and each tab's recent lines are kept on the device, so the page asks only for what you missed. [Security](security.md#stored-scrollback) covers what that stores.
+- iOS often reclaims the memory of a tab in the background, which reloads the page when you come back. The sessions live on the server and each tab's recent lines are kept on the device, so the page asks only for what you missed. [Security](hardening.md#stored-scrollback) covers what that stores.
 
 ## kiro-cli features in the browser
 
