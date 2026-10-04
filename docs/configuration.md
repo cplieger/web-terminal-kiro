@@ -26,7 +26,7 @@ Settings are environment variables on the container, under `environment:` in `co
 
 ## ALLOWED_HOSTS
 
-List the exact names and addresses you type in the browser, for example `localhost,192.168.1.5,webterm.example.com`. Use bare names and addresses only, with no scheme, path or CIDR range such as `10.0.0.0/8`. This list is the check that stops DNS rebinding, described in [Security](security.md).
+List the exact names and addresses you type in the browser, for example `localhost,192.168.1.5,webterm.example.com`. Use bare names and addresses only, with no scheme, path or CIDR range such as `10.0.0.0/8`. This list is the check that stops DNS rebinding, described in [Security](hardening.md).
 
 A request that is loopback on both ends is always admitted, so the healthcheck and commands run inside the container keep working. Both the client address and the `Host` must be loopback for that, as with `127.0.0.1:9848` or `localhost:9848`. Any other name still needs to be in the list.
 

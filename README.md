@@ -112,7 +112,7 @@ Web Terminal for Kiro has no login. Anyone who reaches the port gets a root shel
 - A terminal connects at `/ws?session=<id>`, and anyone who has that id can join the session. Keep the query string out of your proxy's access log.
 - Each tab's newest 200 lines stay in your browser's storage for up to seven days. Use a private window on a shared device.
 
-[Security](docs/security.md) has a reverse proxy example and lists what the image contains.
+[Security](docs/hardening.md) has a reverse proxy example and lists what the image contains.
 
 ## Troubleshooting
 
@@ -129,7 +129,7 @@ The healthcheck asks `/api/health` every 30 seconds whether kiro-cli is ready, a
 
 - [Configuration](docs/configuration.md) lists every setting and what it changes.
 - [Tools](docs/tools.md) covers the tool list, the catalog and the in-container commands.
-- [Security](docs/security.md) covers the reverse proxy, stored scrollback and what the image contains.
+- [Security](docs/hardening.md) covers the reverse proxy, stored scrollback and what the image contains.
 - [Features](docs/features.md) lists what the terminal supports, on desktop and on touch.
 - [How it works](docs/how-it-works.md) covers the kiro-cli install, health, logs and the projects this is built on.
 
