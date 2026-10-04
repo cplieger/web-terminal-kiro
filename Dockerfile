@@ -540,7 +540,10 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
 # HOME is under /config so Kiro authentication, settings and SSH state survive
 # container recreation. It does NOT hold the kiro-cli install: server-managed
 # versions live separately under /config/tools/kiro-cli-versions.
+# Those paths are fixed and version-addressed, so kiro-cli's per-session binary
+# pin (a copy under the data dir) protects nothing; entrypoint.sh purges old ones.
 ENV HOME=/config/home
+ENV KIRO_SKIP_BINARY_PINNING=1
 # PATH leads with the engine-managed bin dir. The two `runtimes/{go,node}/bin`
 # segments are GONE: the audit they were gated on ran on the borgcube volume
 # (2026-07) and found they held only go/gofmt and node/npm/npx, every one already
