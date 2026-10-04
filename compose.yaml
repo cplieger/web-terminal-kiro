@@ -4,16 +4,17 @@ services:
     image: ghcr.io/cplieger/web-terminal-kiro:latest
     container_name: web-terminal-kiro
     restart: unless-stopped
-    # Required, not optional: tini reaps orphaned children. An agent session forks language servers,
-    # gits and node runtimes whose own parent exits, re-parenting them onto PID 1, and the server
-    # waits only for the children it spawned itself; at PID 1 it collects them as zombies instead.
+    # Required. An init at PID 1 cleans up the processes each session leaves behind.
     init: true
 
     ports:
-      # Root shell with no built-in auth; loopback alone does not stop DNS rebinding.
-      # See README "It is a remote shell" for proxy, bind, and ALLOWED_HOSTS setup.
+      # Anyone who can reach this port gets a root shell, and there is no login.
+      # Put a reverse proxy with a login in front. See README "Security".
+      # Set ALLOWED_HOSTS to every name or IP you open in a browser.
       - "9848:9848"
 
     volumes:
+      # kiro-cli sign-in, installed tools and settings. The disk must allow running programs.
       - "/opt/appdata/web-terminal-kiro/config:/config"
+      # Your repositories. Each new tab starts in this folder.
       - "/opt/appdata/web-terminal-kiro/workspace:/workspace"
