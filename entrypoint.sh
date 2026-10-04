@@ -377,6 +377,19 @@ sweep_legacy_dispatchers() {
   return 0
 }
 
+# Prints kiro-cli's data dir, resolved the way kiro-cli resolves it
+# (XDG_DATA_HOME, else $HOME/.local/share): cleaning a directory the CLI does
+# not use would be a silent no-op. Returns 1 when neither is set, which under
+# set -u would otherwise abort the boot; callers treat that as nothing to clean.
+kiro_cli_data_dir() {
+  local data_home="${XDG_DATA_HOME:-}"
+  if [ -z "$data_home" ]; then
+    [ -n "${HOME:-}" ] || return 1
+    data_home="$HOME/.local/share"
+  fi
+  printf '%s\n' "$data_home/kiro-cli"
+}
+
 # Reclaims the one install residue the two bin-dir sweeps cannot see:
 # kiro-cli's own agent-server runtimes. Each version unpacks a ~240 MB tree
 # under <data-dir>/kas/<version>-<hash>/ (plus a sibling .lock) on its first
@@ -384,36 +397,27 @@ sweep_legacy_dispatchers() {
 # nothing ever removes the superseded ones (six trees / 1.4 GB found on the
 # borgcube volume). Applies the toolbelt engine's own
 # keep-current-drop-the-rest rule to the one install outside its custody.
-#
-# Data-dir resolution mirrors kiro-cli's own (XDG_DATA_HOME, else
-# $HOME/.local/share): pruning a directory the CLI does not use would be a
-# silent no-op. Warn, never fatal.
+# Warn, never fatal.
 prune_superseded_kas_runtimes() {
   # $1 = the version whose runtime tree must survive; defaults to the pin.
   # The caller passes the pin, since the version that ends up active is only
   # known after the server's install manager has selected one, after this
   # script execs.
-  local keep="${1:-$KIRO_CLI_VERSION}" data_home kas_dir kas_real entry name
-  data_home="${XDG_DATA_HOME:-}"
-  if [ -z "$data_home" ]; then
-    # Under set -u an unset HOME would abort the boot; a data dir we cannot locate is
-    # simply nothing to prune.
-    [ -n "${HOME:-}" ] || return 0
-    data_home="$HOME/.local/share"
-  fi
-  kas_dir="$data_home/kiro-cli/kas"
+  local keep="${1:-$KIRO_CLI_VERSION}" data_dir kas_dir kas_real entry name
+  data_dir=$(kiro_cli_data_dir) || return 0
+  kas_dir="$data_dir/kas"
   [ -d "$kas_dir" ] || return 0
   # `-d` FOLLOWS symlinks and the rm below runs as root, so a `kiro-cli` or `kas`
   # symlink planted on a once-writable volume would redirect this sweep at an
   # arbitrary tree. Prove the store is a real directory resolving where it is
   # named, or skip the prune.
-  if [ -L "$data_home/kiro-cli" ] || [ -L "$kas_dir" ]; then
+  if [ -L "$data_dir" ] || [ -L "$kas_dir" ]; then
     printf 'level=warn msg="kiro-cli data dir or its kas store is a symlink; refusing to prune through it" dir="%s" component=entrypoint\n' "$kas_dir" >&2
     return 0
   fi
   kas_real=$(realpath "$kas_dir" 2>/dev/null) || kas_real=""
   case "$kas_real" in
-    "$data_home"/kiro-cli/kas) ;;
+    "$data_dir"/kas) ;;
     *)
       printf 'level=warn msg="kiro-cli kas store does not resolve inside the data dir; refusing to prune" dir="%s" resolved="%s" component=entrypoint\n' \
         "$kas_dir" "$(logfmt_value "${kas_real:-unknown}")" >&2
@@ -441,6 +445,43 @@ prune_superseded_kas_runtimes() {
       printf 'level=info msg="pruned superseded kiro-cli agent runtime" entry="%s" keep=%s pinned=%s component=entrypoint\n' "$(logfmt_value "$name")" "$keep" "$KIRO_CLI_VERSION" >&2
     else
       printf 'level=warn msg="failed to prune superseded kiro-cli agent runtime" entry="%s" component=entrypoint\n' "$(logfmt_value "$name")" >&2
+    fi
+  done
+  return 0
+}
+
+# Removes kiro-cli's pinned chat binary copies from <data-dir>/run/. Acts only
+# on KIRO_SKIP_BINARY_PINNING=1: with pinning on, run/ is kiro-cli's live
+# state. Warn, never fatal.
+purge_pinned_chat_cli_copies() {
+  [ "${KIRO_SKIP_BINARY_PINNING:-}" = 1 ] || return 0
+  local data_dir run_dir run_real entry
+  data_dir=$(kiro_cli_data_dir) || return 0
+  run_dir="$data_dir/run"
+  [ -d "$run_dir" ] || return 0
+  # Same root-rm containment as the kas prune: refuse a redirected run dir.
+  if [ -L "$data_dir" ] || [ -L "$run_dir" ]; then
+    printf 'level=warn msg="kiro-cli data dir or its run dir is a symlink; refusing to purge through it" dir="%s" component=entrypoint\n' "$run_dir" >&2
+    return 0
+  fi
+  run_real=$(realpath "$run_dir" 2>/dev/null) || run_real=""
+  case "$run_real" in
+    "$data_dir"/run) ;;
+    *)
+      printf 'level=warn msg="kiro-cli run dir does not resolve inside the data dir; refusing to purge" dir="%s" resolved="%s" component=entrypoint\n' \
+        "$run_dir" "$(logfmt_value "${run_real:-unknown}")" >&2
+      return 0
+      ;;
+  esac
+  for entry in "$run_dir"/chat-cli-[0-9]* "$run_dir"/.chat-cli-[0-9]*.heartbeat; do
+    # An unmatched glob stays literal; a directory or symlink is not a pinned copy.
+    if [ ! -f "$entry" ] || [ -L "$entry" ]; then
+      continue
+    fi
+    if rm -f "$entry"; then
+      printf 'level=info msg="removed unused kiro-cli pinned binary" entry="%s" component=entrypoint\n' "$(logfmt_value "${entry##*/}")" >&2
+    else
+      printf 'level=warn msg="failed to remove unused kiro-cli pinned binary" entry="%s" component=entrypoint\n' "$(logfmt_value "${entry##*/}")" >&2
     fi
   done
   return 0
@@ -753,6 +794,7 @@ sweep_legacy_dispatchers "$HOME/.local/bin"
 # coexist on the routine bump path.
 printf 'level=info msg="pruning superseded kiro-cli agent runtimes" keep=%s component=entrypoint\n' "$KIRO_CLI_VERSION" >&2
 prune_superseded_kas_runtimes "$KIRO_CLI_VERSION"
+purge_pinned_chat_cli_copies
 
 # Repairs an interrupted dpkg transaction, unconditionally: an interrupted
 # install leaves dpkg wedged for the container's life, and this must run

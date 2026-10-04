@@ -21,6 +21,7 @@ set -u
 new_workdir >/dev/null
 
 load_function logfmt_value
+load_function kiro_cli_data_dir
 load_function prune_superseded_kas_runtimes
 
 KIRO_CLI_VERSION="2.14.2"
