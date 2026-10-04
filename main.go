@@ -92,7 +92,7 @@ func parseAllowedHosts() *webhttp.HostPolicy {
 	policy, invalid := webhttp.ParseHostList(strings.Split(envx.String(key), ","),
 		webhttp.WithLoopbackExempt(true),
 		webhttp.WithHostAllowlistError("host_not_allowed",
-			"host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
+			"host not allowed. Add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		// Count-only, like parseTrustedProxies.
 		slog.Warn("dropping malformed "+key+" entries; they cannot match any browser-sent Host",
@@ -216,11 +216,11 @@ func parseTrustedInstallUIDs() []int {
 // SESSION, because cliPath is the manager's ACTIVE version directory.
 func sessionCommand(cliPath string, chatArgs ...string) []string {
 	const script = `if ! command -v "$0" >/dev/null 2>&1; then
-printf '%s\n' 'kiro-cli is not installed or not on PATH. The first-boot install may have failed; check the container logs and /api/health.'
+printf '%s\n' 'kiro-cli is not installed or not on PATH. The first-boot install may have failed. Check the container logs and /api/health.'
 exit 1
 fi
 if ! "$0" whoami >/dev/null 2>&1; then
-printf '%s\n' 'kiro-cli is not signed in. Starting the device-flow sign-in:' 'open the URL it prints (tap or click it), confirm the code there, and the chat starts here on its own.' ''
+printf '%s\n' 'kiro-cli is not signed in. Starting the device-flow sign-in.' 'Tap or click the URL it prints. Confirm the code there. The chat starts here on its own.' ''
 "$0" login --use-device-flow || exit 1
 fi
 exec "$0" chat "$@"`
@@ -1408,8 +1408,8 @@ func warnIfNoLSPEnabled(e *toolbelt.Engine, manifestPath string) {
 // caller sent, nor the cleaned one: net/http carries up to MaxHeaderBytes (1 MiB by
 // default) of request line, so reflecting either turns a one-line refusal into a
 // caller-sized response body, and the sender already has the value.
-const canonicalPathRefusal = "request path is not canonical; resend it with no empty, \".\" or \"..\" path segments " +
-	"(this route refuses rather than redirecting, because a redirect is a success status to a client without -L)"
+const canonicalPathRefusal = "request path is not canonical. Resend it with no empty, \".\" or \"..\" path segments. " +
+	"This route refuses rather than redirecting, because a redirect is a success status to a client without -L."
 
 // canonicalPathGuardedRoute reports whether p is one of the routes whose caller must
 // be REFUSED a non-canonical spelling rather than redirected. p is the CLEANED path,

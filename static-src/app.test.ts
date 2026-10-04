@@ -573,7 +573,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     // Names THIS cause specifically -- a prefix-only assertion can't tell the
     // program-load message from the runtime-error one.
     expect(description?.textContent).toContain(
-      "failed to load its program (/app.js or a module it imports)",
+      "failed to load its program, which is /app.js or a module it imports",
     );
     overlay.querySelector("button")?.click();
     expect(reload).toHaveBeenCalledTimes(1);
@@ -854,7 +854,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     // ...and the runtime-error arm of the ternary, not the program-load arm: the
     // shared prefix is identical, so only this substring separates them.
     expect(overlay.querySelector("#bootstrap-failure-message")?.textContent).toContain(
-      "its program stopped with an error before the terminal appeared",
+      "Its program stopped with an error before the terminal appeared",
     );
   });
 
@@ -872,7 +872,7 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
 
     expectFatalOverlayShape(overlay, root);
     expect(overlay.querySelector("#bootstrap-failure-message")?.textContent).toContain(
-      "its program stopped with an error before the terminal appeared",
+      "Its program stopped with an error before the terminal appeared",
     );
   });
 
