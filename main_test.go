@@ -2802,20 +2802,13 @@ func TestStageValuesAreStable(t *testing.T) {
 	}
 }
 
-// parseCatalogRefresh is deliberately STRICTER than the fleet's config-echo
-// policy: envx states that config values are not secrets and its own tolerant
-// warnings include the raw value, the scheduler library treats plain *_INTERVAL
-// env reads should not redact, and 9 apps echo raw config values today. This app
-// does not, because its compose file is the operator's whole config surface, it
-// serves an unauthenticated root shell, and its README publishes a no-values
-// promise. See "Settled review decisions".
-//
-// The cost of that deviation is the only thing worth guarding: the pre-parse
-// duplicates scheduler's accept vocabulary, and nothing keeps the two in step.
-// These tests derive the expected behaviour from the REAL library rather than
-// from a copy of its rules, so a scheduler or toolbelt release that adds a
-// sentinel fails here on the Renovate bump PR instead of silently changing what
-// this app accepts.
+// parseCatalogRefresh logs no config VALUE, unlike envx and scheduler, because
+// this app's compose file is the operator's whole config surface, it serves an
+// unauthenticated root shell, and docs/configuration.md promises no values in
+// logs. Its pre-parse duplicates scheduler's accept vocabulary, so these tests
+// derive the expected behaviour from the REAL library: a release that adds a
+// sentinel fails here on the bump PR instead of silently changing what this app
+// accepts.
 
 // The invariant that makes the pre-parse safe to keep: it is OUTCOME-TRANSPARENT.
 // It may change what is LOGGED and must never change what is RETURNED. Any
@@ -2976,32 +2969,13 @@ func setupLoggingStderr(t *testing.T) string {
 	return string(out)
 }
 
-// TestSetupLoggingInstallsTheParsedLevelAndWarnsByNameOnly pins the one env read
-// that had no test at all, and it is the read that decides which of this app's
-// other diagnostics an operator can see. Two properties, each a silent
-// regression:
-//
-//   - the parsed level actually reaches the INSTALLED handler, and an
-//     unparseable value falls back to info rather than to debug. Nothing
-//     asserted this, so reversing the default, or moving slogx.Setup above
-//     ParseLevel (the doc comment says the order is the slogx contract, and the
-//     zero Options.Level is info, so the swap compiles and pins every deployment
-//     at info), silently decides for every deployment which lines exist —
-//     including the classifyStatus trace this app's own steering names as the
-//     LOG_LEVEL=debug diagnosis path for stuck tab-status dots;
-//   - the unparseable warning names the KEY and carries no copy of the VALUE.
-//     That is the app's house rule, stated in the function's own comment and
-//     applied at TRUSTED_PROXIES, KIRO_CLI_CHAT_ARGS, LOG_OSC_TEXT and
-//     TOOL_CATALOG_REFRESH — the last two each with a test saying so. This key
-//     was the only one where the claim was unchecked, and a compose
-//     interpolation mistake is what puts a credential on it (CWE-532).
-//
-// Assertions name the specific record rather than counting all records: a PTY
-// session left running by an earlier test can still be writing to the default
-// logger, and a total count would make this test fail for someone else's line.
-//
-// Serial (no t.Parallel): it replaces the process-global default logger and
-// os.Stderr, and t.Setenv forbids parallel anyway.
+// TestSetupLoggingInstallsTheParsedLevelAndWarnsByNameOnly pins two silent
+// regressions: the parsed LOG_LEVEL reaches the INSTALLED handler and an
+// unparseable value falls back to info (moving slogx.Setup above ParseLevel
+// compiles and pins info, hiding the classifyStatus debug trace), and the
+// warning names the KEY with no copy of the VALUE (CWE-532). Assertions name
+// one record because a PTY session from an earlier test may still be logging.
+// Serial: it replaces the default logger and os.Stderr.
 func TestSetupLoggingInstallsTheParsedLevelAndWarnsByNameOnly(t *testing.T) {
 	const (
 		token   = "s3cr3t-token-abc123"
