@@ -366,10 +366,10 @@
           // fires error AT THE /app.js ELEMENT for any failure in its fetch tree, so
           // that branch cannot tell the two apart and must not claim to.
           description.textContent = failedStylesheet
-            ? "Web Terminal for Kiro failed to load its stylesheet (/style.css), so the terminal cannot be displayed. Reload the page to try again."
+            ? "Web Terminal for Kiro failed to load its stylesheet at /style.css, so the terminal cannot be displayed. Reload the page to try again."
             : e.target instanceof HTMLScriptElement
-              ? "Web Terminal for Kiro failed to load its program (/app.js or a module it imports). Check your connection and reload the page."
-              : "Web Terminal for Kiro failed to load: its program stopped with an error before the terminal appeared. Reload the page to try again.";
+              ? "Web Terminal for Kiro failed to load its program, which is /app.js or a module it imports. Check your connection and reload the page."
+              : "Web Terminal for Kiro failed to load. Its program stopped with an error before the terminal appeared. Reload the page to try again.";
           overlay.setAttribute("role", "alertdialog");
           // Explicit handoff token for /app.js: app.ts keys its boot-abort on
           // this marker, not on the ARIA role, so changing the dialog's a11y

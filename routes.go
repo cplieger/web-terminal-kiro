@@ -174,7 +174,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) *terminal.SessionManage
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Allow", http.MethodPost)
 				webhttp.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed",
-					"kiro-cli rescan is POST-only (curl -X POST "+deps.listenHint+kiroRescanPath+")")
+					"kiro-cli rescan is POST-only. Call it with curl -X POST "+deps.listenHint+kiroRescanPath)
 			})))
 	}
 
@@ -676,7 +676,7 @@ func composeGate(inner func(http.Handler) http.Handler, blocked func() (bool, st
 func loopbackOnly(surface, hint string, next http.Handler) http.Handler {
 	refuse := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		webhttp.WriteError(w, r, http.StatusForbidden, "loopback_only",
-			surface+" is loopback-only; call it from inside the container (curl "+hint+")")
+			surface+" is loopback-only. Call it from inside the container with curl "+hint)
 	})
 	return webhttp.LoopbackOnly(refuse)(next)
 }
