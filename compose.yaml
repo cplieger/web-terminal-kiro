@@ -7,6 +7,13 @@ services:
     # Required. An init at PID 1 cleans up the processes each session leaves behind.
     init: true
 
+    environment:
+      # Optional. Put a GitHub token in .env as GH_TOKEN or GITHUB_TOKEN to
+      # raise GitHub's limit on tool version checks. Every terminal tab can
+      # read it.
+      - GH_TOKEN
+      - GITHUB_TOKEN
+
     ports:
       # Anyone who can reach this port gets a root shell, and there is no login.
       # Put a reverse proxy with a login in front. See README "Security".

@@ -1063,10 +1063,14 @@ func TestEmbeddedRequiredToolsNonEmpty(t *testing.T) {
 	}
 	// The seed templates must stay covered: the runtime refresh gate
 	// protects exactly what the image-build verify gate protects.
-	for _, seed := range []string{"gopls", "typescript-language-server", "pyright", "rust-analyzer", "gh"} {
-		if !slices.Contains(names, seed) {
-			t.Errorf("required-tools.txt missing seed name %q", seed)
+	for name := range toolbelt.DefaultSeed().Tools {
+		if !slices.Contains(names, name) {
+			t.Errorf("required-tools.txt missing seed name %q", name)
 		}
+	}
+	// Earlier images seeded gh, so existing manifests still carry its row.
+	if !slices.Contains(names, "gh") {
+		t.Error(`required-tools.txt missing "gh", which manifests seeded by earlier images still name`)
 	}
 }
 
@@ -2473,7 +2477,7 @@ func TestCountMissingFromInventory(t *testing.T) {
 		},
 		// A disabled entry is a TEMPLATE: recorded intent that is deliberately
 		// not installed. Counting one would make a freshly seeded volume report
-		// its five seeded templates as missing forever.
+		// its seeded templates as missing forever.
 		"disabled entries are not outstanding": {
 			tools: []toolbelt.ToolInfo{{Name: "gopls", Disabled: true}, {Name: "pyright", Disabled: true}},
 			want:  0,

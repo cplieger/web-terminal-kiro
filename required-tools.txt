@@ -1,10 +1,12 @@
 # Tool names the compiled catalog MUST resolve, verified at image build
 # by `toolcatalog verify` (a gap fails the build instead of a boot job).
-# Two groups:
+# Three groups:
 #
-# 1. The shipped seed templates (toolbelt.DefaultSeed): the disabled
-#    LSP trio + gh that first-boot manifests carry.
-# 2. The borgcube migration manifest's catalog-backed entries (the v1
+# 1. The shipped seed templates (toolbelt.DefaultSeed): the four
+#    disabled language servers first-boot manifests carry.
+# 2. gh: earlier images seeded it, so existing manifests still carry
+#    its row, and a catalog that stopped resolving it would break them.
+# 3. The borgcube migration manifest's catalog-backed entries (the v1
 #    toolbox re-add, docs/migration). Entries with explicit sources in
 #    the migration manifest (npm:html-validate, npm:stylelint,
 #    npm:puppeteer, manual codeql) need no catalog entry and are NOT
@@ -15,6 +17,7 @@ gopls
 typescript-language-server
 pyright
 rust-analyzer
+# seeded by earlier images
 gh
 # backend runtimes + packages (auto-adopted dependencies)
 go
