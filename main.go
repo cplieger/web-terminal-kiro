@@ -379,6 +379,7 @@ func run() error {
 	// manifest from the tree it describes. Empty outside the container, where
 	// startTools falls back to <configDir>/tools.
 	kiroToolsDir := envx.String("KIRO_CLI_TOOLS_DIR")
+	ghToken, ghTokenEnv := githubToken()
 
 	tools := startTools(baseCtx, &baseTools{
 		configDir:   configMountDir,
@@ -393,6 +394,8 @@ func run() error {
 		// before a swap, and the last good catalog stands on any failure.
 		catalogURL:      cmp.Or(envx.String("TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
 		refreshInterval: parseCatalogRefresh(envx.String(catalogRefreshKey)),
+		githubToken:     ghToken,
+		githubTokenEnv:  ghTokenEnv,
 	})
 
 	trustedProxies := parseTrustedProxies()
@@ -845,6 +848,10 @@ type baseTools struct {
 	toolsDir    string
 	catalogPath string
 	catalogURL  string
+	// githubToken is sent with the engine's api.github.com requests; "" sends
+	// them anonymously. githubTokenEnv names the variable it came from.
+	githubToken    string
+	githubTokenEnv envx.Key
 	// bundledToolsPaths are this app's own bundled-tools files, applied by the
 	// engine over every catalog it loads. A missing file is a hard engine
 	// failure by design: the four language servers the seed names live only
@@ -1014,8 +1021,8 @@ func countMissingTools(eng *toolbelt.Engine) func() (int, error) {
 //
 // Disabled entries are excluded because in toolbelt v2 a disabled entry is a
 // TEMPLATE — recorded intent that is deliberately not installed — so counting one
-// as outstanding would make a freshly seeded volume report five missing tools
-// forever. An entry still installing DOES count: it is not on PATH yet.
+// as outstanding would make a freshly seeded volume report its templates as
+// missing forever. An entry still installing DOES count: it is not on PATH yet.
 func countMissingFromInventory(tools []toolbelt.ToolInfo) int {
 	n := 0
 	// Indexed rather than a value range: ToolInfo is 160 bytes, so copying one per
@@ -1151,6 +1158,41 @@ func logRootIntegrityFindings(err error) {
 	}
 }
 
+// toolsConfig builds the engine configuration for one tools root. onJob is the
+// engine's OnJobChanged callback, so it must not block.
+func toolsConfig(cfg *baseTools, toolsRoot string, onJob func(*toolbelt.Job)) *toolbelt.Config {
+	return &toolbelt.Config{
+		ConfigDir:   toolsRoot,
+		ToolsDir:    toolsRoot,
+		CatalogPath: cfg.catalogPath,
+		// The tools this app BUNDLES, merged over every catalog the engine
+		// loads (baked, cached, fetched). The published catalog is a general
+		// reference and carries none of them: no registry packages gopls,
+		// typescript, typescript-language-server or pyright, and DefaultSeed
+		// below names all four, so without this the seeded templates would
+		// resolve to nothing at enable time. The image build gates the same
+		// file with `toolcatalog verify -overlay`.
+		CatalogOverlays: cfg.bundledToolsPaths,
+		Refresh: &toolbelt.CatalogRefresh{
+			URL:      cfg.catalogURL,
+			Require:  toolbelt.ParseRequireList(requiredToolsList),
+			Interval: cfg.refreshInterval,
+		},
+		Seed:         toolbelt.DefaultSeed(),
+		System:       []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
+		Logger:       slog.Default(),
+		OnJobChanged: onJob,
+		GitHubToken:  githubTokenSource(cfg.githubToken),
+		// Refuse to construct an engine over a managed root that is a symlink, is not a
+		// directory, is group/other-writable, or resolves outside the tree. The tree is an
+		// operator-controlled persistent volume, this process runs as root, and toolbelt's
+		// install probe EXECUTES what it finds in <ToolsDir>/bin with that dir first on PATH.
+		// ADDITIVE to entrypoint.sh: only the entrypoint can chmod and re-stat to prove a
+		// tightening took, and only the library covers a root reshaped AFTER it ran.
+		VerifyRootIntegrity: true,
+	}
+}
+
 // startTools builds the toolbelt engine and launches the boot convergence pass
 // (bind-first: the listener comes up while installs run; only session CREATION
 // waits, via the syncing gate). The gate lifts regardless of per-tool failures —
@@ -1200,40 +1242,15 @@ func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
 	}
 	manifestPath := manifestPathFor(toolsRoot)
 	warnIfToolsBinUnreachable(toolsRoot)
-	refresh := &toolbelt.CatalogRefresh{
-		URL:      cfg.catalogURL,
-		Require:  toolbelt.ParseRequireList(requiredToolsList),
-		Interval: cfg.refreshInterval,
-	}
 	// Built BEFORE the engine so it can be wired as the engine's job-transition
 	// callback: from here on the health field follows live job outcomes, not just
 	// the boot verdict.
 	status := newToolsStatus()
-	eng, err := toolbelt.New(&toolbelt.Config{
-		ConfigDir:   toolsRoot,
-		ToolsDir:    toolsRoot,
-		CatalogPath: cfg.catalogPath,
-		// The tools this app BUNDLES, merged over every catalog the engine
-		// loads (baked, cached, fetched). The published catalog is a general
-		// reference and carries none of them: no registry packages gopls,
-		// typescript, typescript-language-server or pyright, and DefaultSeed
-		// below names all four, so without this the seeded templates would
-		// resolve to nothing at enable time. The image build gates the same
-		// file with `toolcatalog verify -overlay`.
-		CatalogOverlays: cfg.bundledToolsPaths,
-		Refresh:         refresh,
-		Seed:            toolbelt.DefaultSeed(),
-		System:          []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
-		Logger:          slog.Default(),
-		OnJobChanged:    status.observeJob,
-		// Refuse to construct an engine over a managed root that is a symlink, is not a
-		// directory, is group/other-writable, or resolves outside the tree. The tree is an
-		// operator-controlled persistent volume, this process runs as root, and toolbelt's
-		// install probe EXECUTES what it finds in <ToolsDir>/bin with that dir first on PATH.
-		// ADDITIVE to entrypoint.sh: only the entrypoint can chmod and re-stat to prove a
-		// tightening took, and only the library covers a root reshaped AFTER it ran.
-		VerifyRootIntegrity: true,
-	})
+	limits := newGitHubLimitReporter(cfg.githubTokenEnv)
+	eng, err := toolbelt.New(toolsConfig(cfg, toolsRoot, func(j *toolbelt.Job) {
+		status.observeJob(j)
+		limits.observe(j)
+	}))
 	if err != nil {
 		slog.Error("tools engine failed to start; continuing without it", "error", err)
 		// A root-integrity refusal names every offending path; break those out into
@@ -1245,6 +1262,8 @@ func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
 		// false, so sessions remain ungated.
 		return degradedRuntime()
 	}
+	announceGitHubToken(cfg.githubTokenEnv)
+	go limits.run(ctx)
 
 	// recordBoot BOTH arms the live reducer and lifts the session-create gate: the
 	// gate is derived from the reducer's one-way "syncing" state rather than kept in

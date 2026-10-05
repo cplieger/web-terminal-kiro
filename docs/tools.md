@@ -8,7 +8,7 @@ The image ships kiro-cli, `git` and basic utilities. Everything else is listed i
 
 ## Enable a bundled template
 
-The first start writes the language-server templates and the GitHub CLI, all disabled. Set the ones you want to `"disabled": false` and restart:
+The first start writes the four language-server templates, all disabled. Set the ones you want to `"disabled": false` and restart:
 
 ```jsonc
 {
@@ -17,11 +17,12 @@ The first start writes the language-server templates and the GitHub CLI, all dis
     "gopls":                      { "disabled": true },   // Go: set false to install (pulls the Go toolchain)
     "typescript-language-server": { "disabled": false },  // TypeScript LSP: enabled (pulls node)
     "pyright":                    { "disabled": true },   // Python LSP
-    "rust-analyzer":              { "disabled": true },   // Rust LSP
-    "gh":                         { "disabled": true }    // GitHub CLI
+    "rust-analyzer":              { "disabled": true }    // Rust LSP
   }
 }
 ```
+
+The GitHub CLI is not a template. Add it by name as `"gh": {}`.
 
 Enabled language servers land on `PATH`, where kiro-cli's [code intelligence](https://kiro.dev/docs/cli/code-intelligence/) finds them. Run `/code init` once per workspace inside a session. `/code status` shows which servers it found.
 
@@ -74,6 +75,12 @@ Use plain package names only. Each of these is refused with the reason:
 - a virtual package such as `awk`, where you name a real provider such as `mawk` instead
 
 Removing an `apt:` entry logs a message and uninstalls nothing. Packages are shared, and the engine will not remove one it cannot prove nothing else needs.
+
+## GitHub's request limit
+
+Version checks and installs from GitHub releases go through GitHub's API. Without a token, GitHub allows 60 of those requests an hour for each IP address, so a long tool list can reach the limit. Set `GH_TOKEN`, described in [Configuration](configuration.md#gh_token), to raise it.
+
+When GitHub refuses a request for its limit, the install or update that needed it fails until the limit resets. The next start retries it, and so does an install from the commands below. The log has one warning per refusal that names the fix, and the reset time when GitHub sends one. Inside the container, `GET localhost:9848/api/tools/jobs` shows the failed job with `error_code` set to `github_rate_limited` and a `rate_limit` object. An add that needs the latest version answers `503` with the same code.
 
 ## When tabs open
 

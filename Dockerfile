@@ -532,7 +532,7 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
 # baked into the image: the server's toolbelt engine installs them from
 # the /config/tools/tools.json manifest (schema v2) against the image-baked
 # catalog. First boot seeds disabled templates (gopls,
-# typescript-language-server, pyright, rust-analyzer, gh) — enable one by
+# typescript-language-server, pyright, rust-analyzer). Enable one by
 # flipping "disabled": false and restarting, or through the loopback tools API.
 # This keeps the image
 # ~32 MB slimmer and free of the daily LSP-bump rebuild churn.

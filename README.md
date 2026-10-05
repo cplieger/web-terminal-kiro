@@ -41,6 +41,13 @@ services:
     # Required. An init at PID 1 cleans up the processes each session leaves behind.
     init: true
 
+    environment:
+      # Optional. Put a GitHub token in .env as GH_TOKEN or GITHUB_TOKEN to
+      # raise GitHub's limit on tool version checks. Every terminal tab can
+      # read it.
+      - GH_TOKEN
+      - GITHUB_TOKEN
+
     ports:
       # Anyone who can reach this port gets a root shell, and there is no login.
       # Put a reverse proxy with a login in front. See README "Security".
@@ -64,7 +71,7 @@ Leave out any `user:` line. The image runs as root so that `git`, `gh` and SSH w
 
 ## Adding tools and language servers
 
-The image ships kiro-cli, `git` and basic utilities. Everything else is listed in `/config/tools/tools.json` and installed at each start. The first start writes five disabled entries, for the Go, TypeScript, Python and Rust language servers and the GitHub CLI. Set an entry's `"disabled"` to `false` and restart the container to install it. Any tool from the catalog of about 700 tools can be added by name, and OS packages are `apt:` entries. kiro-cli finds the language servers after you run `/code init` once in a workspace. [Tools](docs/tools.md) has the file format and the in-container commands.
+The image ships kiro-cli, `git` and basic utilities. Everything else is listed in `/config/tools/tools.json` and installed at each start. The first start writes four disabled entries, for the Go, TypeScript, Python and Rust language servers. Set an entry's `"disabled"` to `false` and restart the container to install it. Any tool from the catalog of about 700 tools can be added by name, and OS packages are `apt:` entries. kiro-cli finds the language servers after you run `/code init` once in a workspace. [Tools](docs/tools.md) has the file format and the in-container commands.
 
 ## Adding MCP servers
 
@@ -72,11 +79,11 @@ kiro-cli reads MCP servers from `/config/home/.kiro/settings/mcp.json`, which st
 
 ## Configuration reference
 
-Settings are environment variables in `compose.yaml`, read once at start, so recreate the container after a change. Nothing is required. Add them in an `environment:` block under the `web-terminal-kiro:` service, for example:
+Settings are environment variables in `compose.yaml`, read once at start, so recreate the container after a change. Nothing is required. Add each one as a `NAME=value` line in the `environment:` block under the `web-terminal-kiro:` service, for example:
 
 ```yaml
     environment:
-      ALLOWED_HOSTS: "localhost,192.168.1.5,webterm.example.com"
+      - ALLOWED_HOSTS=localhost,192.168.1.5,webterm.example.com
 ```
 
 | Variable | Description | Default |
@@ -89,6 +96,8 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 | `WORK_DIR` | The folder each new tab starts in. It must exist. | `/workspace` |
 | `SCROLLBACK` | Lines of history kept per tab. kiro-cli wipes history when it redraws the whole screen, so in practice a tab keeps about 3000 lines. | `100000` |
 | `TOOL_CATALOG_REFRESH` | How often the tool catalog is refreshed, as a duration such as `24h`. `off` or `0` stops the schedule. | `24h` |
+| `GH_TOKEN` | A GitHub token for tool version checks, which raises GitHub's limit of 60 requests an hour. Every tab sees it. Takes precedence over `GITHUB_TOKEN`. | _(unset)_ |
+| `GITHUB_TOKEN` | Read in place of `GH_TOKEN` when that one is unset or empty. | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the kiro-cli install folder. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
 | `LOG_OSC_TEXT` | Log the text of unrecognized terminal notifications at `debug`. That text can hold a token, so turn it on only while diagnosing. | `false` |
 
@@ -122,6 +131,7 @@ The healthcheck asks `/api/health` every 30 seconds whether kiro-cli is ready, a
 - The log warns that the server runs as PID 1. Add `init: true` to the service.
 - The kiro-cli install fails with a permission error. The disk behind `/config` must allow running programs.
 - A page answers `host not allowed`. Add that host name to `ALLOWED_HOSTS`.
+- The log warns that GitHub's rate limit for requests without a token was reached. Set `GH_TOKEN` to a GitHub token and recreate the container.
 
 [How it works](docs/how-it-works.md) explains startup failures and the install in more detail.
 

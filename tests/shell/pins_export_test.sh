@@ -24,12 +24,13 @@ MAIN="$REPO/main.go"
 # actually fails against it.
 GO_SOURCE_ROOT="${WT_GO_SOURCE_ROOT:-$REPO}"
 README="${WT_README:-$REPO/README.md}"
+COMPOSE="${WT_COMPOSE:-$REPO/compose.yaml}"
 if [ ! -r "$MAIN" ]; then
   printf 'harness error: main.go is not readable at %s\n' "$MAIN" >&2
   exit 1
 fi
-if [ ! -r "$README" ] || [ ! -d "$GO_SOURCE_ROOT" ]; then
-  printf 'harness error: README (%s) or Go source root (%s) is unreadable\n' "$README" "$GO_SOURCE_ROOT" >&2
+if [ ! -r "$README" ] || [ ! -r "$COMPOSE" ] || [ ! -d "$GO_SOURCE_ROOT" ]; then
+  printf 'harness error: README (%s), compose example (%s) or Go source root (%s) is unreadable\n' "$README" "$COMPOSE" "$GO_SOURCE_ROOT" >&2
   exit 1
 fi
 
@@ -192,5 +193,25 @@ any_pinning=$(grep -c 'KIRO_SKIP_BINARY_PINNING' "$DOCKERFILE")
 grep -q '"${KIRO_SKIP_BINARY_PINNING:-}" = 1 ]' "$ENTRYPOINT" \
   && ok "the purge is gated on the same exact value" \
   || no "purge gate" "entrypoint.sh no longer gates the purge on KIRO_SKIP_BINARY_PINNING = 1"
+
+# --- every GitHub token variable the server reads reaches it from compose -----
+# githubtoken.go reads GH_TOKEN, else GITHUB_TOKEN, from its own environment, and
+# a key-only compose line is the only path from .env into the container. A name
+# the Go side reads but an example does not pass runs that setup anonymous with
+# no error, so each name is checked on the Go read and on every shipped surface.
+for var in GH_TOKEN GITHUB_TOKEN; do
+  grep -q "\"$var\"" "$GO_SOURCE_ROOT/githubtoken.go" \
+    && ok "$var is read by githubtoken.go under that exact name" \
+    || no "$var read" "githubtoken.go does not mention \"$var\"; the compose examples pass a variable nothing reads"
+  grep -qE "^ +- ${var}\$" "$COMPOSE" \
+    && ok "compose.yaml passes $var into the container" \
+    || no "$var in compose.yaml" "no key-only '- $var' environment line, so a $var set in .env never reaches the server"
+  grep -qE "^ +- ${var}\$" "$README" \
+    && ok "the README compose block passes $var into the container" \
+    || no "$var in the README compose block" "no key-only '- $var' line, so a reader copying the README compose gets anonymous GitHub requests"
+  grep -q "^| \`${var}\` |" "$README" \
+    && ok "the README settings table has a $var row" \
+    || no "$var README row" "the README settings table does not document $var"
+done
 
 report

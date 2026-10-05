@@ -21,6 +21,8 @@ Settings are environment variables on the container, under `environment:` in `co
 | `TOOL_CATALOG_URL` | Where catalog refreshes come from. Point it at a fork or a mirror of the catalog. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest release |
 | `TOOL_CATALOG_PATH` | The catalog built into the image, used at first start and offline until a fetched catalog replaces it. | `/app/tool-catalog.json` |
 | `BUNDLED_TOOLS_PATH` | The file in the image naming the four language servers no registry carries, merged over every loaded catalog. | `/app/bundled-tools.json` |
+| `GH_TOKEN` | A GitHub token for tool version checks, which raises GitHub's limit of 60 requests an hour. Every tab sees it. Takes precedence over `GITHUB_TOKEN`. | _(unset)_ |
+| `GITHUB_TOKEN` | Read in place of `GH_TOKEN` when that one is unset or empty. | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the kiro-cli install folder. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
 | `LOG_OSC_TEXT` | Log the text of unrecognized terminal notifications at `debug`. That text can hold a token, so turn it on only while diagnosing. | `false` |
 
@@ -55,6 +57,14 @@ History is held in memory and grows as a session produces it, so a large value c
 ## TOOL_CATALOG_REFRESH
 
 With the schedule off, a refresh still runs when a command inside the container asks for one, as `curl -X POST localhost:9848/api/tools/catalog/refresh`. [Tools](tools.md) covers the catalog.
+
+## GH_TOKEN
+
+The tools engine asks GitHub's API for the latest version of each tool and for the files of a GitHub release. Without a token, GitHub allows 60 of those requests an hour for each IP address, shared with everything else behind that address. A token raises the limit to the token's own quota, 5,000 an hour for a personal access token. A fine-grained token with read-only access to public repositories is enough.
+
+The server reads `GH_TOKEN`, or `GITHUB_TOKEN` when `GH_TOKEN` is unset or empty. It sends the value exactly as set, so a stray line break makes every GitHub request fail. The startup log names the variable it used, never the value. The token is sent only to `api.github.com`. Signing in with `gh auth login` inside a tab does not give the server a token, because the server reads only its own environment.
+
+Every tab inherits the server's environment, so `gh` and other programs in a terminal can read the token too. Choose its access with that in mind. [Tools](tools.md#githubs-request-limit) describes what happens when the limit is reached.
 
 ## TRUSTED_INSTALL_UIDS
 
