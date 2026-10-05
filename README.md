@@ -139,7 +139,7 @@ Web Terminal for Kiro runs the [Kiro CLI](https://kiro.dev/cli/), and all credit
 
 ## Contributing
 
-Build, test, and layout notes are in [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Disclaimer
 
