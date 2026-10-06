@@ -1186,12 +1186,9 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("remote peer: status = %d, want 403 (body %s)", rec.Code, rec.Body.String())
 	}
-	// The refusal speaks the standard webhttp error envelope with an empty
-	// code, the dialect CONTRIBUTING requires of every app-owned error
-	// response (the tools-installing 503 is asserted the same way). A
-	// hand-crafted http.Error body would still be a 403 and pass every other
-	// assertion, silently forking the app's error contract for the one gate a
-	// remote caller actually reaches.
+	// The refusal must be the webhttp.WriteError envelope with code
+	// loopback_only (CONTRIBUTING "Rules"). An http.Error body would still be
+	// a 403 and pass every other assertion here.
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		t.Errorf("remote peer: Content-Type = %q, want application/json (webhttp.WriteError envelope)", ct)
 	}
