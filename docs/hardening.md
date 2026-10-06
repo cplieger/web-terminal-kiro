@@ -19,7 +19,7 @@ Set [`ALLOWED_HOSTS`](configuration.md#allowed_hosts) to the exact names you ope
 
 ## Behind a reverse proxy
 
-Terminate TLS at the proxy and require a login there: HTTP Basic auth at minimum, or forward auth with Authentik, oauth2-proxy or Caddy forward-auth for single sign-on. Configure the proxy to pass WebSocket upgrades. Some proxies, nginx among them, need the `Upgrade` and `Connection` headers passed explicitly, so follow your proxy's WebSocket instructions.
+Terminate TLS at the proxy and require a login there: HTTP Basic auth at minimum, or forward auth with Authentik, oauth2-proxy or Caddy forward-auth for single sign-on. [Running an app behind a reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) has complete Caddy, nginx, Traefik and Nginx Proxy Manager setups for the WebSocket and the headers. Its examples add no login, so add one as below.
 
 This Caddy site asks for a password and passes WebSocket connections through on its own:
 
@@ -33,9 +33,9 @@ webterm.example.com {
 }
 ```
 
-Replace `192.168.1.5` with the address of the Docker host, and put `webterm.example.com` in `ALLOWED_HOSTS`. Caddy passes the browser's host name through to the terminal unchanged.
+Replace `192.168.1.5` with the address of the Docker host, and put `webterm.example.com` in `ALLOWED_HOSTS`.
 
-Also set [`TRUSTED_PROXIES`](configuration.md#trusted_proxies) to the proxy's addresses, so the access log records the real client instead of the proxy.
+Set [`TRUSTED_PROXIES`](configuration.md#trusted_proxies) to the proxy's address, as [Telling the app about the proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md#telling-the-app-about-the-proxy) explains.
 
 ### The session id in the proxy log
 
