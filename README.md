@@ -116,7 +116,7 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 
 Web Terminal for Kiro has no login. Anyone who reaches the port gets a root shell with your files, your kiro-cli sign-in and your SSH keys. Everyone who opens it shares that one sign-in.
 
-- Put it behind a reverse proxy that asks for a login, at least HTTP Basic auth, and keep the port on loopback or a private network.
+- Put it behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, at least HTTP Basic auth, and keep the port on loopback or a private network.
 - Set `ALLOWED_HOSTS` to the exact names you open it at. A malicious web page can otherwise reach even a loopback-only terminal through your own browser, a trick called DNS rebinding.
 - A terminal connects at `/ws?session=<id>`, and anyone who has that id can join the session. Keep the query string out of your proxy's access log.
 - Each tab's newest 200 lines stay in your browser's storage for up to seven days. Use a private window on a shared device.
