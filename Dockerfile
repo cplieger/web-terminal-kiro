@@ -282,9 +282,9 @@ ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.0.4
 # repin: dep=@cplieger/web-terminal-engine url=https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-{version}.tgz
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=812128b7162c7fbd05e30a1a3649db7a11763c5ca6ee12392d90b51a2a856372
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.3.1
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.3.2
 # repin: dep=@cplieger/web-terminal-ui url=https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=9e01adcf6a28e61a18b3442883f39fd965c4194946863ba7382928db4c979db2
+ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=745a3f47ca0cc81905fd057d7218c417d12132f23140cd54097f4a58b3002dee
 # The served bundle is built from the ARG pins while local dev compiles against
 # static-src/package.json, and nothing else fails when the two disagree. go.mod
 # is deliberately not compared: the engine's Go module and npm package version
