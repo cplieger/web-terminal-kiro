@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
-# Local dev build of web-terminal-kiro against the LOCAL (working-tree) engine + UI:
-# produces ./web-terminal-kiro-dev-bin with static assets embedded, built from the
-# sibling ../web-terminal-engine (engine) and ../web-terminal-ui (UI) checkouts
-# instead of the published Go module / npm packages — the way to try unpublished
-# engine/UI changes against the real app. Run the binary directly
-# (WORK_DIR=... ./web-terminal-kiro-dev-bin; see CONTRIBUTING "Local dev setup").
-#
-# Not for CI or release. go.work and web-terminal-kiro-dev-bin are gitignored.
-# Override the sibling checkouts with ENGINE_DIR=... / UI_DIR=...
+# Builds ./web-terminal-kiro-dev-bin, static assets embedded, from the working
+# trees of ../web-terminal-engine and ../web-terminal-ui (ENGINE_DIR=, UI_DIR=
+# override) instead of the published Go module and npm packages. Run it as
+# WORK_DIR=... ./web-terminal-kiro-dev-bin; CONTRIBUTING "Checks" shows a run
+# against a managed kiro-cli install. Not for CI or release: go.work and the
+# binary are gitignored.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ENGINE_DIR="${ENGINE_DIR:-../web-terminal-engine}"
