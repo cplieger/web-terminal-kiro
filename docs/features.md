@@ -20,6 +20,7 @@ The page comes from [web-terminal-ui](https://github.com/cplieger/web-terminal-u
 - A two-pane split view. The split button in the tab row shows two sessions side by side with a divider you drag. Right-click or long-press a tab to snap it to either side, or drag it onto one half of the screen. The layout survives a reload and a switch to another device.
 - An on-screen key bar for keys a phone keyboard lacks: Tab, Esc, the arrows, Enter, and a Ctrl key that stays pressed for the next letter.
 - Native text selection, copy and paste, and a menu on long-press or right-click.
+- Paste an image, and the page uploads it and types its path for kiro-cli to attach. [Uploads](configuration.md#uploads) has the details.
 - Typing shows on screen before the server answers, so it feels instant over a slow link.
 - Tap the terminal to focus it. A button returns to the bottom and follows new output again.
 - A status dot on each tab shows whether its session is working, done or waiting for your answer. The waiting dot clears once the question is answered, denied or cancelled, including a question raised by a workflow step or a subagent.

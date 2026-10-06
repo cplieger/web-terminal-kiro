@@ -450,9 +450,14 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     // ...and calling it must reach the preset with this app's options -- what a
     // bare `expect.any(Function)` would not catch (an arrow dropping
     // attentionIcons would still be a function).
-    const passed = createTerminalMock.mock.calls[0]?.[1] as { features: () => unknown };
-    passed.features();
+    const passed = createTerminalMock.mock.calls[0]?.[1] as {
+      features: () => readonly unknown[];
+    };
+    const features = passed.features();
     expect(presetAgentTabbedMock).toHaveBeenCalledExactlyOnceWith({ attentionIcons: true });
+    // The image-paste feature leads the list: its Ctrl+Shift+V handler must
+    // register before the preset's clipboard feature claims the key.
+    expect(features).toEqual([expect.objectContaining({ name: "image-paste" }), "preset-features"]);
     expect(root.hasAttribute("inert")).toBe(false);
     expect(root.children).toHaveLength(0);
   });

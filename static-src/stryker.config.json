@@ -10,7 +10,7 @@
     "prioritizePerformanceOverAccuracy": false
   },
   "inPlace": true,
-  "mutate": ["app.ts"],
+  "mutate": ["app.ts", "image-paste.ts"],
   "ignorePatterns": ["node_modules", "reports", "coverage", "dist"],
   "ignoreStatic": true,
   "reporters": ["html", "progress", "clear-text"],

@@ -59,6 +59,8 @@ services:
       - "/opt/appdata/web-terminal-kiro/config:/config"
       # Your repositories. Each new tab starts in this folder.
       - "/opt/appdata/web-terminal-kiro/workspace:/workspace"
+      # Images you paste into a tab. Optional. Without it, they are lost when the container is recreated.
+      - "/opt/appdata/web-terminal-kiro/uploads:/uploads"
 ```
 
 1. Save the file as `compose.yaml` and run `docker compose up -d` in the same folder.
@@ -67,7 +69,7 @@ services:
 
 Run `docker logs web-terminal-kiro`. You should see `web-terminal-kiro listening`, then `version active` once kiro-cli has downloaded. Until then, a new tab answers `kiro-cli installing`. The log also warns that `ALLOWED_HOSTS` is unset until you set it.
 
-Leave out any `user:` line. The image runs as root so that `git`, `gh` and SSH work. Files it writes to the two folders therefore belong to root on the host. Sessions end when the container restarts, and your sign-in, settings and tools stay in `/config`.
+Leave out any `user:` line. The image runs as root so that `git`, `gh` and SSH work. Files it writes to the mounted folders therefore belong to root on the host. Sessions end when the container restarts, and your sign-in, settings and tools stay in `/config`.
 
 ## Adding tools and language servers
 
@@ -107,6 +109,7 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 | --- | --- |
 | `/config` | kiro-cli sign-in, installed tools, settings, and your `~/.ssh` and git config |
 | `/workspace` | Your repositories, where new tabs start |
+| `/uploads` | Images you paste into a tab. Optional. [Uploads](docs/configuration.md#uploads) has the details |
 
 | Port | Description |
 | --- | --- |

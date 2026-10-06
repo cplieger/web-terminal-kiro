@@ -40,6 +40,8 @@ const (
 	// INSIDE the container observable to the running server. Registered with a method
 	// pattern, so anything but POST is a 405 rather than a silent no-op.
 	kiroRescanPath = apiPrefix + "kiro-cli/rescan"
+	// uploadsPath receives pasted clipboard images; static-src/image-paste.ts posts to it.
+	uploadsPath = apiPrefix + "uploads"
 )
 
 type routeDeps struct {
@@ -92,6 +94,8 @@ type routeDeps struct {
 	// silently disable scrollback in every hand-built routeDeps.
 	scrollback *int
 	workDir    string
+	// uploadDir is where pasted images are written; empty leaves uploadsPath unmounted.
+	uploadDir string
 	// logOSCText is the LOG_OSC_TEXT opt-in: when true, an unrecognized OSC 9
 	// notification's full text is logged at Debug. Default false — arbitrary child
 	// output that may carry a token or device code.
@@ -176,6 +180,17 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) *terminal.SessionManage
 				webhttp.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed",
 					"kiro-cli rescan is POST-only. Call it with curl -X POST "+deps.listenHint+kiroRescanPath)
 			})))
+	}
+
+	// Browser-facing, so it sits behind the same host allowlist and cross-origin check as
+	// /ws and session creation; it grants nothing a tab's shell does not already have.
+	if deps.uploadDir != "" {
+		mux.Handle("POST "+uploadsPath, handleUpload(deps.uploadDir, maxUploadSize))
+		// Same two-pattern shape as kiroRescanPath: the "/" mount would otherwise 404 a GET.
+		mux.HandleFunc(uploadsPath, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Allow", http.MethodPost)
+			webhttp.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "image upload is POST-only")
+		})
 	}
 
 	mux.HandleFunc(healthPath, handleHealth(deps))

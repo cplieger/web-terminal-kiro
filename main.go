@@ -483,6 +483,7 @@ func run() error {
 		sessionTitleEnv: pollers.sessionEnv,
 		sessionActivity: pollers.workflows.sessionActivity,
 		workDir:         workDir,
+		uploadDir:       defaultUploadDir,
 		scrollback:      scrollback,
 		ready:           &ready,
 		kiroReady:       kiro.ready,
