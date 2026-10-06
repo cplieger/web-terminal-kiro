@@ -26,18 +26,18 @@ const options: CreateTerminalOptions = {
   // Every session is an agent reporting OSC 9;4, so show its activity dot from
   // creation. attentionIcons additionally requires static/ to serve
   // favicon-{input,done,alert} in all three icon formats (app.test.ts asserts
-  // this); regenerate them via .kiro/scripts/gen-attention-icons.py if a
-  // --status-* token below changes.
+  // this), and the icons must be regenerated if a --status-* token below changes.
   features: () => presetAgentTabbed({ attentionIcons: true }),
   // Restore each tab's scrollback from localStorage instead of pulling it back
-  // over the wire (see web-terminal-ui.md "Scrollback persistence" for the
-  // mechanism and the iOS jetsam rationale). README's "Stored scrollback"
-  // section is the operator-facing statement of what this puts on the device.
+  // over the wire; @cplieger/web-terminal-ui's docs/scrollback-persistence.md
+  // has the mechanism, and docs/hardening.md "Stored scrollback" states what
+  // this puts on the device.
   persistScrollback: localScrollbackStorage(),
   split: true,
-  // web-terminal-kiro's purple theme; see web-terminal-ui.md's theme option docs
-  // for what each token reaches and the OKLab/sRGB-gamut reasoning behind
-  // --status-working being a literal hex while its siblings stay in oklch.
+  // web-terminal-kiro's purple theme. --status-working is the sRGB hex #c6a0ff
+  // because its siblings' formula, oklch(78% 0.15 300deg), is outside both sRGB
+  // and Display P3, so most displays show a gamut-mapped color that varies with
+  // the display.
   theme: {
     "--accent": `hsl(${ACCENT_HSL_COMPONENTS})`,
     "--tab-hover-bg": `hsl(${ACCENT_HSL_COMPONENTS} / 16%)`,
