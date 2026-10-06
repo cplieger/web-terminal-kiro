@@ -13,22 +13,13 @@
 set -u
 
 # Must NOT resolve this script's own commands through /config/tools/bin: it
-# leads PATH and lives on the persistent mount, so on a volume that ever
-# permitted group/other writes a planted binary there would be the oracle
-# every directory check below trusts.
-#
-# The narrowed PATH is captured into WT_SESSION_PATH (its own var, exported)
-# because the containment block below re-execs this script via setpriv, and a
-# plain SESSION_PATH="$PATH" would capture the ALREADY-NARROWED value on the
-# second invocation -- handing the server a PATH with none of the
-# /config-resident tool dirs (measured on borgcube: toolbelt's npm/uv
-# unreachable by bare name, /api/health "degraded" while tools were fine).
-# Deriving from WT_SESSION_PATH when already set makes the capture idempotent
-# across re-execs. Restored for the exec'd server at the bottom, then unset --
-# not an operator knob. Pinned by tests/shell/session_path_test.sh, which also
-# covers why the save/narrow pair cannot move below the containment block
-# (that block's own mount/setpriv/awk would then resolve through the tainted
-# dir too).
+# leads PATH and lives on the persistent mount, so a planted binary there would
+# be the oracle every directory check below trusts.
+# WT_SESSION_PATH keeps the capture idempotent across the setpriv re-exec below:
+# a plain SESSION_PATH="$PATH" would capture the already-narrowed value on the
+# second pass and hand the server a PATH with no /config-resident tool dirs.
+# Restored for the exec'd server at the bottom, then unset; not an operator knob.
+# Pinned by tests/shell/session_path_test.sh.
 SESSION_PATH="${WT_SESSION_PATH:-$PATH}"
 export WT_SESSION_PATH="$SESSION_PATH"
 PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -89,26 +80,13 @@ warn_if_not_root() {
 warn_if_not_root
 
 # Remounts the container's own cgroup tree rw so the server can put each tab's
-# kiro-cli process tree in its own cgroup, then this script drops the
-# capability that made the remount possible before running anything else.
-#
-# kiro-cli's KAS process calls setsid(), leaving both the process group and
-# session, so neither a group-scoped kill nor the PTY-close SIGHUP can reach
-# it -- measured leak: 13 stranded processes holding 1.35 GB across two tabs.
-# Engine v3.6.0's marker-based session reaping now closes that leak with no
-# host support at all; what containment adds ON TOP is per-session peak
-# stats (mem_peak_bytes, tasks_peak) and a kill domain a scrubbed-environment
-# descendant cannot escape. Keep this in step with startContainment's doc
-# comment in main.go.
-#
-# Docker mounts /sys/fs/cgroup read-only with no option to change that, so a
-# one-time remount is the established workaround. It needs CAP_SYS_ADMIN to
-# opt in; the public compose example grants no capability (the ordinary
-# refusal path below), while the homelab deployment carries cap_add:
-# [SYS_ADMIN] and takes the remount path.
-#
-# WARN, never fatal: without containment the server still serves terminals
-# exactly as before the feature existed.
+# kiro-cli process tree in its own cgroup, then drops the capability that made
+# the remount possible before running anything else. Marker-based session
+# reaping already closes kiro-cli's setsid() leak; containment adds per-session
+# peak stats and a kill domain a scrubbed-environment descendant cannot escape.
+# Docker mounts /sys/fs/cgroup read-only, so the remount needs CAP_SYS_ADMIN and
+# runs only in a deployment that grants it (the public compose grants none).
+# WARN, never fatal: without containment the server still serves terminals.
 enable_session_containment() {
   # cg_root is a parameter, matching warn_if_not_root's uid/gid, so a unit test
   # can hand it a temp dir instead of the host's real /sys/fs/cgroup.
@@ -122,22 +100,13 @@ enable_session_containment() {
     printf 'level=warn msg="cannot remount /sys/fs/cgroup rw; per-session containment cannot engage, so per-session peak memory and task counts will not be reported. Closed-tab process trees are still reaped without it" error="%s" hint="OPTIONAL: add cap_add: [SYS_ADMIN] to the compose service to enable containment; the server and every terminal session drop the capability immediately after this remount. The grant is not fully transient: the container init at PID 1 keeps it for the container lifetime (inert -- it executes nothing; reaching its capability set needs code execution as root INSIDE the container, which is what this terminal already hands to anyone who can reach the port), docker exec processes receive it, and the widened seccomp profile persists. Not granted by default, because marker-based session reaping in the engine closes the process leak without it" component=entrypoint\n' "$mount_err" >&2
     return 1
   fi
-  # Report ONLY what the remount proved, never that containment itself is
-  # available: an earlier "per-session process containment available" wording
-  # once claimed a state the remount alone cannot prove (measured on borgcube
-  # 2026-08-06: the server failed 6s later with an EBUSY every session ran
-  # uncontained under, while that line said the feature was on). The server
-  # logs the real verdict at startup either way (containment status, or
-  # startContainment's warn naming the reason) -- read that line, not this one.
-  #
-  # Vacating the cgroup root deliberately does NOT happen here. An earlier
-  # attempt to do it from this script BROKE containment: cgroup v2 forbids
-  # enabling a controller on a cgroup still holding member processes, and the
-  # engine's own NewContainment.vacateRoot already handles that by moving every
-  # pid into its "wt-server" leaf before writing cgroup.subtree_control. An
-  # entrypoint-created leaf here would instead make verifyOwnRoot (step 2)
-  # refuse the WHOLE root as soon as it holds a child not prefixed "wt-",
-  # disabling containment on hosts where it would otherwise work.
+  # Report ONLY what the remount proved, never that containment is available:
+  # the server can still fail containment setup afterwards (EBUSY), and it logs
+  # the real verdict at startup either way.
+  # Do NOT vacate the cgroup root here: cgroup v2 forbids enabling a controller
+  # on a cgroup still holding processes, NewContainment.vacateRoot already moves
+  # every pid into its "wt-server" leaf, and an entrypoint-created leaf would make
+  # verifyOwnRoot refuse the whole root for holding a child not prefixed "wt-".
   printf 'level=info msg="cgroup tree remounted rw, which is the only step here that needs privilege; whether per-session process containment engages is decided and logged by the server at startup" component=entrypoint\n' >&2
   return 0
 }
@@ -250,18 +219,13 @@ tools_tree_was_writable=0
 # segment that never holds kiro-cli.
 secure_tools_dir() {
   local dir=$1 arm=${2:-1} owned=${3:-1} mode
-  # `owned` decides what an UNRECOVERABLE state costs, per web-terminal-kiro.md
-  # "Failure posture": this is a dev-box container the operator is expected to
-  # reshape, so a broken state must heal itself or be fixable from inside it.
-  #   owned=1  the NINE directories this entrypoint creates itself (the
-  #            make_config_dir list outside $HOME). The entrypoint creates
-  #            them (so a symlink or plain file there is unambiguously
-  #            anomalous) and a reinstall repairs them (toolbelt/kiro-cli
-  #            manager reinstall what is missing), so a refusal costs a
-  #            download, not data. Fatal.
-  #   owned=0  $TOOLS/go and $TOOLS/go/bin (GOPATH/bin and its parent): on
-  #            PATH but never created or repaired here, holding no
-  #            integrity-gated binary. Warn and skip.
+  # `owned` decides what an UNRECOVERABLE state costs. This is a dev-box
+  # container the operator reshapes, so a broken state must heal itself or be
+  # fixable from inside it.
+  #   owned=1  the NINE dirs make_config_dir creates outside $HOME: a symlink or
+  #            plain file there is anomalous and a reinstall repairs it. Fatal.
+  #   owned=0  $TOOLS/go and $TOOLS/go/bin (GOPATH/bin): on PATH but never
+  #            created or repaired here, no integrity-gated binary. Warn, skip.
   if [ -L "$dir" ]; then
     if [ "$owned" -eq 0 ]; then
       printf 'level=warn msg="PATH-segment directory is a symlink; skipping it (its target may be outside the /config mount, and this tree holds no integrity-gated binary)" dir="%s" component=entrypoint\n' "$dir" >&2
@@ -394,8 +358,7 @@ kiro_cli_data_dir() {
 # kiro-cli's own agent-server runtimes. Each version unpacks a ~240 MB tree
 # under <data-dir>/kas/<version>-<hash>/ (plus a sibling .lock) on its first
 # chat launch -- after this entrypoint has already exec'd the server -- and
-# nothing ever removes the superseded ones (six trees / 1.4 GB found on the
-# borgcube volume). Applies the toolbelt engine's own
+# nothing ever removes the superseded ones. Applies the toolbelt engine's own
 # keep-current-drop-the-rest rule to the one install outside its custody.
 # Warn, never fatal.
 prune_superseded_kas_runtimes() {

@@ -1,29 +1,10 @@
 #!/usr/bin/env bash
 # The session PATH boundary: entrypoint.sh narrows its OWN PATH so its directory
-# checks cannot be answered by a planted binary on the /config bind mount, then
-# hands the image's PATH back to the server it execs. Between those two points it
-# RE-EXECS itself through setpriv to drop CAP_SYS_ADMIN, and PATH is an exported
-# variable, so the narrowed value crosses that exec.
-#
-# That combination broke the restore in production (borgcube, 2026-08): the second
-# invocation captured the NARROWED list as the value to restore, so the server and
-# every PTY session under it ran without /config/tools/bin, /config/tools/go/bin or
-# /config/home/.local/bin. Nothing failed loudly. Every binary the toolbelt engine
-# installs became unreachable by bare name -- for the operator's terminal and for
-# any agent running in one -- and the engine could not even find its own npm and uv
-# to finish installing two of its entries, which surfaced only as
-# /api/health reporting tools "degraded".
-#
-# A smoke test cannot see this: the container boots, serves, and reports ok. So the
-# assertions below drive the shipped PATH statements through a simulated re-exec and
-# check the value the server would actually get, then pin the two orderings that
-# make the narrowing meaningful in the first place.
-#
-# Lint directives, each against a stated guarantee:
-#   SC2015 - the assertion form `[ cond ] && ok "..." || no "..."` cannot mis-fire,
-#     because lib.sh's ok/no return 0 unconditionally by design (see their comment).
-#   SC2016 - the grep patterns below must stay single-quoted: they match LITERAL
-#     text in the shipped file, not an expansion.
+# checks cannot be answered by a planted binary on the /config bind mount. The
+# setpriv re-exec must restore the image's PATH for the server, never the
+# narrowed one, or every /config/tools binary is unreachable by bare name while
+# the container still boots and reports ok.
+# SC2015: lib.sh's ok/no always return 0. SC2016: patterns match literal text.
 # shellcheck disable=SC2015,SC2016
 set -u
 

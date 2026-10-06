@@ -41,11 +41,9 @@ case "$out" in
   *level=info*"remounted rw"*) ok "success logs the remount at info" ;;
   *) no "success logs the remount at info" "got: $out" ;;
 esac
-# Pins the shipped defect: the message once claimed "per-session process
-# containment available" on the strength of the remount alone, while the server
-# failed with EBUSY six seconds later (measured on borgcube, image v2.7.7) and
-# every session ran uncontained. This script proves the MOUNT; only the server
-# can report containment, and it does.
+# The remount alone cannot prove containment (the server can still fail with
+# EBUSY and run every session uncontained), so this script claims only the
+# MOUNT; only the server can report containment, and it does.
 case "$out" in
   *containment\ available*) no "the remount report must not claim containment is available" "got: $out" ;;
   *) ok "the remount report does not claim containment is available" ;;

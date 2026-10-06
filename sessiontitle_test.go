@@ -426,9 +426,9 @@ func TestSessionTitlePushesOnlyOnChange(t *testing.T) {
 	}
 
 	// The agent renames the session mid-conversation: that must reach the tab.
-	f.session("hash0", id, titleJSON("Unsticking fleet CI/sync PRs"))
+	f.session("hash0", id, titleJSON("Fixing flaky CI checks"))
 	f.sync.pass(t.Context(), set)
-	if len(set.calls) != 2 || set.calls[1] != "tab1=Unsticking fleet CI/sync PRs" {
+	if len(set.calls) != 2 || set.calls[1] != "tab1=Fixing flaky CI checks" {
 		t.Errorf("pushed %v, want the updated title as a second push", set.calls)
 	}
 }

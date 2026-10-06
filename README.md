@@ -162,8 +162,6 @@ This project was built with AI-assisted tooling using [Claude](https://claude.co
 
 ## License
 
-MPL-2.0. See [LICENSE](LICENSE).
-
-The image carries the license text of every bundled component under `/usr/share/licenses/`.
+MPL-2.0. See [LICENSE](LICENSE). The image carries the license text of every bundled component under `/usr/share/licenses/`.
 
 The image redistributes two web fonts under their own licences, each served beside the font it covers. Monaspace Neon NF is under the SIL Open Font License 1.1 (`/vendor/fonts/MonaspaceNeonNF-LICENSE`). Web Terminal Glyphs, the tiling overlay listed ahead of it, is under Apache-2.0 (`/vendor/fonts/WebTerminalGlyphs-LICENSE`, with its `/vendor/fonts/WebTerminalGlyphs-NOTICE`).

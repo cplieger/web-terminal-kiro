@@ -76,7 +76,7 @@ snapshot() {
 # Silence is the contract on every fresh volume and on every boot after the
 # operator has cleared the files, which is the majority of boots forever. A
 # notice that fires unconditionally is noise in exactly the place this app asks
-# an operator to read (see web-terminal-kiro.md "Failure posture").
+# an operator to read.
 mk
 attempt "$OLD" "$NEW"
 [ "$RC" -eq 0 ] && [ ! -s "$WARNLOG" ] \

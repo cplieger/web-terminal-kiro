@@ -232,9 +232,8 @@ if [ -z "$CALLS" ]; then
 fi
 
 # The whole fail-closed set, as a set: this fails both when a root is demoted and
-# when a NEW one is added, because either way the three places that describe this
-# policy (the function's doc comment and this file) have drifted
-# from the code. Both sides go through the same `LC_ALL=C sort`, so the assertion
+# when a NEW one is added, because either way the function's doc comment and this
+# file have drifted from the code. Both sides go through the same `LC_ALL=C sort`, so the assertion
 # is about membership and never about the collation order of `$` versus `/`.
 OWNED_EXPECTED=$(printf '%s\n' \
   /config '$TOOLS' '$TOOLS/bin' '$TOOLS/opt' \
@@ -244,7 +243,7 @@ OWNED_ACTUAL=$(printf '%s\n' "$CALLS" | awk '$2 == 1 { print $1 }' | LC_ALL=C so
 if [ "$OWNED_ACTUAL" = "$OWNED_EXPECTED" ]; then
   ok "the fail-closed (owned=1) set is exactly the nine directories the entrypoint creates"
 else
-  no "owned=1 set drifted" "expected [$(printf '%s' "$OWNED_EXPECTED" | tr '\n' ' ')] but the boot path has [$(printf '%s' "$OWNED_ACTUAL" | tr '\n' ' ')] -- if intended, update secure_tools_dir's doc comment and web-terminal-kiro.md 'Failure posture' in the same change"
+  no "owned=1 set drifted" "expected [$(printf '%s' "$OWNED_EXPECTED" | tr '\n' ' ')] but the boot path has [$(printf '%s' "$OWNED_ACTUAL" | tr '\n' ' ')] -- if intended, update secure_tools_dir's doc comment in the same change"
 fi
 
 # Named individually as well as in the set above, because these four are the ones

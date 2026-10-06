@@ -504,14 +504,9 @@ ARG PKG_REFRESH=static
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # libatomic1 is a RUNTIME dependency of the Node.js the tools engine
 # installs: node's official linux-x64 binaries link libatomic.so.1 from
-# v25 onward (measured — v24.18.0 does not, v26.7.0 does). It is listed
-# explicitly because the only reason this image had it was the homelab
-# compose installing gcc, which pulls libgcc-14-dev which depends on it.
-# That was an APT_PACKAGES value; it is an `apt:gcc` manifest entry now, and
-# the entry is per-deployment, so the dependency is even less reliable than
-# it was. A deployment without it got
-# sister app marotte's failure instead: every npm-sourced tool dying with
-# `npm failed: exit status 127`.
+# v25 onward (v24.18.0 does not, v26.7.0 does). Listed explicitly because
+# nothing else in this package set reliably pulls it in, and without it every
+# npm-sourced tool dies with `npm failed: exit status 127`.
 # hadolint ignore=DL3008
 RUN echo "OS package refresh: ${PKG_REFRESH}" \
     && apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
@@ -544,29 +539,17 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
 # pin (a copy under the data dir) protects nothing; entrypoint.sh purges old ones.
 ENV HOME=/config/home
 ENV KIRO_SKIP_BINARY_PINNING=1
-# PATH leads with the engine-managed bin dir. The two `runtimes/{go,node}/bin`
-# segments are GONE: the audit they were gated on ran on the borgcube volume
-# (2026-07) and found they held only go/gofmt and node/npm/npx, every one already
-# resolving through tools/bin to the engine's opt/<tool>/<ver>/ trees, so both
-# trees were deleted (265 MB) after symlinking the one exception, corepack, into
-# tools/bin. Keeping them on PATH after that bought nothing and cost real exposure:
-# they sit ahead of /usr/bin, are never created or repaired by this entrypoint, and
-# a binary planted while such a tree was group/other-writable stays executable by
-# root even after the mode is tightened (chmod stops new writes, it does not
-# re-verify existing files). Removing the segments removes that path instead of
-# policing it. Restoring a pre-toolbelt backup volume is the one case that
-# regresses; the remedy is the same one the audit used, symlink the exception into
-# tools/bin.
-# tools/go/bin STAYS: it is GOPATH/bin (see ENV GOPATH below), the landing site for
-# any `go install` run without the engine's GOBIN, and 18 binaries live there on the
-# real volume. Its residual exposure is accepted rather than hardened -- deleting a
-# user's own go-installed tools is the productivity harm the dev-box failure posture
-# forbids (web-terminal-kiro.md), and anyone able to plant there already holds
-# /config/home/.ssh and the auth tokens.
-# GOROOT/GOBIN are gone: the engine installs Go under versioned opt/go/<ver>/ trees
-# with a bin/go symlink and the toolchain derives GOROOT itself; go-installed tools
-# land in the bin dir via the engine's own GOBIN env at install time.
+# PATH leads with the engine-managed bin dir. runtimes/{go,node}/bin stay off
+# it: they would sit ahead of /usr/bin, this entrypoint never creates or repairs
+# them, and a binary planted while a tree was group/other-writable stays
+# executable after the mode is tightened. A restored pre-toolbelt volume needs
+# its stray binaries symlinked into tools/bin instead.
+# tools/go/bin stays: it is GOPATH/bin, where `go install` lands without the
+# engine's GOBIN. Deleting a user's own go-installed tools would break the dev
+# box, and anyone able to plant there already holds /config/home/.ssh.
 ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# No GOROOT/GOBIN: the engine installs Go under versioned opt/go/<ver>/ trees
+# and sets GOBIN itself at install time; the toolchain derives GOROOT.
 ENV GOPATH="/config/tools/go"
 ENV WORK_DIR=/workspace
 ENV LISTEN_ADDR=:9848

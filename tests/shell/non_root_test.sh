@@ -21,7 +21,7 @@ load_function warn_if_not_root
 
 # --- 1. root is silent ----------------------------------------------------------
 # The supported path runs on every healthy boot, so a stray line here would be
-# noise in every container log the fleet produces.
+# noise in every container log.
 out=$(warn_if_not_root 0 0 2>&1)
 rc=$?
 [ -z "$out" ] && ok "a root run logs nothing" || no "a root run logs nothing" "got: $out"
