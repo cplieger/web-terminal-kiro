@@ -6,6 +6,8 @@ import {
 import { presetAgentTabbed } from "@cplieger/web-terminal-ui/presets";
 import type { PublicThemeToken } from "@cplieger/web-terminal-ui/style-contract";
 
+import { imagePaste } from "./image-paste.js";
+
 // The one brand accent. static/index.html's <meta name="theme-color">, its
 // #loading critical CSS, and static/manifest.json's theme_color (#c099ff) cannot
 // read this module and must be kept in sync by hand; app.test.ts's brand-accent
@@ -27,7 +29,9 @@ const options: CreateTerminalOptions = {
   // creation. attentionIcons additionally requires static/ to serve
   // favicon-{input,done,alert} in all three icon formats (app.test.ts asserts
   // this), and the icons must be regenerated if a --status-* token below changes.
-  features: () => presetAgentTabbed({ attentionIcons: true }),
+  // imagePaste comes first so its Ctrl+Shift+V handler outranks the preset's
+  // text-only clipboard one.
+  features: () => [imagePaste(), ...presetAgentTabbed({ attentionIcons: true })],
   // Restore each tab's scrollback from localStorage instead of pulling it back
   // over the wire; @cplieger/web-terminal-ui's docs/scrollback-persistence.md
   // has the mechanism, and docs/hardening.md "Stored scrollback" states what

@@ -593,6 +593,11 @@ COPY --chmod=755 entrypoint.sh /opt/web-terminal-kiro/entrypoint.sh
 # hook CONFIG that points at this path. See sessiontitle.go.
 COPY --chmod=755 hooks/session-title.sh /opt/web-terminal-kiro/hooks/session-title.sh
 
+# Where a pasted image lands (upload.go). Made at build time because the container
+# may run as a non-root user, and sticky world-writable like /tmp for the same reason.
+# A volume mounted here hides it and must be writable by that user.
+RUN mkdir -p /uploads && chmod 1777 /uploads
+
 WORKDIR /workspace
 EXPOSE 9848
 

@@ -25,3 +25,5 @@ services:
       - "/opt/appdata/web-terminal-kiro/config:/config"
       # Your repositories. Each new tab starts in this folder.
       - "/opt/appdata/web-terminal-kiro/workspace:/workspace"
+      # Images you paste into a tab. Optional. Without it, they are lost when the container is recreated.
+      - "/opt/appdata/web-terminal-kiro/uploads:/uploads"

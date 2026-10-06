@@ -10,7 +10,7 @@
 # emit list used to be hardcoded twice -- once here, once in dev-build.sh -- and
 # a new entry could ship a page that 404s the module it just added. static/app.js
 # is asserted separately: it is the <script type=module src>, not an importmap
-# entry.
+# entry, and so is every module it imports by relative path.
 #
 # Usage: assert-emit.sh [index.html] [static-dir]
 set -eu
@@ -24,7 +24,12 @@ targets=$(sed -n '/<script type="importmap">/,/<\/script>/p' "$page" \
   exit 1
 }
 
-for t in /app.js $targets; do
+# app.js's own sibling modules are not importmap entries either, so derive them
+# from its relative imports; an absent app.js is reported by the loop below.
+siblings=$(grep -o 'from "\./[^"]*\.js"' "${root}/app.js" 2>/dev/null \
+  | sed 's/^from "\.//; s/"$//' || true)
+
+for t in /app.js $siblings $targets; do
   [ -s "${root}${t}" ] || {
     printf 'ERROR tsc-emit-missing: %s is absent or empty after the tsc steps, so %s would 404 at runtime (outDir/rootDir or vendored src layout drift?)\n' \
       "${root}${t}" "$t" >&2

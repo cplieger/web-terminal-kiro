@@ -43,6 +43,10 @@ A terminal's WebSocket address carries the session id as a query parameter, `/ws
 
 A proxy usually logs the full request address by default, such as Caddy's `uri` field or nginx's `$request`. Drop or redact the query string for `/ws` in the proxy's access log before you ship that log anywhere.
 
+## Pasted images
+
+The page posts a pasted image to `/api/uploads`. That address passes the same host check and cross-origin check as the terminal, and it has no login either. It grants nothing a tab does not already have, since a tab is a root shell. The server writes only to `/uploads`, under a name that must match the `pasted-<date>T<time>` pattern, and refuses a request larger than 256 MiB.
+
 ## Stored scrollback
 
 Each tab's newest 200 lines are kept in your browser's `localStorage`. A phone that discarded the page then asks the server only for what it missed, instead of pulling every tab's history again. Terminal output is not always something you want on disk, so here is what that keeps:

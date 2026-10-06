@@ -75,3 +75,11 @@ Each user ID you list states that the account is already as privileged as this s
 ## LOG_OSC_TEXT
 
 Any program running in the terminal can send a notification, so the text can hold a token, a sign-in code or an address with a token in it. With this off, the log still records a fingerprint and a length for each wording. Turn it on only for an active diagnosis. The server logs a warning at startup while it is on.
+
+## Uploads
+
+When you paste an image into a tab, the page uploads it to `/uploads` and types its path at the prompt, followed by a space. kiro-cli attaches the image when you send the message. Paste with Ctrl+V, Cmd+V or Ctrl+Shift+V, or use the Paste menu on an iPhone or iPad. Text pastes as before.
+
+The container image creates the folder itself, so pasting works with no volume. Without a volume, though, the files are lost when the container is recreated. Mount a volume, writable by the user the container runs as, to keep them.
+
+Each image is named `pasted-<date>T<time>` in UTC, ending in `.png`, `.jpg` or `.webp`. The browser scales an image larger than 2000 pixels on its long edge down to 2000 before the upload. It refuses an image it cannot convert to one of those three types. One paste uploads at most 25 images, and the page says how many it skipped. The server refuses a paste larger than 256 MiB. The Paste item in the right-click and long-press menu still pastes text only.

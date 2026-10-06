@@ -76,6 +76,15 @@ export default defineConfig({
         // actually read, because setting this option replaces Vite's default
         // rather than adding to it.
         server: { fs: { allow: [".", "../static"] } },
+        // image-paste.test.ts mounts the REAL library while app.test.ts mocks it, so
+        // on a cold cache Vite discovered these mid-run and reloaded a test file.
+        optimizeDeps: {
+          include: [
+            "@cplieger/web-terminal-ui",
+            "@cplieger/web-terminal-ui/presets",
+            "@cplieger/web-terminal-ui/features/clipboard",
+          ],
+        },
         test: {
           name: "browser",
           // Test files co-located with source, named *.test.ts
@@ -187,9 +196,9 @@ export default defineConfig({
       reportOnFailure: true,
       reporter: ["text", "text-summary", "lcov"],
       thresholds: {
-        // The frontend is a single bootstrap module (app.ts) fully covered
-        // by app.test.ts (100% on all axes). 90 locks that in while leaving
-        // slack for a future module with an untestable sliver.
+        // Two modules: the bootstrap (app.ts, 100% on all axes) and image-paste.ts,
+        // whose sliver is the no-OffscreenCanvas fallback and the 256 MiB
+        // pre-flight, neither reachable in Chromium without a huge allocation.
         lines: 90,
         functions: 90,
         branches: 90,
