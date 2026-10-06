@@ -275,8 +275,8 @@ func servedFonts(dir string) (map[string]bool, error) {
 }
 
 // checkContract returns one reason per violated clause, empty when the
-// contract holds. Every clause is a property the overlay's own steering
-// records as load-bearing, so each reason names the value it read.
+// contract holds. Every clause is load-bearing for the overlay, so each
+// reason names the value it read.
 func checkContract(c *cellContract, sheet string, served map[string]bool) []string {
 	css := stripComments(sheet)
 	rules := parseRules(css)

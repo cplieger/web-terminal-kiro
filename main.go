@@ -345,16 +345,11 @@ func run() error {
 	setupLogging()
 
 	// The shutdown context every long-lived goroutine in run() keys its exit
-	// off: the tools convergence watcher and the boot-convergence waiter (both
-	// started inside startTools), the session-title poller, and the request
-	// contexts the server derives via BaseContext. The pre-drain hook cancels
-	// it. Created HERE rather than beside the server because startTools runs
-	// first, and a goroutine handed context.Background() for want of a shutdown
-	// signal has an exit path that can never fire (go-rulebook C20).
-	//
-	// Not every context in this process: startKiroCLI's own root is separate,
-	// and readSmallFile's callers thread the poller's context, not this one
-	// directly.
+	// off: the tools convergence watcher and boot-convergence waiter inside
+	// startTools, the session-title poller, and the server's request contexts
+	// via BaseContext. The pre-drain hook cancels it. It is created before
+	// startTools because a goroutine handed context.Background() has an exit
+	// path that can never fire. startKiroCLI keeps its own separate root.
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
 
@@ -468,8 +463,7 @@ func run() error {
 	// re-parents orphans onto this server even behind an init shim, and its sweep
 	// exempts only pids in the engine's own spawn registry. This app also spawns
 	// through os/exec outside that registry, so the sweep can win the race for one of
-	// THOSE exit statuses and make successful work report as failed. Measured without
-	// an init on borgcube 2026-08-09: 17,323 zombies against 88 live processes.
+	// THOSE exit statuses and make successful work report as failed.
 	if os.Getpid() == 1 {
 		slog.Warn("running as PID 1 with no init: orphaned session processes will accumulate as zombies for the container's lifetime",
 			"hint", "add `init: true` to the compose service (or run with `docker run --init`) so an init at PID 1 reaps orphans; the shipped compose.yaml marks it required")
@@ -1608,25 +1602,11 @@ const (
 func startContainment() *terminal.Containment {
 	c, err := terminal.NewContainment(containCgroupRoot, containCgroupPrefix, slog.Default())
 	if err != nil {
-		// WARN, not Info, and the level is the whole point of the line.
-		//
-		// This reports that a layer the operator asked for is not running. At Info it
-		// sat in the same stream as routine boot chatter, six seconds after
-		// entrypoint.sh had already logged `cgroup tree remounted rw; per-session
-		// process containment available` — which is a claim about the MOUNT, not
-		// about containment. An operator reading the first line saw success, and the
-		// contradiction below it was not loud enough to correct them.
-		//
-		// The cost of missing it is measured, not hypothetical: containment ran
-		// silently off on borgcube while 28 stranded session trees accumulated
-		// 16.2 GB, and the incident reached 32.6 GB with 17,290 zombies before
-		// anyone read this line. Nothing else announces the state, and this
-		// container deliberately carries no mem_limit, so the fleet's
-		// ContainerMemoryHigh rule is structurally exempt from catching the
-		// consequence (see web-terminal-kiro.md, "No mem_limit, on purpose").
-		//
-		// It stays a warning rather than a fatal because the app's failure posture
-		// says so: reaping closes the process leak without containment, so the
+		// WARN, not Info: entrypoint.sh has already logged that the cgroup tree was
+		// remounted rw, a claim about the mount and not about containment, and
+		// nothing else announces that containment is off. The container carries no
+		// mem_limit, so no memory alert catches stranded session trees either.
+		// Not fatal: reaping closes the process leak without containment, so the
 		// terminal must keep serving.
 		slog.Warn("per-session cgroup containment unavailable; session trees are still reaped, but per-session peak memory and task counts will not be reported",
 			"error", err,

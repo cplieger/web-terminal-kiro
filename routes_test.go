@@ -270,23 +270,14 @@ func TestCreateRateLimit(t *testing.T) {
 	}
 }
 
-// TestSecurityHeaders_presentOnNormalResponse pins the baseline response
-// security headers that buildHandler layers on every response via
-// webhttp.SecurityHeaders(). web-terminal-kiro sent NO security headers before the
-// webhttp standardization, so this is the regression guard for the fleet
-// baseline: X-Content-Type-Options nosniff and X-Frame-Options DENY on a normal
-// 200. It also pins the three deliberate choices -- X-Frame-Options is the DENY
-// default because web-terminal-kiro is never embedded in a frame; Referrer-Policy
-// is TIGHTENED from webhttp's strict-origin-when-cross-origin default to
-// same-origin, so a UI bump that drops the vendored `rel="noreferrer"` cannot
-// leak this server's hostname to a page an OSC 8 link points at (see
-// buildHandler's rationale, and marotte pins the same value); and the
-// Content-Security-Policy is the
-// hash-pinned policy buildCSPPolicy assembles from the embedded index.html
-// (asserted below: script-src AND style-src each pin a sha256 token, and no
-// directive carries 'unsafe-inline').
-// Driven through the full production chain (buildHandler) so the assertion
-// tracks what the server actually sends.
+// TestSecurityHeaders_presentOnNormalResponse pins the baseline headers
+// buildHandler sends through webhttp.SecurityHeaders: nosniff, X-Frame-Options
+// DENY (the UI is never framed), Referrer-Policy tightened to same-origin so a UI
+// bump that drops the vendored rel="noreferrer" cannot leak this server's
+// hostname to an OSC 8 link target, and the hash-pinned CSP buildCSPPolicy
+// assembles (script-src and style-src each pin a sha256 token, no
+// 'unsafe-inline'). Driven through buildHandler so it tracks what the server
+// actually sends.
 func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 	mux, _, csp := mustRegisterRoutes(t, newTestDeps(true))
 
@@ -858,33 +849,14 @@ func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
 	}
 }
 
-// TestHealthEndpoint_envelopeMatchesTheLibrary pins the two wire properties this
-// app shares with webhttp.ReadinessHandler and therefore with every other app in
-// the fleet that serves a readiness verdict.
-//
-// KEY ORDER: this handler cannot use the library's handler (its verdict is
-// composite -- a second reason plus the informational tools field -- while
-// ReadinessChecker is Ready() bool), so it matches the library's wire shape by
-// hand. It used to build a map, and encoding/json sorts map keys, so it emitted
-// {"reason":…,"status":…} while the library emitted {"status":…,"reason":…}: one
-// envelope, two orders, across three apps that are supposed to agree.
-//
-// CACHE: a readiness verdict must never be cached. A 200 with no explicit
-// freshness is heuristically cacheable under RFC 9111, and a cached "ok"
-// outliving the readiness it reported keeps traffic arriving at an instance that
-// has begun draining -- the exact failure the gate exists to prevent. The handler
-// sets it itself rather than relying on middleware, which is what let the app's
-// /api/-wide no-store wrapper be narrowed to the engine's session surface without
-// touching this route; the contract holds wherever the route is mounted. That is
-// also why this asserts against the bare mux: it is the HANDLER's property being
-// pinned. TestAPICachePolicy_EveryAPIPathSetsNoStore asserts the same header
-// through the real chain, where the whole /api/ surface is enumerated together.
-// STATUS + READY BODY: the byte-exact bodies above are also what pins the ready
-// document, so no separate ready-body test is needed -- an exact match fails for
-// a renamed status field, an empty tools value, or ANY extra key (the tools
-// key's ABSENCE is what marks the subsystem deliberately disabled, as under bare
-// `go run` or tests, rather than degraded). The status codes ride along in the
-// same table because the Docker HEALTHCHECK's curl reads only the code.
+// TestHealthEndpoint_envelopeMatchesTheLibrary pins the wire shape this app
+// shares with webhttp.ReadinessHandler. The verdict is composite, so the handler
+// cannot reuse the library's and keeps its key order ("status" before "reason")
+// by hand. It sets no-store itself, because a cached "ok" keeps traffic arriving
+// at an instance that has begun draining (RFC 9111 heuristic freshness), so this
+// asserts against the bare mux. The byte-exact bodies also pin the ready document
+// (an absent tools key means disabled, not degraded) and the status codes, which
+// are all the Docker HEALTHCHECK reads.
 func TestHealthEndpoint_envelopeMatchesTheLibrary(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

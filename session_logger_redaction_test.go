@@ -71,9 +71,7 @@ func TestSessionLoggerRedactsCommand(t *testing.T) {
 // TestSessionLoggerTruncatesSessionID pins the OTHER half of the session
 // logger's credential boundary: the session id doubles as the /ws attach and
 // resume capability token, so the factory binds only terminal.LogID's
-// truncated form. Without this test the truncation could be widened or
-// dropped and nothing would fail — the exact silent-drift class a fleet audit
-// found live in the sibling app, which logged whole tokens.
+// truncated form.
 //
 // Serial for the same reason as the test above (process-global default logger).
 func TestSessionLoggerTruncatesSessionID(t *testing.T) {

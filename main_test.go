@@ -462,22 +462,13 @@ func TestStartTools_toolsRootResolution(t *testing.T) {
 }
 
 // TestStartTools_rootIntegrityRefusalDegrades pins the app's half of toolbelt's
-// opt-in root-integrity check (Config.VerifyRootIntegrity): the tools tree is an
-// operator-controlled persistent volume and this process runs as root, so a
-// managed root that is a symlink or that a foreign host user can write is a
-// root-code-execution surface (the engine's install probe EXECUTES what it finds
-// in <ToolsDir>/bin, first on PATH).
-//
-// Two contracts here, and the second is the one the app owns. (1) The refusal
-// DEGRADES rather than aborting boot, exactly like any other failed
-// toolbelt.New: engine nil, sessions ungated, state "degraded" so /api/health
-// carries the informational tools field (its projection is pinned by
-// TestStartTools_engineStartFailure). Per web-terminal-kiro.md "Failure posture"
-// a dev box must stay reachable so the volume can be repaired from inside.
-// (2) The findings are recovered with errors.As and logged ONE LINE PER ROOT,
-// with the path and the reason as fields — without that, "degraded" is backed
-// only by toolbelt's single joined message and an operator cannot see which root
-// or why. Serial: mutates the global default logger.
+// Config.VerifyRootIntegrity: this process runs as root and the engine's install
+// probe executes what it finds in <ToolsDir>/bin, so a symlinked or foreign-
+// writable managed root is refused. (1) The refusal DEGRADES rather than aborting
+// boot, so a dev box stays reachable and its volume can be repaired from inside
+// (state projection pinned by TestStartTools_engineStartFailure). (2) The findings
+// are logged one line per root with path and reason as fields, so an operator
+// sees which root and why. Serial: mutates the global default logger.
 func TestStartTools_rootIntegrityRefusalDegrades(t *testing.T) {
 	const perPathMsg = "tools engine refused a managed root"
 
