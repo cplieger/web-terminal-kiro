@@ -525,7 +525,7 @@ func run() error {
 	srv.BaseContext = func(net.Listener) context.Context { return baseCtx }
 
 	// Bound to baseCtx, which the pre-drain hook cancels.
-	go pollers.Run(baseCtx, mgr)
+	go pollers.run(baseCtx, mgr)
 
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM)

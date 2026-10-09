@@ -112,7 +112,7 @@ type sessionTitleSync struct {
 // newSessionTitleSync builds the syncer. stateRoot is the app's writable state root, home
 // is the HOME whose .kiro/sessions tree kiro-cli writes. The session manager is not a
 // constructor argument because the route wiring needs this object's sessionEnv before
-// registerRoutes has returned a manager; it is handed to Run instead.
+// registerRoutes has returned a manager; it is handed to sessionPollers.run instead.
 func newSessionTitleSync(stateRoot, home string) *sessionTitleSync {
 	if home == "" {
 		// filepath.Join("", ".kiro", "sessions") is RELATIVE, so every title read would
