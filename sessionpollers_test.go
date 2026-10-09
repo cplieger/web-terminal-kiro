@@ -78,7 +78,7 @@ func TestSessionPollersRunUnderTheStateDirectoryGuard(t *testing.T) {
 			returned := make(chan struct{})
 			go func() {
 				defer close(returned)
-				p.Run(ctx, mgr)
+				p.run(ctx, mgr)
 			}()
 
 			time.Sleep(sessionPollInterval)
@@ -96,7 +96,7 @@ func TestSessionPollersRunUnderTheStateDirectoryGuard(t *testing.T) {
 			select {
 			case <-returned:
 			default:
-				t.Error("Run is still running after its context was cancelled, want it returned")
+				t.Error("run is still running after its context was cancelled, want it returned")
 			}
 		})
 	})
@@ -118,7 +118,7 @@ func TestSessionPollersRunUnderTheStateDirectoryGuard(t *testing.T) {
 			returned := make(chan struct{})
 			go func() {
 				defer close(returned)
-				p.Run(t.Context(), mgr)
+				p.run(t.Context(), mgr)
 			}()
 
 			time.Sleep(3 * sessionPollInterval)
@@ -127,7 +127,7 @@ func TestSessionPollersRunUnderTheStateDirectoryGuard(t *testing.T) {
 			select {
 			case <-returned:
 			default:
-				t.Error("Run is still running against a refused state directory, want it returned at once")
+				t.Error("run is still running against a refused state directory, want it returned at once")
 			}
 			if got := mgr.lists.Load(); got != 0 {
 				t.Errorf("List calls after three intervals = %d, want 0: no poller may sweep when the state directory was refused", got)

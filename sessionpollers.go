@@ -40,10 +40,10 @@ func newSessionPollers(stateRoot, home string) *sessionPollers {
 	}
 }
 
-// Run sweeps until ctx is cancelled. It starts nothing when sessionEnv is nil (the state
+// run sweeps until ctx is cancelled. It starts nothing when sessionEnv is nil (the state
 // directory was refused): the title sweep is os.ReadDir plus os.Remove over that directory,
 // and a rejected path must never be traversed.
-func (p *sessionPollers) Run(ctx context.Context, mgr pollerSessions) {
+func (p *sessionPollers) run(ctx context.Context, mgr pollerSessions) {
 	if p.sessionEnv == nil {
 		return
 	}
