@@ -9,7 +9,7 @@ require (
 	github.com/cplieger/pinstall/v3 v3.0.8
 	github.com/cplieger/runesafe/v2 v2.1.1
 	github.com/cplieger/slogx v1.6.7
-	github.com/cplieger/toolbelt/v3 v3.9.0-dev.1
+	github.com/cplieger/toolbelt/v3 v3.9.0-dev.3
 	github.com/cplieger/web-terminal-engine/v6 v6.2.0-dev.1
 	github.com/cplieger/webhttp/v3 v3.0.2
 )
@@ -25,7 +25,7 @@ require (
 	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 )
 
