@@ -276,15 +276,15 @@ RUN set -e; mkdir -p static/vendor/fonts; \
 # Both packages ship TS source only; they are extracted side by side under
 # static-src/node_modules/@cplieger so tsc resolves the UI's engine import.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.1.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.2.0-dev.1
 # sha256 of the tarball: npm's dist.integrity is SHA-512, so this digest cannot be
 # copied from the registry; a hand bump of the version re-runs scripts/repin-sha.sh.
 # repin: dep=@cplieger/web-terminal-engine url=https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=346c8255833bb6b02a96538d508ba342dfb1c7f55671c1f634bb238dcf291925
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=b7a613fa7e31088fb21b578fdf398fe29e5230645bc4661751b4a22d84d58e9b
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.3.4
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.4.0-dev.2
 # repin: dep=@cplieger/web-terminal-ui url=https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=2660baa114f7a3c052c146608941f3d448e968803522451fdfb6cf8858d8db09
+ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=427ebd3fbff867e2f8da50316f48f4b038e36ca787e79073042fef4b19dc23fa
 # The served bundle is built from the ARG pins while local dev compiles against
 # static-src/package.json, and nothing else fails when the two disagree. go.mod
 # is deliberately not compared: the engine's Go module and npm package version
