@@ -499,12 +499,12 @@ warn_legacy_tool_metadata() {
 # boot that installs nothing, so a renamed key or subcommand makes every
 # container report kiro-cli unavailable.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.28.0"
-KIRO_CLI_SHA256="4d6d20c3ffed99904081a062678b3c1978dc7d68c9f6c530f3f28f163011c8ee"
+KIRO_CLI_VERSION="2.29.0"
+KIRO_CLI_SHA256="32f8a0b79847c8180f77bfeba63682da3aba0f828b8cec30849caf903a1a028f"
 # The `# kiro-cli <version>` trailer is Renovate's version anchor for this
 # arch's digest lookup — do not hand-edit or drop it.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="39169fc43557ff3c007ccf5388ff95413539b2c6a8dfab6c69e4a7b8899bebbc" # kiro-cli 2.28.0
+KIRO_CLI_SHA256_ARM64="b8639a7ea9419ecb7d27df8dba588843c571e46f78c3b66869759b9853046928" # kiro-cli 2.29.0
 
 export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
 KIRO_CLI_TOOLS_DIR="$TOOLS"
