@@ -11,7 +11,7 @@ Web Terminal for Kiro runs the Kiro CLI (`kiro-cli`) in your browser, from any l
 
 Work with the Kiro agent from any device and pick up each session where you left off.
 
-- Gives each tab its own kiro-cli session, with reorderable tabs and a two-pane split view.
+- Gives each tab its own kiro-cli session, with reorderable tabs, a two-pane split view and a page address per tab. The browser tab shows the conversation you are looking at: `fix build · Web Terminal for Kiro`.
 - Works on a phone, with on-screen keys for Tab, Esc, the arrows, Enter and Ctrl.
 - Keeps each session running while your phone sleeps or the network drops, and restores the screen on return.
 - Downloads kiro-cli on first start and installs the tools you list, language servers included.
