@@ -23,7 +23,7 @@ func (f *fakePollerSessions) List() []terminal.SessionInfo {
 	return f.sessions
 }
 
-func (f *fakePollerSessions) SetSessionTitle(terminal.SessionID, string) bool { return true }
+func (*fakePollerSessions) SetSessionTitle(terminal.SessionID, string) bool { return true }
 
 func (*fakePollerSessions) SetSessionAlias(terminal.SessionID, string) bool { return true }
 
