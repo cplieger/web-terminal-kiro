@@ -25,7 +25,7 @@ func (f *fakePollerSessions) List() []terminal.SessionInfo {
 
 func (f *fakePollerSessions) SetSessionTitle(terminal.SessionID, string) bool { return true }
 
-func (f *fakePollerSessions) SetSessionAlias(terminal.SessionID, string) bool { return true }
+func (*fakePollerSessions) SetSessionAlias(terminal.SessionID, string) bool { return true }
 
 func (f *fakePollerSessions) StatusLatch(terminal.SessionID) (string, uint64, bool) {
 	f.latchReads.Add(1)
