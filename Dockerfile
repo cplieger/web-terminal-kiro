@@ -22,11 +22,11 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 # The `# go<version>` trailer on each sha line is the anchor Renovate uses to
 # resolve that arch's digest — do not hand-edit; Renovate owns these lines.
 # renovate: datasource=golang-version depName=golang
-ARG GO_VERSION=1.27.1
+ARG GO_VERSION=1.27.2
 # renovate: datasource=custom.golang-amd64 depName=golang-amd64
-ARG GO_SHA256_AMD64=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445  # go1.27.1
+ARG GO_SHA256_AMD64=ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5  # go1.27.2
 # renovate: datasource=custom.golang-arm64 depName=golang-arm64
-ARG GO_SHA256_ARM64=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec  # go1.27.1
+ARG GO_SHA256_ARM64=94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8  # go1.27.2
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
       amd64) GO_SHA256="$GO_SHA256_AMD64" ;; \
@@ -151,7 +151,7 @@ ARG MONASPACE_BOLDITALIC_SHA256=5dffc9465be18eb63263671f1f3ba266ede49043cb6b3edc
 # the same directory under the same per-family name so one derivation serves the
 # image and scripts/dev-build.sh.
 # renovate: datasource=github-releases depName=cplieger/web-terminal-glyphs
-ARG WEB_TERMINAL_GLYPHS_VERSION=v1.1.7
+ARG WEB_TERMINAL_GLYPHS_VERSION=v1.1.9
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/WebTerminalGlyphs.woff2
 ARG WEB_TERMINAL_GLYPHS_SHA256=8f4720fa37eed4cdb3ca070d24fbbce85a5266b63c63e754d78a359509aeb94c
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/cell.json dest=WebTerminalGlyphs-cell.json
@@ -198,9 +198,9 @@ COPY required-tools.txt bundled-tools.json ./
 # daily; the pin means the baked fallback is a REVIEWED catalog, while
 # the runtime refresh keeps a running container current.
 # renovate: datasource=github-releases depName=cplieger/tool-catalog
-ARG TOOL_CATALOG_VERSION=v2026.10.07
+ARG TOOL_CATALOG_VERSION=v2026.10.09
 # repin: dep=cplieger/tool-catalog url=https://github.com/cplieger/tool-catalog/releases/download/{version}/tool-catalog.json
-ARG TOOL_CATALOG_SHA256=30b458d49cc00be66e0039745a3cd3d7f9e6c604047a78a89deb8fb672b275b7 # tool-catalog v2026.07.24.1907
+ARG TOOL_CATALOG_SHA256=3e0ba03ca0170a7a7d99ea6788a3ade61e0aa0122c064cce1db454292259c5f9 # tool-catalog v2026.07.24.1907
 ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/download/${TOOL_CATALOG_VERSION}/tool-catalog.json
 # The build-time verifier is the SAME module go.mod requires (the runtime engine
 # that re-verifies required-tools.txt before every catalog swap), and that is now
