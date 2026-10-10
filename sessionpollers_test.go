@@ -32,7 +32,7 @@ func (f *fakePollerSessions) StatusLatch(terminal.SessionID) (string, uint64, bo
 	return "", 0, true
 }
 
-func (f *fakePollerSessions) WithdrawStatusLatch(terminal.SessionID, string, uint64) bool {
+func (*fakePollerSessions) WithdrawStatusLatch(terminal.SessionID, string, uint64) bool {
 	return false
 }
 

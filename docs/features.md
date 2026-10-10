@@ -22,6 +22,7 @@ The page comes from [web-terminal-ui](https://github.com/cplieger/web-terminal-u
 - The browser tab's title starts with the title of the tab you are looking at, which is kiro-cli's own name for the conversation once it has one, followed by the app's name: `fix build · Web Terminal for Kiro`.
 - An on-screen key bar for keys a phone keyboard lacks: Tab, Esc, the arrows, Enter, and a Ctrl key that stays pressed for the next letter.
 - Native text selection, copy and paste, and a menu on long-press or right-click.
+- When a program holds the mouse, such as kiro-cli's full-screen mode, hold Shift while you drag to select text, then copy it with Ctrl+Shift+C or the menu.
 - Paste an image, and the page uploads it and types its path for kiro-cli to attach. [Uploads](configuration.md#uploads) has the details.
 - Typing shows on screen before the server answers, so it feels instant over a slow link.
 - Tap the terminal to focus it. A button returns to the bottom and follows new output again.

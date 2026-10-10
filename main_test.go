@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
@@ -3036,5 +3037,18 @@ func TestSetupLoggingInstallsTheParsedLevelAndWarnsByNameOnly(t *testing.T) {
 					out)
 			}
 		})
+	}
+}
+
+func TestKiroSettingsTurnsFullscreenCopyOnSelectOff(t *testing.T) {
+	const key = "chat.fullscreenCopyOnSelect"
+	want := []string{"settings", key, "false"}
+	settings := kiroSettings()
+	i := slices.IndexFunc(settings, func(a pinstall.Assertion) bool { return a.Name == key })
+	if i < 0 {
+		t.Fatalf("kiroSettings() has no %q assertion", key)
+	}
+	if got := settings[i].Args; !slices.Equal(got, want) {
+		t.Errorf("kiroSettings() assertion %q = %q, want %q", key, got, want)
 	}
 }
