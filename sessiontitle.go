@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,11 +50,16 @@ const (
 	titleStateRoot = "/tmp/web-terminal-kiro"
 )
 
-// titleSetter is the engine surface this needs: the session manager's CLIENT title rung
-// (below a user's pin, above the automatic cwd/process ladder). An interface rather than
-// the concrete manager so the poller is testable without a PTY.
-type titleSetter interface {
+// sessionNamer is the engine surface this needs: the session manager's CLIENT title rung
+// (below a user's pin, above the automatic cwd/process ladder) and the session's public
+// URL alias. An interface rather than the concrete manager so the poller is testable
+// without a PTY.
+type sessionNamer interface {
 	SetSessionTitle(id terminal.SessionID, title string) bool
+	// SetSessionAlias names the tab's URL after its kiro-cli session. False for an
+	// unknown tab, a value outside the engine's alias grammar, or a session another
+	// live tab's alias already carries.
+	SetSessionAlias(id terminal.SessionID, alias string) bool
 	// List is the live-tab set, and the only reclaim signal that does not depend on a
 	// title still CHANGING: a closed tab's kiro-cli is gone, so its session.json title is
 	// frozen, so syncOne's memo returns early and the SetSessionTitle-false probe below it
@@ -67,7 +73,8 @@ type pushedTitle struct {
 	title  string
 }
 
-// sessionTitleSync pushes kiro-cli session titles onto the engine's client rung.
+// sessionTitleSync pushes kiro-cli session titles onto the engine's client rung, and
+// names each tab's URL alias after the kiro session it maps to.
 //
 // It owns no session list of its own: the set of live tabs is the engine's, and the set of
 // MAPPED tabs is whatever the hook has written into stateDir. A tab with no mapping yet
@@ -82,6 +89,12 @@ type sessionTitleSync struct {
 	// mapping identity lets syncOne clear the old conversation's title when a hook re-points
 	// a tab. Touched only by the poller goroutine, so it needs no lock.
 	pushed map[terminal.SessionID]pushedTitle
+	// aliased is the kiro session each tab's URL alias was last set to, and
+	// aliasRefused the one whose refusal was last logged, so a refusal is logged once
+	// and retried while the tab stays live and mapped. Poller-only like pushed, and
+	// pruned to the live set.
+	aliased      map[terminal.SessionID]string
+	aliasRefused map[terminal.SessionID]string
 	// mapped is the tab -> kiro-session pairing pass() resolved, published for
 	// readers outside this type. It is recorded at MAPPING time rather than at
 	// title-push time, which is why it is not pushed: a tab that launched work
@@ -125,6 +138,8 @@ func newSessionTitleSync(stateRoot, home string) *sessionTitleSync {
 		stateDir:     filepath.Join(stateRoot, titleStateDirName),
 		sessionsRoot: filepath.Join(home, ".kiro", "sessions"),
 		pushed:       make(map[terminal.SessionID]pushedTitle),
+		aliased:      make(map[terminal.SessionID]string),
+		aliasRefused: make(map[terminal.SessionID]string),
 		handleByTab:  make(map[terminal.SessionID]string),
 		tabByHandle:  make(map[string]terminal.SessionID),
 	}
@@ -332,7 +347,7 @@ func enableSessionTitles(titles *sessionTitleSync) func(tabID terminal.SessionID
 
 // pass runs one sweep: reclaim every mapping whose tab is gone, then for the ones that
 // remain, read that kiro session's title and push it if it changed.
-func (s *sessionTitleSync) pass(ctx context.Context, mgr titleSetter) {
+func (s *sessionTitleSync) pass(ctx context.Context, mgr sessionNamer) {
 	entries, err := os.ReadDir(s.stateDir)
 	if err != nil {
 		// No ErrNotExist carve-out. The poller runs ONLY on enableSessionTitles' true
@@ -398,9 +413,11 @@ func (s *sessionTitleSync) pass(ctx context.Context, mgr titleSetter) {
 		mapped++
 		if kiroID := s.syncOne(ctx, mgr, e.Name(), tabID); kiroID != "" {
 			pairs[tabID] = kiroID
+			s.syncAlias(mgr, tabID, e.Name(), kiroID)
 		}
 	}
 	s.mapped.Store(&pairs)
+	s.pruneAliases(live)
 	if mapped == 0 && len(live) > 0 {
 		// Tabs exist and not one has a kiro session mapping, so every one keeps the engine's
 		// automatic cwd ladder. state_entries is the discriminator: 0 means no mapping-shaped
@@ -417,7 +434,7 @@ func (s *sessionTitleSync) pass(ctx context.Context, mgr titleSetter) {
 // mapping file's name; tabID is what pass() resolved it to and the only one of the two the
 // engine understands. It returns the kiro session id it resolved, "" when it resolved none,
 // so pass() can publish the pairing whatever the title outcome was.
-func (s *sessionTitleSync) syncOne(ctx context.Context, mgr titleSetter, handle string, tabID terminal.SessionID) string {
+func (s *sessionTitleSync) syncOne(ctx context.Context, mgr sessionNamer, handle string, tabID terminal.SessionID) string {
 	kiroID, ok := s.readMapping(ctx, handle)
 	if !ok {
 		return ""
@@ -460,6 +477,36 @@ func (s *sessionTitleSync) syncOne(ctx context.Context, mgr titleSetter, handle 
 		"title_handle", handle, "kiro_session", kiroID,
 		"title_runes", utf8.RuneCountInString(title))
 	return kiroID
+}
+
+// syncAlias names a tab's URL after the kiro session it maps to, so the address a
+// browser shows for the tab is the kiro-cli thread. A refused alias (sessionNamer lists
+// the causes; the bool does not say which) is not applied, and later passes retry it
+// while the tab stays live and mapped, so a resume in a second tab takes the name once
+// the holder closes.
+func (s *sessionTitleSync) syncAlias(mgr sessionNamer, tabID terminal.SessionID, handle, kiroID string) {
+	if s.aliased[tabID] == kiroID {
+		return
+	}
+	if mgr.SetSessionAlias(tabID, kiroID) {
+		s.aliased[tabID] = kiroID
+		delete(s.aliasRefused, tabID)
+		return
+	}
+	if s.aliasRefused[tabID] != kiroID {
+		s.aliasRefused[tabID] = kiroID
+		slog.Debug("session title: URL alias not applied; retried while the tab stays live and mapped",
+			"title_handle", handle, "kiro_session", kiroID)
+	}
+}
+
+func (s *sessionTitleSync) pruneAliases(live map[terminal.SessionID]struct{}) {
+	for _, m := range []map[terminal.SessionID]string{s.aliased, s.aliasRefused} {
+		maps.DeleteFunc(m, func(id terminal.SessionID, _ string) bool {
+			_, ok := live[id]
+			return !ok
+		})
+	}
 }
 
 // mappedSessions returns the tab -> kiro-session pairing the last sweep published, nil

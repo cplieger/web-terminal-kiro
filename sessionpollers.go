@@ -13,7 +13,7 @@ import (
 const sessionPollInterval = 2 * time.Second
 
 type pollerSessions interface {
-	titleSetter
+	sessionNamer
 	workflowSessions
 	latchStore
 }

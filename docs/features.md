@@ -18,6 +18,8 @@ The page comes from [web-terminal-ui](https://github.com/cplieger/web-terminal-u
 
 - Several tabs that you open, close and drag to reorder, plus a tab switcher you swipe on a phone.
 - A two-pane split view. The split button in the tab row shows two sessions side by side with a divider you drag. Right-click or long-press a tab to snap it to either side, or drag it onto one half of the screen. The layout survives a reload and a switch to another device.
+- A page address for every tab, named after the tab's kiro-cli session id, so you can bookmark a conversation, paste it into another browser tab, or step through the tabs you looked at with the back and forward buttons. A tab has a random name until its kiro-cli session starts, after sign-in, and the address switches to the session id then. A split puts both tabs in the address, and editing it shows any two open tabs side by side. An address for a session that is no longer open in a tab, such as one bookmarked before a restart, keeps the current tab and says the tab is no longer open. It does not resume that session.
+- The browser tab's title starts with the title of the tab you are looking at, which is kiro-cli's own name for the conversation once it has one, followed by the app's name: `fix build · Web Terminal for Kiro`.
 - An on-screen key bar for keys a phone keyboard lacks: Tab, Esc, the arrows, Enter, and a Ctrl key that stays pressed for the next letter.
 - Native text selection, copy and paste, and a menu on long-press or right-click.
 - Paste an image, and the page uploads it and types its path for kiro-cli to attach. [Uploads](configuration.md#uploads) has the details.
