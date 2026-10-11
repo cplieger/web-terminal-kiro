@@ -117,8 +117,8 @@ test.describe("served page boots", () => {
       .toBe(true);
   });
 
-  // Runtime accessibility over what the library RENDERS, which html-validate's
-  // static :a11y gate cannot see. The violations found so far live in
+  // Runtime accessibility over what the library RENDERS, which a static check of
+  // the served HTML cannot see. The violations found so far live in
   // @cplieger/web-terminal-ui's tree, so they are baselined by RULE ID rather
   // than suppressed: a listed rule is reported and tolerated, anything new
   // fails, and an entry goes once the library fixes it.
