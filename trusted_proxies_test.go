@@ -244,8 +244,8 @@ func logContains(records *capture.Recorder, s string) bool {
 // must stay a FIXED string that cannot grow an input-derived tail. A
 // deliberate rewording updates both sides.
 const (
-	malformedProxyHint = "each entry must be a CIDR (e.g. 10.0.0.0/8) or a bare IP (e.g. 192.168.1.5)"
-	defaultRouteHint   = "list only the reverse proxy's own address(es), e.g. 10.0.0.0/8 or 192.0.2.10; leave TRUSTED_PROXIES unset to log the unspoofable socket peer"
+	malformedProxyHint = "each entry must be a CIDR (e.g. 192.0.2.0/28) or a bare IP (e.g. 192.0.2.5)"
+	defaultRouteHint   = "list only the reverse proxy's own address(es), e.g. 192.0.2.0/28 or 192.0.2.100; leave TRUSTED_PROXIES unset to log the unspoofable socket peer"
 )
 
 // attrCheck validates one attribute's value. A schema pairs every attr key that

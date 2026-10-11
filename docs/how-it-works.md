@@ -6,6 +6,8 @@ This page covers how the kiro-cli install, the health check and the startup log 
 
 A single Go server serves the web page and starts one `kiro-cli chat` process per browser tab, each in its own terminal. The browser draws kiro-cli's own screen from that terminal's output, the way an SSH session would. There is no chat layer, no history database and no translation in between. Sessions stay alive with no browser attached, which is what lets a tab come back after sleep. They end when you close the tab or the container restarts.
 
+Each tab learns which kiro-cli session it runs from a kiro-cli hook the app installs. The hook reports the session id when the session starts and on each prompt. The server then names the tab after the session's own title and gives the tab's page address that session id. A session id is kiro-cli's own name for the conversation and grants no access to the terminal.
+
 ## Sign-in
 
 When a tab opens and kiro-cli is not signed in, the tab runs kiro-cli's device sign-in first. It prints an address and a one-time code. Open the address in any browser, your phone included, and enter the code, and the chat then starts in the same tab. Your sign-in, settings and installed tools live on the `/config` volume and survive recreating the container.

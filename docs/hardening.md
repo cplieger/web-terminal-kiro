@@ -29,11 +29,11 @@ webterm.example.com {
 		# Your user name, then the output of: caddy hash-password
 		alice <password hash>
 	}
-	reverse_proxy 192.168.1.5:9848
+	reverse_proxy 192.0.2.5:9848
 }
 ```
 
-Replace `192.168.1.5` with the address of the Docker host, and put `webterm.example.com` in `ALLOWED_HOSTS`.
+Replace `192.0.2.5` with the address of the Docker host, and put `webterm.example.com` in `ALLOWED_HOSTS`.
 
 Set [`TRUSTED_PROXIES`](configuration.md#trusted_proxies) to the proxy's address, as [Telling the app about the proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md#telling-the-app-about-the-proxy) explains.
 

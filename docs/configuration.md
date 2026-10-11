@@ -28,7 +28,7 @@ Settings are environment variables on the container, under `environment:` in `co
 
 ## ALLOWED_HOSTS
 
-List the exact names and addresses you type in the browser, for example `localhost,192.168.1.5,webterm.example.com`. Use bare names and addresses only, with no scheme, path or CIDR range such as `10.0.0.0/8`. This list is the check that stops DNS rebinding, described in [Security](hardening.md).
+List the exact names and addresses you type in the browser, for example `localhost,192.0.2.5,webterm.example.com`. Use bare names and addresses only, with no scheme, path or CIDR range such as `192.0.2.0/24`. This list is the check that stops DNS rebinding, described in [Security](hardening.md).
 
 A request that is loopback on both ends is always admitted, so the healthcheck and commands run inside the container keep working. Both the client address and the `Host` must be loopback for that, as with `127.0.0.1:9848` or `localhost:9848`. Any other name still needs to be in the list.
 
@@ -36,7 +36,7 @@ Malformed entries are dropped with a warning that gives their count. When every 
 
 ## TRUSTED_PROXIES
 
-With this unset, the access log records the address that opened the connection and ignores `X-Forwarded-For`, so nobody can fake the logged address. That is the right choice when the terminal is reached directly. Behind a proxy, set it to the proxy's addresses, for example `10.0.0.0/8,192.0.2.10`. A malformed entry is logged and skipped, and startup continues. A default route such as `0.0.0.0/0` logs a warning, because it treats every client as a proxy.
+With this unset, the access log records the address that opened the connection and ignores `X-Forwarded-For`, so nobody can fake the logged address. That is the right choice when the terminal is reached directly. Behind a proxy, set it to the proxy's addresses, for example `192.0.2.0/28,192.0.2.100`. A malformed entry is logged and skipped, and startup continues. A default route such as `0.0.0.0/0` logs a warning, because it treats every client as a proxy.
 
 ## LISTEN_ADDR
 

@@ -268,7 +268,7 @@ function appendHeadStylesheet({
   media,
   disabled = false,
   loaded = false,
-}: { media?: string; disabled?: boolean; loaded?: boolean } = {}): HTMLLinkElement {
+}: { media?: string; disabled?: boolean; loaded?: boolean } = {}): void {
   const link = document.createElement("link");
   link.rel = "stylesheet";
   if (media !== undefined) {
@@ -287,7 +287,6 @@ function appendHeadStylesheet({
   onTestFinished(() => {
     link.remove();
   });
-  return link;
 }
 
 // The synthetic window "error" event the watchdog keys on: `target` for a

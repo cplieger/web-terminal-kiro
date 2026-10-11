@@ -67,7 +67,9 @@ func (s *fakeLatchStore) WithdrawStatusLatch(id terminal.SessionID, want string,
 	return ok
 }
 
-func (s *fakeLatchStore) SetSessionTitle(terminal.SessionID, string) bool { return true }
+func (*fakeLatchStore) SetSessionTitle(terminal.SessionID, string) bool { return true }
+
+func (*fakeLatchStore) SetSessionAlias(terminal.SessionID, string) bool { return true }
 
 type pendingFixture struct {
 	t        *testing.T

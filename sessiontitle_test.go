@@ -26,11 +26,33 @@ type fakeSetter struct {
 	// tab is not in it, so a test that expects a push has to name its tab
 	// here.
 	live []terminal.SessionID
+	// aliases is each tab's URL alias as the engine would hold it, and
+	// aliasCalls every SetSessionAlias in call order.
+	aliases    map[terminal.SessionID]string
+	aliasCalls []string
 }
 
 func (f *fakeSetter) SetSessionTitle(id terminal.SessionID, title string) bool {
 	f.calls = append(f.calls, string(id)+"="+title)
 	return !f.missing[id]
+}
+
+// SetSessionAlias refuses an alias another live tab holds, as the engine does.
+func (f *fakeSetter) SetSessionAlias(id terminal.SessionID, alias string) bool {
+	f.aliasCalls = append(f.aliasCalls, string(id)+"="+alias)
+	if f.missing[id] {
+		return false
+	}
+	for other, held := range f.aliases {
+		if other != id && held == alias && slices.Contains(f.live, other) {
+			return false
+		}
+	}
+	if f.aliases == nil {
+		f.aliases = make(map[terminal.SessionID]string)
+	}
+	f.aliases[id] = alias
+	return true
 }
 
 func (f *fakeSetter) List() []terminal.SessionInfo {
