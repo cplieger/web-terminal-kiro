@@ -27,7 +27,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
