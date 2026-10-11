@@ -16,7 +16,7 @@ static-src/coverage/
 static/style.css
 static/style.css.*
 
-# Kiro skill artifacts (app-review, judgement, steering-maintenance)
+# Local agent state
 **/.app-review/
 **/.judgement/
 **/.steering-maintenance/
