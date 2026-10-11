@@ -64,7 +64,7 @@ services:
 ```
 
 1. Save the file as `compose.yaml` and run `docker compose up -d` in the same folder.
-2. Open `http://<server address>:9848` from another device on your network, for example `http://192.168.1.5:9848`. On the Docker host itself, `http://localhost:9848` works too.
+2. Open `http://<server address>:9848` from another device on your network, for example `http://192.0.2.5:9848`. On the Docker host itself, `http://localhost:9848` works too.
 3. In the first tab, kiro-cli prints a sign-in address and a one-time code. Open the address on any device, your phone included, and enter the code. The chat then starts in that tab.
 
 Run `docker logs web-terminal-kiro`. You should see `web-terminal-kiro listening`, then `version active` once kiro-cli has downloaded. Until then, a new tab answers `kiro-cli installing`. The log also warns that `ALLOWED_HOSTS` is unset until you set it.
@@ -85,7 +85,7 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 
 ```yaml
     environment:
-      - ALLOWED_HOSTS=localhost,192.168.1.5,webterm.example.com
+      - ALLOWED_HOSTS=localhost,192.0.2.5,webterm.example.com
 ```
 
 | Variable | Description | Default |
