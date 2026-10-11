@@ -62,7 +62,7 @@ func parseTrustedProxies() []*net.IPNet {
 		// entry, so the rejected raw values never reach the log.
 		slog.Warn("ignoring malformed "+key+" entries; using the valid proxy set",
 			"invalid_count", len(invalid),
-			"hint", "each entry must be a CIDR (e.g. 10.0.0.0/8) or a bare IP (e.g. 192.168.1.5)")
+			"hint", "each entry must be a CIDR (e.g. 192.0.2.0/28) or a bare IP (e.g. 192.0.2.5)")
 	}
 	// A default route (0.0.0.0/0 or ::/0) parses cleanly but can never describe a proxy
 	// SET, and it breaks client-IP resolution both ways: a same-family chain exhausts the
@@ -73,7 +73,7 @@ func parseTrustedProxies() []*net.IPNet {
 	for _, n := range nets {
 		if ones, _ := n.Mask.Size(); ones == 0 {
 			slog.Warn(key+" contains a default route (0.0.0.0/0 or ::/0); every peer counts as a proxy, so client_ip logs the proxy itself and a forged X-Forwarded-For of the other address family can choose the logged client",
-				"hint", "list only the reverse proxy's own address(es), e.g. 10.0.0.0/8 or 192.0.2.10; leave "+key+" unset to log the unspoofable socket peer")
+				"hint", "list only the reverse proxy's own address(es), e.g. 192.0.2.0/28 or 192.0.2.100; leave "+key+" unset to log the unspoofable socket peer")
 			break
 		}
 	}
@@ -97,7 +97,7 @@ func parseAllowedHosts() *webhttp.HostPolicy {
 		// Count-only, like parseTrustedProxies.
 		slog.Warn("dropping malformed "+key+" entries; they cannot match any browser-sent Host",
 			"invalid_count", len(invalid),
-			"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.168.1.5,webterm.example.com; a lone port like :9848 belongs in LISTEN_ADDR")
+			"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.0.2.5,webterm.example.com; a lone port like :9848 belongs in LISTEN_ADDR")
 	}
 	if policy.Active() && policy.Size() == 0 {
 		slog.Warn(key+" has no usable entries; rejecting every non-loopback request (fail closed)",
@@ -402,7 +402,7 @@ func run() error {
 	hostPolicy := parseAllowedHosts()
 	if !hostPolicy.Active() {
 		slog.Warn("ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
-			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,webterm.example.com)")
+			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.0.2.5,webterm.example.com)")
 	}
 
 	logOSCText := parseLogOSCText()
