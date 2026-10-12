@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -16,6 +17,20 @@ type fakePollerSessions struct {
 	sessions   []terminal.SessionInfo
 	lists      atomic.Int32
 	latchReads atomic.Int32
+	captures   atomic.Int32
+}
+
+// fakeCapturedSet is what fakePollerSessions captures: a fixed one-entry set, built
+// without calling List so a capture never counts as a sweep.
+var fakeCapturedSet = terminal.SessionSet{
+	Version:  terminal.SessionSetVersion,
+	Sessions: []terminal.SessionSetEntry{{Alias: "k3q7m2xa"}},
+	Layout:   terminal.SessionSetLayout{Left: new(0), Selected: terminal.PaneLeft, Handle: 0.5},
+}
+
+func (f *fakePollerSessions) CaptureSessionSet(func(terminal.SessionInfo) string) terminal.SessionSet {
+	f.captures.Add(1)
+	return fakeCapturedSet
 }
 
 func (f *fakePollerSessions) List() []terminal.SessionInfo {
@@ -38,7 +53,7 @@ func (*fakePollerSessions) WithdrawStatusLatch(terminal.SessionID, string, uint6
 
 func TestSessionPollersJoinTheAskToTheTabInOneTick(t *testing.T) {
 	home := t.TempDir()
-	p := newSessionPollers(filepath.Join(t.TempDir(), "state"), home)
+	p := newSessionPollers(filepath.Join(t.TempDir(), "state"), home, nil)
 	if p.sessionEnv == nil {
 		t.Fatal("a verified state directory produced no session title environment")
 	}
@@ -70,7 +85,7 @@ func TestSessionPollersJoinTheAskToTheTabInOneTick(t *testing.T) {
 
 func TestSessionPollersRunUnderTheStateDirectoryGuard(t *testing.T) {
 	t.Run("a verified state directory sweeps all three each tick and stops with its context", func(t *testing.T) {
-		p := newSessionPollers(filepath.Join(t.TempDir(), "state"), t.TempDir())
+		p := newSessionPollers(filepath.Join(t.TempDir(), "state"), t.TempDir(), nil)
 		if p.sessionEnv == nil {
 			t.Fatal("a verified state directory produced no session title environment")
 		}
@@ -111,7 +126,7 @@ func TestSessionPollersRunUnderTheStateDirectoryGuard(t *testing.T) {
 		if err := os.Chmod(root, 0o770); err != nil {
 			t.Fatalf("widen the planted root: %v", err)
 		}
-		p := newSessionPollers(root, t.TempDir())
+		p := newSessionPollers(root, t.TempDir(), nil)
 		if p.sessionEnv != nil {
 			t.Fatal("a refused state directory still produced a session title environment")
 		}
@@ -133,6 +148,56 @@ func TestSessionPollersRunUnderTheStateDirectoryGuard(t *testing.T) {
 			}
 			if got := mgr.lists.Load(); got != 0 {
 				t.Errorf("List calls after three intervals = %d, want 0: no poller may sweep when the state directory was refused", got)
+			}
+		})
+	})
+
+	t.Run("a refused state directory with a tab store saves tabs and sweeps nothing", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "state")
+		if err := os.Mkdir(root, 0o700); err != nil {
+			t.Fatalf("plant the root: %v", err)
+		}
+		if err := os.Chmod(root, 0o770); err != nil {
+			t.Fatalf("widen the planted root: %v", err)
+		}
+		config := t.TempDir()
+		store := newTabStore(config)
+		store.arm()
+		p := newSessionPollers(root, t.TempDir(), store)
+		if p.sessionEnv != nil {
+			t.Fatal("a refused state directory still produced a session title environment")
+		}
+		synctest.Test(t, func(t *testing.T) {
+			mgr := &fakePollerSessions{sessions: []terminal.SessionInfo{{ID: "tab1"}}}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			returned := make(chan struct{})
+			go func() {
+				defer close(returned)
+				p.run(ctx, mgr)
+			}()
+
+			time.Sleep(sessionPollInterval + sessionPollInterval/2)
+			synctest.Wait()
+
+			if got := mgr.lists.Load(); got != 0 {
+				t.Errorf("List calls after 1.5 intervals = %d, want 0: no title, workflow or pending sweep may run", got)
+			}
+			if got := mgr.captures.Load(); got != 1 {
+				t.Errorf("CaptureSessionSet calls after 1.5 intervals = %d, want 1: the tab set is still saved", got)
+			}
+			select {
+			case <-returned:
+				t.Error("run returned with a tab store to save to, want it still ticking")
+			default:
+			}
+			raw, err := os.ReadFile(filepath.Join(config, tabsFileName))
+			if err != nil {
+				t.Fatalf("read the saved tab set: %v", err)
+			}
+			want, _ := json.Marshal(fakeCapturedSet)
+			if string(raw) != string(want) {
+				t.Errorf("tabs.json = %s, want %s", raw, want)
 			}
 		})
 	})

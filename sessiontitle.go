@@ -192,6 +192,31 @@ func (s *sessionTitleSync) titleHandle(tabID terminal.SessionID) (string, error)
 	return handle, nil
 }
 
+// handleFor returns tabID's title handle when one was minted, never minting one: a tab
+// with no handle is one whose titles are off, and seedMapping must then write nothing.
+func (s *sessionTitleSync) handleFor(tabID terminal.SessionID) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	handle, ok := s.handleByTab[tabID]
+	return handle, ok
+}
+
+// seedMapping writes the mapping a kiro-cli hook would write for tabID, so a resumed tab,
+// whose kiro-cli fires no hook until the user's next prompt, is titled and mapped from the
+// first poller pass. It writes nothing for a tab without a title handle.
+func (s *sessionTitleSync) seedMapping(ctx context.Context, tabID terminal.SessionID, kiroID string) error {
+	handle, ok := s.handleFor(tabID)
+	if !ok {
+		return nil
+	}
+	_, err := atomicfile.WriteFile(ctx, filepath.Join(s.stateDir, handle), []byte(kiroID+"\n"), atomicfile.WithMode(0o600))
+	if err != nil {
+		slog.Debug("session title: could not seed a restored tab's mapping",
+			"title_handle", handle, "error", err)
+	}
+	return err
+}
+
 // tabForHandle resolves a mapping FILENAME back to the tab it belongs to. A handle this
 // process never minted — a file left behind by a previous server run, or one a local writer
 // invented — names no tab, and the caller then reclaims it.
@@ -545,55 +570,99 @@ func (s *sessionTitleSync) readMapping(ctx context.Context, handle string) (stri
 }
 
 // readTitle finds a kiro session's record under the per-workspace hash level and returns
-// its title. Absent, placeholder, and blank titles all read as "no title".
+// its title. Absent, placeholder, and blank titles all read as "no title"; so does a
+// record that is present but corrupt, because a session id lives under exactly one hash
+// directory and the record reached is therefore the answer.
 func (s *sessionTitleSync) readTitle(ctx context.Context, kiroID string) (string, bool) {
+	_, raw, state := s.findSessionRecord(ctx, kiroID)
+	if state != recordPresent {
+		return "", false
+	}
+	title := titleFromRecord(kiroID, raw)
+	return title, title != ""
+}
+
+// recordState is what findSessionRecord learned about one kiro session's record.
+type recordState int
+
+const (
+	// recordMissing: the store, or every hash directory, answered ENOENT.
+	recordMissing recordState = iota
+	// recordPresent: a session.json was read.
+	recordPresent
+	// recordUnknown: no record was read, and at least one read failed for a reason other
+	// than absence, so the record may exist.
+	recordUnknown
+)
+
+// findSessionRecord scans the per-workspace hash level for kiroID's session.json and
+// returns the record's directory and bytes when it read one. With recordUnknown, dir is
+// the candidate whose session.json exists but could not be read (oversize, not a regular
+// file), or "" when no such candidate was seen.
+func (s *sessionTitleSync) findSessionRecord(ctx context.Context, kiroID string) (dir string, raw []byte, state recordState) {
 	hashDirs, err := os.ReadDir(s.sessionsRoot)
 	if err != nil {
 		// A missing tree is the normal state before kiro-cli has written its first session,
 		// so it stays silent. Anything else — a wrong HOME, EACCES on the volume, ENOTDIR —
 		// kills every tab's title with no record at any level, which is the one failure a
 		// log-only diagnosis path cannot have.
-		if !errors.Is(err, fs.ErrNotExist) {
-			slog.Debug("session title: kiro session store unreadable",
-				"dir", s.sessionsRoot, "error", err)
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil, recordMissing
 		}
-		return "", false
+		slog.Debug("session title: kiro session store unreadable",
+			"dir", s.sessionsRoot, "error", err)
+		return "", nil, recordUnknown
 	}
+	state = recordMissing
 	for _, hd := range hashDirs {
 		if !hd.IsDir() {
 			continue
 		}
-		if title, settled := s.titleFromRecord(ctx, hd.Name(), kiroID); settled {
-			return title, title != ""
+		candidate := filepath.Join(s.sessionsRoot, hd.Name(), kiroID)
+		raw, err := readSmallFile(ctx, filepath.Join(candidate, "session.json"), maxTitleFileBytes)
+		if err == nil {
+			return candidate, raw, recordPresent
 		}
-	}
-	return "", false
-}
-
-// titleFromRecord reads one candidate session.json and reports whether it SETTLED the
-// lookup. A session id lives under exactly one hash directory, so once the record has been
-// reached at all its contents are the answer — a corrupt or title-less record settles the
-// lookup as "no title" rather than sending the scan on. A record that could not be READ at
-// all is the miss that keeps scanning.
-func (s *sessionTitleSync) titleFromRecord(ctx context.Context, hashDir, kiroID string) (string, bool) {
-	raw, err := readSmallFile(ctx, filepath.Join(s.sessionsRoot, hashDir, kiroID, "session.json"), maxTitleFileBytes)
-	if err != nil {
 		// ENOENT is the normal miss (the session lives under one hash dir); anything else
-		// silently kills this tab's title, the failure class readTitle's comment says a
-		// log-only diagnosis path cannot have.
+		// silently kills this tab's title, the failure class above.
 		if !errors.Is(err, fs.ErrNotExist) {
 			slog.Debug("session title: session.json unreadable",
 				"kiro_session", kiroID, "error", err)
+			state = recordUnknown
+			if _, lerr := os.Lstat(filepath.Join(candidate, "session.json")); lerr == nil && dir == "" {
+				dir = candidate
+			}
 		}
-		return "", false
 	}
+	return dir, nil, state
+}
+
+// sessionRecord reports whether kiroID's record exists, and its directory when it does or
+// when findSessionRecord found it unreadable. A record whose own "id" is not kiroID is not
+// this conversation and counts as missing.
+func (s *sessionTitleSync) sessionRecord(ctx context.Context, kiroID string) (string, recordState) {
+	dir, raw, state := s.findSessionRecord(ctx, kiroID)
+	if state != recordPresent {
+		return dir, state
+	}
+	var rec struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &rec); err != nil || rec.ID != kiroID {
+		return "", recordMissing
+	}
+	return dir, recordPresent
+}
+
+// titleFromRecord extracts the title from one session.json, "" when it has none usable.
+func titleFromRecord(kiroID string, raw []byte) string {
 	var rec struct {
 		Title string `json:"title"`
 	}
 	if err := json.Unmarshal(raw, &rec); err != nil {
 		slog.Debug("session title: session.json is not decodable",
 			"kiro_session", kiroID, "error", err)
-		return "", true
+		return ""
 	}
 	// One rune policy for untrusted upstream text. This title reaches two sinks this
 	// function does not own: the slog attribute in syncOne, and the engine's client title
@@ -603,9 +672,9 @@ func (s *sessionTitleSync) titleFromRecord(ctx context.Context, hashDir, kiroID 
 	// read as "no title".
 	title := strings.TrimSpace(runesafe.SanitizeSingleLine(rec.Title))
 	if title == placeholderTitle {
-		return "", true
+		return ""
 	}
-	return title, true
+	return title
 }
 
 // forget removes a mapping whose tab no longer exists and drops that tab's handle from the
@@ -637,6 +706,30 @@ func readSmallFile(ctx context.Context, path string, limit int) ([]byte, error) 
 	// ctx.Err() at entry and mid-read, so a Background context would make the
 	// poller's file reads unabandonable at shutdown for no gain.
 	return atomicfile.ReadBoundedFile(ctx, f, int64(limit))
+}
+
+// validKiroResumeID is the only shape passed to --resume-id: kiro-cli v3's "sess_" plus a
+// canonical 8-4-4-4-12 UUID (41 bytes, under the engine's 64-byte alias bound, so a resumed
+// tab can always keep it as its alias).
+func validKiroResumeID(id string) bool {
+	rest, ok := strings.CutPrefix(id, "sess_")
+	if !ok || len(rest) != 36 {
+		return false
+	}
+	for i := range len(rest) {
+		c := rest[i]
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // validKiroSessionID gates the id read out of a mapping file before it becomes a path

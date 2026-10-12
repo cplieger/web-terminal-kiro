@@ -44,7 +44,7 @@ func retainedLines(t *testing.T, scrollback *int, emitted, awaitCommitted int) u
 		`i=1; while [ $i -le %d ]; do echo "line $i"; i=$((i+1)); done; exec cat`, emitted,
 	))
 
-	h := newSessionFactory(deps)("scrollback-probe")
+	h := newSessionBuilder(deps)("")("scrollback-probe")
 	if err := h.StartEager(); err != nil {
 		t.Fatalf("StartEager: %v", err)
 	}

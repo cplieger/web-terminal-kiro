@@ -4,9 +4,17 @@ This page covers how the kiro-cli install, the health check and the startup log 
 
 ## One process per tab
 
-A single Go server serves the web page and starts one `kiro-cli chat` process per browser tab, each in its own terminal. The browser draws kiro-cli's own screen from that terminal's output, the way an SSH session would. There is no chat layer, no history database and no translation in between. Sessions stay alive with no browser attached, which is what lets a tab come back after sleep. They end when you close the tab or the container restarts.
+A single Go server serves the web page and starts one `kiro-cli chat` process per browser tab, each in its own terminal. The browser draws kiro-cli's own screen from that terminal's output, the way an SSH session would. There is no chat layer, no history database and no translation in between. Sessions stay alive with no browser attached, which is what lets a tab come back after sleep. A session ends when you close its tab. When the container restarts, the tabs come back, as the next section explains.
 
 Each tab learns which kiro-cli session it runs from a kiro-cli hook the app installs. The hook reports the session id when the session starts and on each prompt. The server then names the tab after the session's own title and gives the tab's page address that session id. A session id is kiro-cli's own name for the conversation and grants no access to the terminal.
+
+## Tabs after a restart
+
+Every two seconds the server saves the open tabs to `/config/tabs.json`. The file holds their order, each tab's address name, its pinned name and its kiro-cli session id, and the split layout. At the next start it opens the same tabs in the same order. Each tab runs `kiro-cli chat --resume-id <session id>`, so kiro-cli replays the conversation, and the tab keeps its address, so a bookmarked address still opens it. The split view and the selected pane come back too. A page that is open during the restart waits until the tabs are back, then shows them.
+
+A tab whose conversation no longer exists, for example one deleted with `kiro-cli chat --delete-session`, opens a fresh chat under a new address instead. A tab whose kiro-cli chat had not started yet, for example one still at its sign-in prompt, keeps its address and opens a fresh chat. When two tabs held the same conversation, only one comes back, the one whose address names it. The output of `!` shell commands and anything else outside kiro-cli's own transcript is not restored. A tab whose kiro-cli quit cleanly, for example after `/quit`, is not brought back. A tab whose kiro-cli crashed is.
+
+When kiro-cli is signed out at boot, for example because its token expired, every restored tab starts its own device sign-in at once. Confirm the code in each tab, and each tab then resumes its conversation. Closing a tab that is still at its sign-in prompt drops it from the saved tabs, as any close does.
 
 ## Sign-in
 
@@ -16,7 +24,7 @@ When a tab opens and kiro-cli is not signed in, the tab runs kiro-cli's device s
 
 kiro-cli is pinned to one version, downloaded on first start and checked against a pinned digest. It is not redistributed inside the image, and a newer version arrives by pulling a newer image tag. Automatic updates inside kiro-cli are turned off, because a binary that replaces itself would no longer match the digest.
 
-The download runs after the server starts listening, so the web page and `/api/health` answer at once. New tabs answer `503 {"reason":"kiro-cli installing"}` until the install finishes, and the reason names the stage when something goes wrong.
+The download runs after the server starts listening, so the web page and `/api/health` answer at once. New tabs answer `503 {"error":"kiro-cli installing","code":"not_ready"}` until the install finishes, and the message names the stage when something goes wrong.
 
 `/config` must be on a filesystem that allows running programs. kiro-cli and every tool the container installs live there and run from there, so a `noexec` mount makes the install fail. The startup log reports that in one line that names the folder.
 
