@@ -320,7 +320,7 @@ warn_if_tools_noexec() {
 # rename, so it never writes there; this sweep covers pre-existing volumes and
 # an installer resolving its prefix via getpwuid rather than $HOME. The
 # manager owns the matching sweep of $TOOLS/bin (and republishes the
-# convenience symlink there), so this script must not touch that dir.
+# convenience symlinks there), so this script must not touch that dir.
 #
 # rm -rf, not rm -f: `rm -f` fails on a directory, which would turn a hygiene
 # step into a boot failure at any caller that checked the status. The return
@@ -673,10 +673,10 @@ tightened_tool_bins=0
 for tool_bin in "$TOOLS/bin"/*; do
   # An unmatched glob, or a dangling symlink -- nothing that can be executed.
   [ -e "$tool_bin" ] || continue
-  # Exactly `kiro-cli` is the manager's own republished convenience symlink
-  # (for `docker exec … kiro-cli --version`); skip the exact name rather than
-  # a kiro-cli* prefix, since this dir is co-owned by the toolbelt engine.
-  case "${tool_bin##*/}" in kiro-cli) continue ;; esac
+  # No name is exempt, the manager's own convenience symlinks included: their
+  # targets sit under kiro-cli-versions/, tightened by the loop above, so they
+  # pass the mode check below. The manager yields to a foreign entry at those
+  # names, and that entry must be checked like any other.
   tool_bin_mode=$(stat -Lc '%a' "$tool_bin" 2>/dev/null) || tool_bin_mode=""
   if [ -n "$tool_bin_mode" ] && [ $((8#$tool_bin_mode & 0022)) -eq 0 ]; then
     continue

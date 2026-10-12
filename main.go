@@ -577,12 +577,12 @@ func run() error {
 }
 
 // The layout facts this app brings to the kiro-cli install: where the convenience
-// symlink goes, and what its own SHELL-era installer left on the volume.
+// symlinks go, and what its own SHELL-era installer left on the volume.
 const (
-	// kiroLinkDir holds the non-authoritative `docker exec … kiro-cli` convenience
-	// symlink. It is co-owned by the toolbelt engine, which publishes bin/<tool>
-	// symlinks of its own — which is why the legacy sweep names its targets instead
-	// of scanning it.
+	// kiroLinkDir holds the non-authoritative convenience symlinks a `docker exec`
+	// shell resolves kiro-cli and its sidecars through. It is co-owned by the
+	// toolbelt engine, which publishes bin/<tool> symlinks of its own — which is
+	// why the legacy sweep names its targets instead of scanning it.
 	kiroLinkDir = "bin"
 	// legacyStagePrefix prefixed the shell installer's staging trees directly under
 	// the tools dir, so anything matching this is an orphan its EXIT trap missed on
