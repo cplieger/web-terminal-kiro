@@ -16,20 +16,23 @@ type pollerSessions interface {
 	sessionNamer
 	workflowSessions
 	latchStore
+	sessionSetCapturer
 }
 
 // sessionPollers runs the title, workflow and pending-interaction sweeps in that order on one
-// ticker. Each reads what the one before it published in the same tick, so a withdrawal is
-// decided on one coherent picture of the tab mapping and the live runs. sessionEnv is nil
-// when the state directory was refused.
+// ticker, then saves the tab set. Each reads what the one before it published in the same
+// tick, so a withdrawal is decided on one coherent picture of the tab mapping and the live
+// runs, and the saved set carries this tick's mapping. sessionEnv is nil when the state
+// directory was refused; tabs is nil when there is no /config to save to.
 type sessionPollers struct {
 	titles     *sessionTitleSync
 	workflows  *workflowWatch
 	pending    *pendingInteractionWatch
 	sessionEnv func(tabID terminal.SessionID) []string
+	tabs       *tabStore
 }
 
-func newSessionPollers(stateRoot, home string) *sessionPollers {
+func newSessionPollers(stateRoot, home string, tabs *tabStore) *sessionPollers {
 	titles := newSessionTitleSync(stateRoot, home)
 	workflows := newWorkflowWatch(home, titles.mappedSessions)
 	return &sessionPollers{
@@ -37,14 +40,17 @@ func newSessionPollers(stateRoot, home string) *sessionPollers {
 		workflows:  workflows,
 		pending:    newPendingInteractionWatch(home, titles.mappedSessions, workflows.runOwners),
 		sessionEnv: enableSessionTitles(titles),
+		tabs:       tabs,
 	}
 }
 
-// run sweeps until ctx is cancelled. It starts nothing when sessionEnv is nil (the state
-// directory was refused): the title sweep is os.ReadDir plus os.Remove over that directory,
-// and a rejected path must never be traversed.
+// run sweeps until ctx is cancelled, in one of three arms:
+//   - no state directory and no tab store: it returns at once;
+//   - no state directory but a tab store: each tick only saves the tab set, so the refused
+//     directory is never traversed (the title sweep is os.ReadDir plus os.Remove over it);
+//   - otherwise each tick runs pass.
 func (p *sessionPollers) run(ctx context.Context, mgr pollerSessions) {
-	if p.sessionEnv == nil {
+	if p.sessionEnv == nil && p.tabs == nil {
 		return
 	}
 	t := time.NewTicker(sessionPollInterval)
@@ -54,6 +60,10 @@ func (p *sessionPollers) run(ctx context.Context, mgr pollerSessions) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			if p.sessionEnv == nil {
+				p.tabs.persist(ctx, mgr, nil)
+				continue
+			}
 			p.pass(ctx, mgr)
 		}
 	}
@@ -63,4 +73,5 @@ func (p *sessionPollers) pass(ctx context.Context, mgr pollerSessions) {
 	p.titles.pass(ctx, mgr)
 	p.workflows.pass(ctx, mgr)
 	p.pending.pass(ctx, mgr)
+	p.tabs.persist(ctx, mgr, p.titles.mappedSessions())
 }

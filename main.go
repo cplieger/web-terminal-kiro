@@ -342,14 +342,16 @@ func checkWorkDir(workDir string) error {
 // lifecycle. Keeping the body here rather than in main is what lets the deferred
 // teardown run on every failure path.
 func run() error {
+	// First: a kiro-cli session lock written before this instant belongs to a dead boot.
+	bootTime := time.Now()
 	setupLogging()
 
 	// The shutdown context every long-lived goroutine in run() keys its exit
 	// off: the tools convergence watcher and boot-convergence waiter inside
-	// startTools, the session-title poller, and the server's request contexts
-	// via BaseContext. The pre-drain hook cancels it. It is created before
-	// startTools because a goroutine handed context.Background() has an exit
-	// path that can never fire. startKiroCLI keeps its own separate root.
+	// startTools, the session-title poller, the tab restorer, and the server's
+	// request contexts via BaseContext. The pre-drain hook cancels it. It is
+	// created before startTools because a goroutine handed context.Background()
+	// has an exit path that can never fire. startKiroCLI keeps its own root.
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
 
@@ -436,8 +438,20 @@ func run() error {
 	mux := http.NewServeMux()
 	var ready webhttp.Ready
 
+	// The saved tab set, read before anything can save over it.
+	store := newTabStore(configMountDir)
+	if store == nil {
+		slog.Info("tab restore off: no /config mount", "path", configMountDir)
+	}
+	set, restoreOK := store.load(baseCtx)
+
 	// sessionPollers owns the state-directory verdict: refused means inject nothing, sweep nothing.
-	pollers := newSessionPollers(titleStateRoot, envx.String("HOME"))
+	pollers := newSessionPollers(titleStateRoot, envx.String("HOME"), store)
+
+	// True from boot until the restorer finished; holds session creation and the layout
+	// read meanwhile so no page adds a tab beside what the restore brings back.
+	var restorePending atomic.Bool
+	restorePending.Store(restoreOK && len(set.Sessions) > 0)
 
 	// The subsystem teardown, named once and deferred once, so a third subsystem is
 	// added in one place. Every return below runs it.
@@ -469,7 +483,7 @@ func run() error {
 			"hint", "add `init: true` to the compose service (or run with `docker run --init`) so an init at PID 1 reaps orphans; the shipped compose.yaml marks it required")
 	}
 
-	mgr := registerRoutes(mux, &routeDeps{
+	deps := &routeDeps{
 		static:          staticSrv,
 		listenHint:      loopbackHint(addr),
 		cmd:             kiro.cmd,
@@ -481,6 +495,7 @@ func run() error {
 		scrollback:      scrollback,
 		ready:           &ready,
 		kiroReady:       kiro.ready,
+		restoring:       restorePending.Load,
 		kiroRescan:      kiro.rescan,
 		logOSCText:      logOSCText,
 		tools:           tools.engine,
@@ -488,21 +503,10 @@ func run() error {
 		toolsState:      tools.state,
 		toolsMissing:    tools.missing,
 		containment:     startContainment(),
-	})
-
-	// The engine's blocking teardown, on whatever budget the caller hands it. An
-	// expiry means a session's teardown (reaping the child, ending its cgroup,
-	// sweeping /proc for escapees) did not finish inside the grace, which is
-	// otherwise silent: there is no branch to take, because the process is
-	// stopping either way, so the only useful thing to do is say so. It is also
-	// the one place that reports a stranded session tree at shutdown, which this
-	// container carries no mem_limit to catch later.
-	shutdownSessions := func(ctx context.Context) {
-		if teardownErr := mgr.Shutdown(ctx); teardownErr != nil {
-			slog.Warn("session teardown did not finish within the shutdown grace",
-				"grace", shutdownGrace, "error", teardownErr)
-		}
 	}
+	build := newSessionBuilder(deps)
+	mgr := registerRoutes(mux, deps, build(""))
+	shutdownSessions := newSessionShutdown(cancelBase, mgr)
 
 	var lc net.ListenConfig
 	ln, err := lc.Listen(context.Background(), "tcp", addr)
@@ -526,6 +530,16 @@ func run() error {
 
 	// Bound to baseCtx, which the pre-drain hook cancels.
 	go pollers.run(baseCtx, mgr)
+	if restorePending.Load() {
+		restorer := newTabRestorer(pollers.titles, &set, build, &restorePending, bootTime)
+		ready := func() bool {
+			kiroOK, _ := kiro.ready()
+			return kiroOK && !tools.syncing()
+		}
+		go restorer.run(baseCtx, mgr, ready, store)
+	} else {
+		store.arm()
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM)

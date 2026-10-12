@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,9 @@ type routeDeps struct {
 	// kiroReady is the install manager's readiness verdict plus the reason to report
 	// when false; gates /api/health and session creation.
 	kiroReady func() (bool, string)
+	// restoring is true from boot until the tab restore finished; it holds session
+	// creation and the layout read (restorePendingGate).
+	restoring func() bool
 	// kiroRescan, when non-nil, re-derives the active kiro-cli version from disk
 	// without downloading anything. Backs kiroRescanPath.
 	kiroRescan func(context.Context) (bool, error)
@@ -124,8 +128,9 @@ func buildStaticSurface(staticFS fs.FS) (http.Handler, string, error) {
 }
 
 // registerRoutes wires the full route table on mux and returns the session manager (for
-// shutdown).
-func registerRoutes(mux *http.ServeMux, deps *routeDeps) *terminal.SessionManager {
+// shutdown). factory builds each tab the browser creates; the caller owns it because
+// the tab restorer builds from the same newSessionBuilder.
+func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.SessionID) *terminal.Handler) *terminal.SessionManager {
 	mux.Handle("/", deps.static)
 
 	mgrOpts := []terminal.ManagerOption{
@@ -135,24 +140,25 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) *terminal.SessionManage
 	if deps.sessionActivity != nil {
 		mgrOpts = append(mgrOpts, terminal.WithSessionActivity(deps.sessionActivity))
 	}
-	mgr := terminal.NewSessionManager(newSessionFactory(deps), mgrOpts...)
+	mgr := terminal.NewSessionManager(factory, mgrOpts...)
 
 	// The engine owns its route topology: MountAPI wires exactly its documented set,
 	// so no engine-internal route can appear on this unauthenticated surface
 	// unannounced.
 	//
-	// The create gate composes three layers, outermost first: kiro-cli install, then
-	// the tools boot convergence (kiro-cli scans PATH for language servers once at
-	// session start), then the rate limit. kiro-cli is first because without that
-	// layer every session created during the first-boot download exits 1.
-	createGate := webhttp.SessionCreateRateLimit(terminal.SessionsPath)
-	createGate = composeGate(createGate, func() (bool, string) {
-		return deps.toolsSyncing(), "tools installing"
-	})
-	createGate = composeGate(createGate, func() (bool, string) {
+	// The create gate composes four layers, outermost first: kiro-cli install (a
+	// session created during the first-boot download exits 1), the tools boot
+	// convergence (kiro-cli scans PATH for language servers once at session start),
+	// the tab restore (restorePendingGate), then the rate limit.
+	toolsBlocked := func() (bool, string) { return deps.toolsSyncing(), "tools installing" }
+	kiroBlocked := func() (bool, string) {
 		ready, reason := deps.kiroReady()
 		return !ready, reason
-	})
+	}
+	createGate := webhttp.SessionCreateRateLimit(terminal.SessionsPath)
+	createGate = restorePendingGate(createGate, deps.restoring, kiroBlocked, toolsBlocked)
+	createGate = composeGate(createGate, toolsBlocked)
+	createGate = composeGate(createGate, kiroBlocked)
 	mgr.MountAPI(mux, terminal.WithCreateGate(createGate))
 
 	// Tools REST surface, loopback-only. The consumer is an agent inside the
@@ -276,12 +282,23 @@ func (d *routeDeps) childEnv(id terminal.SessionID) []string {
 	return out
 }
 
-// newSessionFactory builds the per-session handler factory the session manager calls once
-// per tab: one independent PTY-backed kiro-cli chat process with its own VT screen and
-// scrollback. It owns four session-scoped policies — the argv and PATH resolved from the
-// install manager AT session-create time, the LogID-truncated per-session logger, the
-// argv redaction, and the fast-death Warn hook that surfaces a broken kiro-cli install.
-func newSessionFactory(deps *routeDeps) func(terminal.SessionID) *terminal.Handler {
+// newSessionBuilder returns the per-session handler factory for one resume id ("" starts
+// a fresh chat): one independent PTY-backed kiro-cli chat process with its own VT screen
+// and scrollback. It owns five session-scoped policies — the argv and PATH resolved from
+// the install manager AT session-create time, the resume argv, the LogID-truncated
+// per-session logger, the argv redaction, and the fast-death Warn hook that surfaces a
+// broken kiro-cli install.
+func newSessionBuilder(deps *routeDeps) func(resumeID string) func(terminal.SessionID) *terminal.Handler {
+	return func(resumeID string) func(terminal.SessionID) *terminal.Handler {
+		if resumeID != "" && !validKiroResumeID(resumeID) {
+			slog.Warn("session: refusing a malformed resume id; starting a fresh chat")
+			resumeID = ""
+		}
+		return newSessionFactory(deps, resumeID)
+	}
+}
+
+func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID) *terminal.Handler {
 	// WithKeepUnfocused pins the process to the DEC 1004 "unfocused" state so kiro-cli
 	// keeps emitting its focus-gated OSC 9 notifications even though no browser tab
 	// claims focus; web-terminal-server deliberately does not use this.
@@ -343,7 +360,14 @@ func newSessionFactory(deps *routeDeps) func(terminal.SessionID) *terminal.Handl
 		if deps.scrollback != nil {
 			opts = append(opts, terminal.WithScrollbackCapacity(*deps.scrollback))
 		}
-		return terminal.NewHandler(deps.cmd(), opts...)
+		// slices.Concat, not append: unmanagedKiroRuntime.cmd returns one shared slice
+		// with spare capacity, which an append would overwrite across tabs. The id rides
+		// sessionCommand's positional "$@" after chat, never the script text.
+		argv := deps.cmd()
+		if resumeID != "" {
+			argv = slices.Concat(argv, []string{"--resume-id", resumeID})
+		}
+		return terminal.NewHandler(argv, opts...)
 	}
 }
 
@@ -661,7 +685,7 @@ func buildCSPPolicy(sub fs.FS) (string, error) {
 // reports true, only SESSION CREATION answers 503, so kiro-cli never spawns before its
 // own install finishes or before the manifest's tools are on PATH. List/close/title
 // requests through the same doubly-mounted handler pass through, and the inner gate
-// applies once this layer clears — which is how the two blocking checks and the rate
+// applies once this layer clears — which is how the blocking checks and the rate
 // limit stack without knowing about each other.
 func composeGate(inner func(http.Handler) http.Handler, blocked func() (bool, string)) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -682,6 +706,50 @@ func composeGate(inner func(http.Handler) http.Handler, blocked func() (bool, st
 			gated.ServeHTTP(w, r)
 		})
 	}
+}
+
+// restorePendingGate holds session creation and the layout read with 503 while pending
+// reports true, and passes every other request (the list included) to inner. The layout
+// read is held because a page reads it as the signal that the set is complete; a default
+// layout served mid-restore would be paired with a partial list. A held layout read
+// reports the first blocked outer check, since the page waits on it and never reaches
+// the create those checks gate; otherwise both routes report terminal.RestoringMessage.
+func restorePendingGate(inner func(http.Handler) http.Handler, pending func() bool,
+	outer ...func() (bool, string),
+) func(http.Handler) http.Handler {
+	layoutPath := terminal.SessionsSubtreePath + "layout"
+	return func(next http.Handler) http.Handler {
+		gated := inner(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			layoutRead := r.Method == http.MethodGet && r.URL.Path == layoutPath
+			held := layoutRead || (r.Method == http.MethodPost && r.URL.Path == terminal.SessionsPath)
+			if !held || !pending() {
+				gated.ServeHTTP(w, r)
+				return
+			}
+			if layoutRead {
+				if reason, block := firstBlocked(outer); block {
+					w.Header().Set("Retry-After", "5") // composeGate's hint for the same wait
+					webhttp.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
+					return
+				}
+			}
+			// One second: the restore itself takes milliseconds once both outer gates
+			// open, and a longer hint would hold pages on the overlay after the tabs exist.
+			w.Header().Set("Retry-After", "1")
+			webhttp.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", terminal.RestoringMessage)
+		})
+	}
+}
+
+// firstBlocked returns the reason of the first check that blocks, in order.
+func firstBlocked(checks []func() (bool, string)) (string, bool) {
+	for _, blocked := range checks {
+		if block, reason := blocked(); block {
+			return reason, true
+		}
+	}
+	return "", false
 }
 
 // loopbackOnly admits only requests whose SOCKET PEER and Host header are both loopback

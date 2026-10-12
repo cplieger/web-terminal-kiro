@@ -69,7 +69,7 @@ services:
 
 Run `docker logs web-terminal-kiro`. You should see `web-terminal-kiro listening`, then `version active` once kiro-cli has downloaded. Until then, a new tab answers `kiro-cli installing`. The log also warns that `ALLOWED_HOSTS` is unset until you set it.
 
-Leave out any `user:` line. The image runs as root so that `git`, `gh` and SSH work. Files it writes to the mounted folders therefore belong to root on the host. Sessions end when the container restarts, and your sign-in, settings and tools stay in `/config`.
+Leave out any `user:` line. The image runs as root so that `git`, `gh` and SSH work. Files it writes to the mounted folders therefore belong to root on the host. Tabs come back after a restart, each resuming its kiro-cli conversation, and your sign-in, settings and tools stay in `/config`. The output of `!` shell commands and anything else outside kiro-cli's own transcript is not restored. [How it works](docs/how-it-works.md#tabs-after-a-restart) has the details.
 
 ## Adding tools and language servers
 

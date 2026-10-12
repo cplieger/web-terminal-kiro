@@ -58,6 +58,12 @@ Each tab's newest 200 lines are kept in your browser's `localStorage`. A phone t
 
 No setting turns this off.
 
+## Saved tabs
+
+The server keeps the open tabs in `/config/tabs.json` so it can bring them back after a restart. The file has mode 0600. It holds each tab's position, its pinned name, its address name and kiro-cli's session id, plus the split layout. It holds no terminal session id, so the file grants no access to a terminal.
+
+A damaged or unreadable file is logged and moved to `/config/tabs.json.unreadable`, and the next save writes a fresh one. A file saved by a newer version is moved aside the same way, so renaming it back after you upgrade again restores it. A symlink in place of the file is refused on read and on write, logged, and moved aside. The link is moved, never its target.
+
 ## Root, and files on the host
 
 The image runs as root so `git`, `gh` and SSH work, and it finds your `~/.ssh` under `/config/home`. Do not add a `user:` line. Files the container writes to `/config` and `/workspace` belong to root on the host.

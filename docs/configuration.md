@@ -44,7 +44,7 @@ The image's healthcheck calls `127.0.0.1` on the port taken from this value. A l
 
 ## KIRO_CLI_CHAT_ARGS
 
-Use it for any flag `kiro-cli chat` accepts, for example `--effort high` or `--v3`. The flags go only to `kiro-cli chat`, not to the sign-in commands. Their values never reach the log. The startup line records only how many flags there are.
+Use it for any flag `kiro-cli chat` accepts, for example `--effort high` or `--v3`. The flags go only to `kiro-cli chat`, not to the sign-in commands. Their values never reach the log. The startup line records only how many flags there are. The flags also apply to every conversation restored after a restart, so a `--model` or `--agent` given here replaces the model or agent that conversation was using.
 
 ## LOG_LEVEL
 

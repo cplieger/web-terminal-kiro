@@ -939,7 +939,7 @@ func libraryEnvelope(t *testing.T, ready bool) (body, cacheControl string) {
 	return strings.TrimSpace(rec.Body.String()), rec.Header().Get("Cache-Control")
 }
 
-// withDefaultPolicies fills the four routeDeps POLICY functions with the
+// withDefaultPolicies fills the routeDeps POLICY functions with the
 // permissive off-shape defaults main.go's composition root supplies
 // (unmanagedKiroRuntime, degradedRuntime, startTools' absent-config-dir arm), so
 // a test literal only names the fields it cares about. registerRoutes' policy
@@ -950,6 +950,7 @@ func withDefaultPolicies(d *routeDeps) *routeDeps {
 	d.toolsState = func() string { return "" }
 	d.toolsMissing = func() (int, bool) { return 0, false }
 	d.kiroReady = func() (bool, string) { return true, "" }
+	d.restoring = func() bool { return false }
 	d.sessionEnv = func() []string { return nil }
 	return d
 }
@@ -1053,7 +1054,7 @@ func mustRegisterRoutes(t *testing.T, deps *routeDeps) (*http.ServeMux, *termina
 	t.Helper()
 	mux := http.NewServeMux()
 	_, csp := testStaticSurface()
-	mgr := registerRoutes(mux, deps)
+	mgr := registerRoutes(mux, deps, newSessionBuilder(deps)(""))
 	t.Cleanup(func() { shutdownManager(t, mgr) })
 	return mux, mgr, csp
 }
@@ -1174,7 +1175,7 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	// A non-default port, so the assertion below fails if the refusal goes back to a
 	// hardcoded address instead of this deployment's own.
 	deps.listenHint = loopbackHint(":8080")
-	mgr := registerRoutes(mux, deps)
+	mgr := registerRoutes(mux, deps, newSessionBuilder(deps)(""))
 	t.Cleanup(func() { shutdownManager(t, mgr) })
 
 	// Remote peer: refused, even claiming loopback via forwarded headers.
@@ -1333,7 +1334,7 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 func TestToolsAPI_LoopbackOnly_malformedPeerFailsClosed(t *testing.T) {
 	mux := http.NewServeMux()
 	deps := newToolsDeps(t)
-	mgr := registerRoutes(mux, deps)
+	mgr := registerRoutes(mux, deps, newSessionBuilder(deps)(""))
 	t.Cleanup(func() { shutdownManager(t, mgr) })
 
 	for _, tc := range []struct{ name, remoteAddr string }{
@@ -1376,7 +1377,7 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 	syncing.Store(true)
 	deps.toolsSyncing = syncing.Load
 	deps.toolsState = func() string { return "syncing" }
-	mgr := registerRoutes(mux, deps)
+	mgr := registerRoutes(mux, deps, newSessionBuilder(deps)(""))
 	t.Cleanup(func() { shutdownManager(t, mgr) })
 
 	create := func() *httptest.ResponseRecorder {
