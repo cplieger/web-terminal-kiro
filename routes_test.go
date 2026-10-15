@@ -466,6 +466,41 @@ func TestAPICachePolicy_EveryAPIPathSetsNoStore(t *testing.T) {
 	}
 }
 
+// TestSessionSeenRoute pins that the engine's seen route is reachable through the
+// app's own chain: a read on one device clears the unread dot on every other one
+// only if the ack reaches the manager.
+func TestSessionSeenRoute(t *testing.T) {
+	deps := newToolsDeps(t)
+	mux, mgr, csp := mustRegisterRoutes(t, deps)
+	quietTeardown(t, deps)
+	h := buildHandler(mux, nil, csp, nil)
+	liveID, err := mgr.Create()
+	if err != nil {
+		t.Fatalf("mgr.Create: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		id   string
+		body string
+		want int
+	}{
+		{"a live session", string(liveID), `{"seq":0}`, http.StatusNoContent},
+		{"an unknown session", "deadbeef", `{"seq":0}`, http.StatusNotFound},
+		{"a body without seq", string(liveID), `{}`, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, terminal.SessionsPath+"/"+tc.id+"/seen", strings.NewReader(tc.body))
+			req.RemoteAddr = "127.0.0.1:54321"
+			req.Host = "localhost:9848"
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Errorf("PUT seen %s = %d, want %d; body %q", tc.body, rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestAPICachePolicy_UnmatchedAPIPathCarriesNoDirective records the ONE thing
 // the /api/-wide wrapper used to do that nothing does now, as a decision rather
 // than an oversight: an /api/ path no route matches gets no Cache-Control.

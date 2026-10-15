@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
@@ -20,8 +21,8 @@ func TestSessionActivityWiredIntoManager(t *testing.T) {
 	deps.sessionActivity = watch.sessionActivity
 	mux, _, _, id := mustStartSession(t, deps)
 
-	// Published AFTER Create because the engine PULLS: the mark only has to be there
-	// when List serves the request. The tally is lopsided so a per-state Count fails.
+	// Published AFTER Create because the engine PULLS: the next sweep reads it. The
+	// tally is lopsided so a per-state Count fails.
 	want := workflowMark{
 		State: workflowMarkInput,
 		Tally: workflowTally{Total: 3, Working: 1, Waiting: 1, Input: 1},
@@ -29,17 +30,28 @@ func TestSessionActivityWiredIntoManager(t *testing.T) {
 	marks := map[terminal.SessionID]workflowMark{id: want}
 	watch.marks.Store(&marks)
 
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, terminal.SessionsPath, http.NoBody))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET %s = %d, want %d; body %s", terminal.SessionsPath, rec.Code, http.StatusOK, rec.Body.String())
-	}
+	// The list serves what the last sweep read, so poll until a sweep has run.
 	var listed []terminal.SessionInfo
-	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
-		t.Fatalf("decode GET %s body %s: %v", terminal.SessionsPath, rec.Body.String(), err)
-	}
-	if len(listed) != 1 {
-		t.Fatalf("GET %s listed %d sessions, want 1; body %s", terminal.SessionsPath, len(listed), rec.Body.String())
+	var body string
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, terminal.SessionsPath, http.NoBody))
+		body = rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want %d; body %s", terminal.SessionsPath, rec.Code, http.StatusOK, body)
+		}
+		listed = nil
+		if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+			t.Fatalf("decode GET %s body %s: %v", terminal.SessionsPath, body, err)
+		}
+		if len(listed) != 1 {
+			t.Fatalf("GET %s listed %d sessions, want 1; body %s", terminal.SessionsPath, len(listed), body)
+		}
+		if (listed[0].Activity == want.State && listed[0].ActivityCount == want.Tally.Total) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 
 	got := listed[0]

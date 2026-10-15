@@ -266,9 +266,9 @@ func (w *workflowWatch) mark(id terminal.SessionID) workflowMark {
 }
 
 // sessionActivity is the terminal.WithSessionActivity getter. The engine PULLS it from
-// three goroutines -- the status sweep, every List and each new SSE subscriber -- so it
-// must stay lock-free and do no I/O; mark loads one atomic.Pointer. Count is the TOTAL,
-// which is what the one rendered mark words its tooltip from.
+// its status sweep goroutine, so it must stay lock-free and do no I/O; mark loads one
+// atomic.Pointer. Count is the TOTAL, which is what the one rendered mark words its
+// tooltip from.
 func (w *workflowWatch) sessionActivity(id terminal.SessionID) terminal.SessionActivity {
 	mark := w.mark(id)
 	return terminal.SessionActivity{State: mark.State, Count: mark.Tally.Total}
