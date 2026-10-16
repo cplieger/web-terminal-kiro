@@ -485,6 +485,10 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 #   - xz-utils: .tar.xz extraction for tools the toolbelt engine
 #     installs at runtime (several aqua/mise catalog entries ship
 #     .tar.xz archives)
+#   - bubblewrap + socat: kiro-cli's opt-in command sandbox and its network
+#     proxy. bwrap is diverted off PATH (end of this RUN) so kiro-cli only
+#     finds it through the shim the server exposes after its startup check
+#     passes (sandbox.go); a later apt upgrade lands on the diverted path too.
 #
 # Session persistence is handled by the shared web-terminal-engine
 # vt package — the server keeps an authoritative cell buffer and
@@ -511,6 +515,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN echo "OS package refresh: ${PKG_REFRESH}" \
     && apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     bash \
+    bubblewrap \
     ca-certificates \
     curl \
     git \
@@ -519,9 +524,14 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
     libasound2 \
     libatomic1 \
     openssh-client \
+    socat \
     unzip \
     xz-utils \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && install -d -m 0755 /opt/web-terminal-kiro/libexec \
+    && dpkg-divert --local --rename --divert /opt/web-terminal-kiro/libexec/bwrap --add /usr/bin/bwrap \
+    && test ! -e /usr/bin/bwrap \
+    && /opt/web-terminal-kiro/libexec/bwrap --version
 
 # Language servers and developer tools (gh, linters, runtimes) are NOT
 # baked into the image: the server's toolbelt engine installs them from
@@ -575,6 +585,10 @@ COPY --chmod=755 entrypoint.sh /opt/web-terminal-kiro/entrypoint.sh
 # executable rather than a function in entrypoint.sh; entrypoint.sh only seeds the
 # hook CONFIG that points at this path. See sessiontitle.go.
 COPY --chmod=755 hooks/session-title.sh /opt/web-terminal-kiro/hooks/session-title.sh
+# With KIRO_CLI_SANDBOX on, a tab's PATH leads with one of these two, so the
+# bwrap kiro-cli resolves is the checked shim or one that refuses (sandbox.go).
+COPY --chmod=755 sandbox/bwrap.sh /opt/web-terminal-kiro/sandbox/bin/bwrap
+COPY --chmod=755 sandbox/bwrap-unavailable.sh /opt/web-terminal-kiro/sandbox/unavailable/bwrap
 
 # Where a pasted image lands (upload.go). Made at build time because the container
 # may run as a non-root user, and sticky world-writable like /tmp for the same reason.
