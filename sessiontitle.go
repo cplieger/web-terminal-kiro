@@ -724,12 +724,16 @@ func validKiroResumeID(id string) bool {
 				return false
 			}
 		default:
-			if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			if !isHexDigit(c) {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+func isHexDigit(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
 }
 
 // validKiroSessionID gates the id read out of a mapping file before it becomes a path
@@ -741,10 +745,7 @@ func validKiroSessionID(id string) bool {
 		return false
 	}
 	for i := range len(rest) {
-		c := rest[i]
-		switch {
-		case c >= 'a' && c <= 'f', c >= 'A' && c <= 'F', c >= '0' && c <= '9', c == '-':
-		default:
+		if c := rest[i]; c != '-' && !isHexDigit(c) {
 			return false
 		}
 	}
