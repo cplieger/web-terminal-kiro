@@ -151,7 +151,7 @@ ARG MONASPACE_BOLDITALIC_SHA256=5dffc9465be18eb63263671f1f3ba266ede49043cb6b3edc
 # the same directory under the same per-family name so one derivation serves the
 # image and scripts/dev-build.sh.
 # renovate: datasource=github-releases depName=cplieger/web-terminal-glyphs
-ARG WEB_TERMINAL_GLYPHS_VERSION=v1.1.9
+ARG WEB_TERMINAL_GLYPHS_VERSION=v1.1.10
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/WebTerminalGlyphs.woff2
 ARG WEB_TERMINAL_GLYPHS_SHA256=8f4720fa37eed4cdb3ca070d24fbbce85a5266b63c63e754d78a359509aeb94c
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/cell.json dest=WebTerminalGlyphs-cell.json
@@ -198,9 +198,9 @@ COPY required-tools.txt bundled-tools.json ./
 # daily; the pin means the baked fallback is a REVIEWED catalog, while
 # the runtime refresh keeps a running container current.
 # renovate: datasource=github-releases depName=cplieger/tool-catalog
-ARG TOOL_CATALOG_VERSION=v2026.10.11
+ARG TOOL_CATALOG_VERSION=v2026.10.16
 # repin: dep=cplieger/tool-catalog url=https://github.com/cplieger/tool-catalog/releases/download/{version}/tool-catalog.json
-ARG TOOL_CATALOG_SHA256=de4204097e474f21558434cc660492ea485b671322212efbb0629ea1f94c53fd # tool-catalog v2026.07.24.1907
+ARG TOOL_CATALOG_SHA256=9dd472d538c95133944febe7e07ea3f128f8bf4b992343ff811319b5be980d42 # tool-catalog v2026.07.24.1907
 ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/download/${TOOL_CATALOG_VERSION}/tool-catalog.json
 # The build-time verifier is the SAME module go.mod requires (the runtime engine
 # that re-verifies required-tools.txt before every catalog swap), and that is now
