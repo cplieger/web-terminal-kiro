@@ -25,6 +25,7 @@ Settings are environment variables on the container, under `environment:` in `co
 | `GITHUB_TOKEN` | Read in place of `GH_TOKEN` when that one is unset or empty. | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the kiro-cli install folder. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
 | `LOG_OSC_TEXT` | Log the text of unrecognized terminal notifications at `debug`. That text can hold a token, so turn it on only while diagnosing. | `false` |
+| `KIRO_CLI_SANDBOX` | Check at start that kiro-cli's command sandbox can run, and give it bubblewrap when it can. Needs the profiles in [Command sandbox](sandbox.md). | `false` |
 
 ## ALLOWED_HOSTS
 
@@ -75,6 +76,10 @@ Each user ID you list states that the account is already as privileged as this s
 ## LOG_OSC_TEXT
 
 Any program running in the terminal can send a notification, so the text can hold a token, a sign-in code or an address with a token in it. With this off, the log still records a fingerprint and a length for each wording. Turn it on only for an active diagnosis. The server logs a warning at startup while it is on.
+
+## KIRO_CLI_SANDBOX
+
+Set it to `true` once the container runs with both the seccomp and AppArmor profiles from [Command sandbox](sandbox.md), which needs a host with AppArmor. At each start the server then runs one command in kiro-cli's sandbox and logs whether it worked. Only when it worked does kiro-cli get a working bubblewrap, so `/sandbox` does not report a sandbox that cannot run. `true`, `yes`, `on` and `1` turn it on, in any letter case, and `false`, `no`, `off` and `0` leave it off. Any other value also leaves it off, with a warning. `/api/health` reports the result in its `sandbox` field.
 
 ## Uploads
 

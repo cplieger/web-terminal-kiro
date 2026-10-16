@@ -920,6 +920,10 @@ func TestHealthEndpoint_envelopeMatchesTheLibrary(t *testing.T) {
 		// Unknown is absent, so "not counted yet" can never be misread as
 		// converged.
 		{"an uncounted tree omits the field", depsWithToolsMissing(false, 0), http.StatusOK, `{"status":"ok","tools":"ok"}`},
+		// The sandbox state is informational and last, on 200 and 503 alike: an
+		// operator reads "unavailable" while the instance is still starting.
+		{"ready carries the sandbox state last", withSandbox(depsWithToolsMissing(true, 0), sandboxAvailable), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":0,"sandbox":"available"}`},
+		{"unready carries the sandbox state", withSandbox(newTestDeps(false), sandboxUnavailable), http.StatusServiceUnavailable, `{"status":"unready","reason":"starting up or shutting down","sandbox":"unavailable"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mux, _, _ := mustRegisterRoutes(t, tc.deps)
@@ -1047,6 +1051,12 @@ func depsWithToolsMissing(known bool, n int) *routeDeps {
 	d := newTestDeps(true)
 	d.toolsState = func() string { return "ok" }
 	d.toolsMissing = func() (int, bool) { return n, known }
+	return d
+}
+
+// withSandbox sets the startup check's state on deps.
+func withSandbox(d *routeDeps, state string) *routeDeps {
+	d.sandbox = state
 	return d
 }
 

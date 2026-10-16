@@ -434,6 +434,7 @@ func run() error {
 		chatArgs:           chatArgs,
 		trustedInstallUIDs: parseTrustedInstallUIDs(),
 	})
+	sandbox := startSandbox(baseCtx, parseSandboxOptIn(), workDir, envx.String("HOME"))
 
 	mux := http.NewServeMux()
 	var ready webhttp.Ready
@@ -487,7 +488,7 @@ func run() error {
 		static:          staticSrv,
 		listenHint:      loopbackHint(addr),
 		cmd:             kiro.cmd,
-		sessionEnv:      kiro.env,
+		sessionEnv:      sandbox.sessionEnv(kiro.env),
 		sessionTitleEnv: pollers.sessionEnv,
 		sessionActivity: pollers.workflows.sessionActivity,
 		workDir:         workDir,
@@ -503,6 +504,7 @@ func run() error {
 		toolsState:      tools.state,
 		toolsMissing:    tools.missing,
 		containment:     startContainment(),
+		sandbox:         sandbox.state,
 	}
 	build := newSessionBuilder(deps)
 	mgr := registerRoutes(mux, deps, build(""))
@@ -1192,7 +1194,7 @@ func toolsConfig(cfg *baseTools, toolsRoot string, onJob func(*toolbelt.Job)) *t
 			Interval: cfg.refreshInterval,
 		},
 		Seed:         toolbelt.DefaultSeed(),
-		System:       []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
+		System:       []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash", "socat"},
 		Logger:       slog.Default(),
 		OnJobChanged: onJob,
 		GitHubToken:  githubTokenSource(cfg.githubToken),

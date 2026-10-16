@@ -100,6 +100,8 @@ type routeDeps struct {
 	workDir    string
 	// uploadDir is where pasted images are written; empty leaves uploadsPath unmounted.
 	uploadDir string
+	// sandbox is the startup check's /api/health state; "" omits the field.
+	sandbox string
 	// logOSCText is the LOG_OSC_TEXT opt-in: when true, an unrecognized OSC 9
 	// notification's full text is logged at Debug. Default false — arbitrary child
 	// output that may carry a token or device code.
@@ -375,28 +377,28 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 // encoding/json sorts map keys, and webhttp's own readiness handler (and therefore
 // web-terminal-server and subflux) emits {"status":…,"reason":…}. ToolsMissing is a
 // POINTER so it is absent rather than 0 when unknown, since zero means converged.
-// FIELD ORDER IS THE WIRE CONTRACT, which is why fieldalignment is silenced.
-//
-//nolint:govet // fieldalignment: declaration order is the JSON key order (above)
+// FIELD ORDER IS THE WIRE CONTRACT: never reorder for fieldalignment.
 type healthBody struct {
 	Status       string `json:"status"`
 	Reason       string `json:"reason,omitempty"`
 	Tools        string `json:"tools,omitempty"`
 	ToolsMissing *int   `json:"tools_missing,omitempty"`
+	Sandbox      string `json:"sandbox,omitempty"`
 }
 
 // handleHealth returns the /api/health readiness handler. It reflects, in order: listener
-// readiness, the kiro-cli install manager's verdict, and the INFORMATIONAL tools fields —
-// tool convergence never gates readiness.
+// readiness, the kiro-cli install manager's verdict, and the INFORMATIONAL tools and
+// sandbox fields — neither gates readiness.
 func handleHealth(deps *routeDeps) http.HandlerFunc {
 	// One constructor for both outcomes, so the informational fields cannot diverge
 	// between them; they belong on the 503 bodies too, since an operator diagnosing a
 	// 503 needs to see tools state as much as a healthy caller does.
 	healthResponse := func(status, reason string) healthBody {
 		body := healthBody{
-			Status: status,
-			Reason: reason,
-			Tools:  deps.toolsState(),
+			Status:  status,
+			Reason:  reason,
+			Tools:   deps.toolsState(),
+			Sandbox: deps.sandbox,
 		}
 		if n, ok := deps.toolsMissing(); ok {
 			body.ToolsMissing = &n
