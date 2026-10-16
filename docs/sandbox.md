@@ -54,7 +54,7 @@ With both profiles, any process in the container can create its own user namespa
 
 With `KIRO_CLI_SANDBOX=true`, the server checks the sandbox once at each container start, before it accepts connections. The profiles cannot change while the container runs, so the answer holds until the next start.
 
-1. It runs kiro-cli's own bubblewrap probe, which asks for a fresh `/proc`.
+1. It runs kiro-cli's own bubblewrap probe, which asks for a fresh `/proc`. The image adds a PID namespace to every `bwrap` call, as kiro-cli's commands already have, so the probe tests the same `/proc` mount those commands need.
 2. It runs `/bin/true` with the namespace and mount arguments kiro-cli uses for a command in "block all" mode. Like kiro-cli, it asks for a fresh `/proc` if the probe worked and an empty one if it did not.
 3. If that command ran, the sandbox is available. If it failed or took more than 5 seconds, the sandbox is unavailable.
 
