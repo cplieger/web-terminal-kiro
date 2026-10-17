@@ -40,7 +40,8 @@ const (
 	sandboxAppArmorLabel = "web-terminal-kiro-sandbox (enforce)"
 )
 
-// The AppArmor-only attr file exists from Linux 5.8; older kernels expose the
+// The AppArmor-only attr file exists from Linux 5.8
+// (https://git.kernel.org/torvalds/c/6413f852ce08); older kernels expose the
 // label only in the shared one.
 var appArmorAttrPaths = []string{"/proc/self/attr/apparmor/current", "/proc/self/attr/current"}
 
@@ -131,8 +132,8 @@ func checkAppArmorConfinement(paths []string) error {
 		if err != nil {
 			return fmt.Errorf("read the container's AppArmor confinement: %w", err)
 		}
-		if label := capSandboxOutput(raw); label != sandboxAppArmorLabel {
-			return fmt.Errorf("AppArmor confines the container as %q, want %q", label, sandboxAppArmorLabel)
+		if strings.TrimSpace(string(raw)) != sandboxAppArmorLabel {
+			return fmt.Errorf("AppArmor confines the container as %q, want %q", capSandboxOutput(raw), sandboxAppArmorLabel)
 		}
 		return nil
 	}
