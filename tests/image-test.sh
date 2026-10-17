@@ -146,11 +146,22 @@ tab_path() {
   printf '%s\n' "$path"
 }
 
+# in_container <container> <command...> runs a command under a shell that
+# stays its parent, as kiro-cli stays bwrap's. docker exec starts a process as
+# the child of `runc exec --detach`, which exits once it runs; bwrap's
+# --die-with-parent SIGKILL (prctl(2) PR_SET_PDEATHSIG) then fires if bwrap set
+# it first, a silent exit 137.
+in_container() {
+  local c=$1
+  shift
+  docker exec "$c" sh -c '"$@"; exit "$?"' sh "$@"
+}
+
 # sandboxed <container> <block|allow> <script> runs one command through
 # the shim, the way kiro-cli would.
 sandboxed() {
   shape_args "$2"
-  docker exec "$1" "$shim" "${argv[@]}" -- /bin/sh -c "$3"
+  in_container "$1" "$shim" "${argv[@]}" -- /bin/sh -c "$3"
 }
 
 aa_file="$tmp/$aa_name"
@@ -178,10 +189,10 @@ docker exec "$p" test ! -e /usr/bin/bwrap || fail "/usr/bin/bwrap exists; the pa
 docker exec "$p" /opt/web-terminal-kiro/libexec/bwrap --version | grep -q '^bubblewrap ' || fail "the diverted bwrap does not run"
 docker exec "$p" socat -V >/dev/null || fail "socat does not run"
 
-out=$(sandboxed "$p" block 'echo sandbox-ok; id -u') || fail "a sandboxed command failed under the shipped profiles"
+out=$(sandboxed "$p" block 'echo sandbox-ok; id -u') || fail "a sandboxed command failed under the shipped profiles (exit $?)"
 [ "$out" = "sandbox-ok"$'\n'"0" ] || fail "sandboxed command printed \"$out\", want sandbox-ok and uid 0"
 out=$(sandboxed "$p" block 'touch /etc/sbx-probe 2>/dev/null && echo etc-writable; touch /workspace/sbx-probe && echo workspace-ok') \
-  || fail "the sandboxed write probe failed"
+  || fail "the sandboxed write probe failed (exit $?)"
 [ "$out" = workspace-ok ] || fail "sandboxed write probe printed \"$out\", want only workspace-ok (the system must stay read-only)"
 docker exec "$p" test -f /workspace/sbx-probe || fail "a file the sandbox wrote to /workspace is not visible outside it"
 docker exec "$p" test ! -e /etc/sbx-probe || fail "the sandbox wrote to /etc"
@@ -190,16 +201,16 @@ docker exec "$p" test ! -e /etc/sbx-probe || fail "the sandbox wrote to /etc"
 docker exec "$p" sh -c 'mkdir -p /config/home/.ssh && echo key >/config/home/.ssh/id && echo token >/config/home/.netrc'
 shape_args block
 argv+=(--tmpfs /config/home/.ssh --ro-bind /dev/null /config/home/.netrc)
-out=$(docker exec "$p" "$shim" "${argv[@]}" -- /bin/sh -c \
+out=$(in_container "$p" "$shim" "${argv[@]}" -- /bin/sh -c \
   'test -e /config/home/.ssh/id || echo ssh-hidden; test -s /config/home/.netrc || echo netrc-hidden') \
-  || fail "a sandboxed command hiding credentials failed under the shipped profiles"
+  || fail "a sandboxed command hiding credentials failed under the shipped profiles (exit $?)"
 [ "$out" = "ssh-hidden"$'\n'"netrc-hidden" ] || fail "credential-hiding probe printed \"$out\", want ssh-hidden and netrc-hidden"
 docker exec "$p" curl -s --max-time 2 -o /dev/null http://127.0.0.1:9848/api/health || fail "the server is unreachable outside the sandbox"
 if sandboxed "$p" block 'curl -s --max-time 2 -o /dev/null http://127.0.0.1:9848/api/health'; then
   fail "a block-all sandboxed command reached the server; it must have its own network"
 fi
 sandboxed "$p" allow 'curl -s --max-time 2 -o /dev/null http://127.0.0.1:9848/api/health' \
-  || fail "an allow-all sandboxed command could not reach the server"
+  || fail "an allow-all sandboxed command could not reach the server (exit $?)"
 tab=$(tab_path "$p")
 case "$tab" in
   /opt/web-terminal-kiro/sandbox/bin:*) : ;;
