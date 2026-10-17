@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -49,6 +50,93 @@ func fakeShim(t *testing.T) string {
 }
 
 var errBwrap = errors.New("exit status 1")
+
+func attrFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "current")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func missingFile(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "absent")
+}
+
+// shippedConfinement is the attr pair a container under the shipped profile
+// exposes on a kernel with the AppArmor-specific file.
+func shippedConfinement(t *testing.T) []string {
+	t.Helper()
+	return []string{attrFile(t, "web-terminal-kiro-sandbox (enforce)\n"), missingFile(t)}
+}
+
+// attrAbsent and attrDir stand for an attr path that does not exist and one
+// that cannot be read as a file.
+const (
+	attrAbsent = "\x00absent"
+	attrDir    = "\x00dir"
+)
+
+func TestCheckAppArmorConfinement(t *testing.T) {
+	const shipped = "web-terminal-kiro-sandbox (enforce)\n"
+	for _, tc := range []struct {
+		name     string
+		primary  string
+		fallback string
+		wantErr  string
+		notExist bool
+	}{
+		{name: "the shipped profile in enforce mode passes", primary: shipped, fallback: attrAbsent},
+		{name: "trailing whitespace is ignored", primary: "web-terminal-kiro-sandbox (enforce) \t\n\n", fallback: attrAbsent},
+		{
+			name: "complain mode is refused", primary: "web-terminal-kiro-sandbox (complain)\n", fallback: attrAbsent,
+			wantErr: `"web-terminal-kiro-sandbox (complain)"`,
+		},
+		{
+			name: "another profile is refused", primary: "docker-default (enforce)\n", fallback: attrAbsent,
+			wantErr: `"docker-default (enforce)"`,
+		},
+		{
+			name: "a profile whose name starts with the shipped one is refused", primary: "web-terminal-kiro-sandbox-test-1 (enforce)\n", fallback: attrAbsent,
+			wantErr: `"web-terminal-kiro-sandbox-test-1 (enforce)"`,
+		},
+		{name: "unconfined is refused", primary: "unconfined\n", fallback: attrAbsent, wantErr: `"unconfined"`},
+		{name: "an empty label is refused", primary: "", fallback: attrAbsent, wantErr: `as ""`},
+		{name: "a missing AppArmor file falls back to the shared one", primary: attrAbsent, fallback: shipped},
+		{name: "the shared file is not read when the AppArmor file exists", primary: "unconfined\n", fallback: shipped, wantErr: `"unconfined"`},
+		{name: "both missing is refused", primary: attrAbsent, fallback: attrAbsent, wantErr: "none of", notExist: true},
+		{name: "an unreadable AppArmor file is refused without falling back", primary: attrDir, fallback: shipped, wantErr: "is a directory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var paths []string
+			for _, content := range []string{tc.primary, tc.fallback} {
+				switch content {
+				case attrAbsent:
+					paths = append(paths, missingFile(t))
+				case attrDir:
+					paths = append(paths, t.TempDir())
+				default:
+					paths = append(paths, attrFile(t, content))
+				}
+			}
+			err := checkAppArmorConfinement(paths)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("err = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want one containing %s", err, tc.wantErr)
+			}
+			if got := errors.Is(err, fs.ErrNotExist); got != tc.notExist {
+				t.Errorf("errors.Is(err, fs.ErrNotExist) = %v, want %v", got, tc.notExist)
+			}
+		})
+	}
+}
 
 func TestSandboxProbe_check(t *testing.T) {
 	shim := fakeShim(t)
@@ -106,7 +194,7 @@ func TestSandboxProbe_check(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &fakeSandboxRun{results: tc.results}
-			p := sandboxProbe{run: f.run, shim: shim, workDir: "/ws", kiroDir: "/home/.kiro"}
+			p := sandboxProbe{run: f.run, shim: shim, workDir: "/ws", kiroDir: "/home/.kiro", appArmorAttrs: shippedConfinement(t)}
 			v := p.check(t.Context())
 			if v.state != tc.wantState {
 				t.Errorf("state = %q, want %q", v.state, tc.wantState)
@@ -137,7 +225,7 @@ func TestSandboxProbe_check(t *testing.T) {
 	t.Run("a missing shim is unavailable without running anything", func(t *testing.T) {
 		f := &fakeSandboxRun{}
 		missing := filepath.Join(t.TempDir(), "bwrap")
-		v := sandboxProbe{run: f.run, shim: missing, workDir: "/ws"}.check(t.Context())
+		v := (&sandboxProbe{run: f.run, shim: missing, workDir: "/ws"}).check(t.Context())
 		if v.state != sandboxUnavailable {
 			t.Errorf("state = %q, want unavailable", v.state)
 		}
@@ -148,12 +236,26 @@ func TestSandboxProbe_check(t *testing.T) {
 			t.Errorf("runner calls = %q, want none", f.calls)
 		}
 	})
+	t.Run("a container outside the shipped AppArmor profile is unavailable without running anything", func(t *testing.T) {
+		f := &fakeSandboxRun{results: []fakeSandboxResult{{}, {}}}
+		attrs := []string{attrFile(t, "unconfined\n"), missingFile(t)}
+		v := (&sandboxProbe{run: f.run, shim: shim, workDir: "/ws", appArmorAttrs: attrs}).check(t.Context())
+		if v.state != sandboxUnavailable {
+			t.Errorf("state = %q, want unavailable although bwrap would run", v.state)
+		}
+		if v.err == nil || !strings.Contains(v.err.Error(), `"unconfined"`) {
+			t.Errorf("err = %v, want it to name the confinement it found", v.err)
+		}
+		if len(f.calls) != 0 {
+			t.Errorf("runner calls = %q, want none", f.calls)
+		}
+	})
 	t.Run("an interrupted check is not reported as a timeout", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		killed := errors.New("signal: killed")
 		f := &fakeSandboxRun{results: []fakeSandboxResult{{err: killed}, {err: killed}}}
-		v := sandboxProbe{run: f.run, shim: shim, workDir: "/ws"}.check(ctx)
+		v := (&sandboxProbe{run: f.run, shim: shim, workDir: "/ws", appArmorAttrs: shippedConfinement(t)}).check(ctx)
 		if v.state != sandboxUnavailable {
 			t.Errorf("state = %q, want unavailable", v.state)
 		}
@@ -166,7 +268,7 @@ func TestSandboxProbe_check(t *testing.T) {
 	})
 	t.Run("no kiro dir means no bind for it", func(t *testing.T) {
 		f := &fakeSandboxRun{results: []fakeSandboxResult{{}, {}}}
-		sandboxProbe{run: f.run, shim: shim, workDir: "/ws"}.check(t.Context())
+		(&sandboxProbe{run: f.run, shim: shim, workDir: "/ws", appArmorAttrs: shippedConfinement(t)}).check(t.Context())
 		if len(f.calls) != 2 {
 			t.Fatalf("runner calls = %d, want 2", len(f.calls))
 		}
@@ -190,7 +292,7 @@ func TestSandboxProbe_checkBoundsAHungBwrap(t *testing.T) {
 		}
 	}
 	start := time.Now()
-	v := sandboxProbe{run: hang, shim: fakeShim(t), workDir: "/ws"}.check(t.Context())
+	v := (&sandboxProbe{run: hang, shim: fakeShim(t), workDir: "/ws", appArmorAttrs: shippedConfinement(t)}).check(t.Context())
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("check took %s, want it bounded by the per-run budget", elapsed)
 	}
@@ -243,7 +345,7 @@ func (f fakeLookPath) look(string) (string, error) {
 func TestStartSandboxWith(t *testing.T) {
 	newDeps := func(t *testing.T, f *fakeSandboxRun, stray fakeLookPath) *sandboxDeps {
 		return &sandboxDeps{
-			probe:       sandboxProbe{run: f.run, shim: fakeShim(t), workDir: "/ws"},
+			probe:       sandboxProbe{run: f.run, shim: fakeShim(t), workDir: "/ws", appArmorAttrs: shippedConfinement(t)},
 			runUserRoot: t.TempDir(),
 			refuseDir:   "/refuse",
 			lookPath:    stray.look,
@@ -303,6 +405,21 @@ func TestStartSandboxWith(t *testing.T) {
 		}
 		if records.CountLevel(slog.LevelWarn, sandboxRunUserMsg) != 1 {
 			t.Errorf("log = %q, want one Warn for the proxy directory", records.Messages())
+		}
+	})
+	t.Run("an unconfined container warns unavailable and hides bwrap from tabs", func(t *testing.T) {
+		records := capture.Default(t)
+		f := &fakeSandboxRun{results: []fakeSandboxResult{{}, {}}}
+		deps := newDeps(t, f, "")
+		deps.probe.appArmorAttrs = []string{missingFile(t), attrFile(t, "unconfined\n")}
+		if got := startSandboxWith(t.Context(), true, deps); got != (sandboxRuntime{state: sandboxUnavailable, bwrapDir: "/refuse"}) {
+			t.Errorf("runtime = %+v, want unavailable with tabs finding the refusing bwrap", got)
+		}
+		if records.CountExact(sandboxUnavailableMsg) != 1 || records.CountExact(sandboxAvailableMsg) != 0 {
+			t.Errorf("log = %q, want one unavailable Warn and no available Info", records.Messages())
+		}
+		if len(f.calls) != 0 {
+			t.Errorf("runner calls = %q, want none", f.calls)
 		}
 	})
 	t.Run("unavailable warns with the error and bwrap's text", func(t *testing.T) {

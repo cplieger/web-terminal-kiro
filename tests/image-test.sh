@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # The command sandbox on a built image: "available" and a real sandboxed
 # command under the shipped profiles, "unavailable" under Docker's defaults
-# with tabs finding only the refusing bwrap, "off" without KIRO_CLI_SANDBOX,
-# then each added allowance removed in turn must make the sandboxed command
-# fail. Needs Docker on an AppArmor host with
-# passwordless sudo (the CI runner); elsewhere it prints SKIP, and under
-# GITHUB_ACTIONS a missing prerequisite fails.
+# with tabs finding only the refusing bwrap, "unavailable" under a renamed copy
+# of the AppArmor profile and with AppArmor off, "off" without
+# KIRO_CLI_SANDBOX, then each added allowance removed in turn must make the
+# sandboxed command fail. Needs Docker on an AppArmor host with passwordless
+# sudo that has not loaded the shipped profile (the CI runner); elsewhere it
+# prints SKIP, and under GITHUB_ACTIONS a missing prerequisite fails.
 set -euo pipefail
 
 image=${1:-ci-smoke:latest}
@@ -13,8 +14,9 @@ repo=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 seccomp="$repo/sandbox/seccomp.json"
 aa_src="$repo/sandbox/web-terminal-kiro-sandbox"
 aa_public=web-terminal-kiro-sandbox
-# AppArmor profile names are host-wide: the suite loads the shipped profile
-# under its own name so it never replaces or unloads a deployment's.
+# The startup check accepts only the shipped profile name, which is host-wide,
+# so the suite refuses a host that already loads it rather than replace or
+# unload a deployment's. Its copy under another name serves the rest.
 aa_name="$aa_public-test-$$-$RANDOM"
 shim=/opt/web-terminal-kiro/sandbox/bin/bwrap
 refuser=/opt/web-terminal-kiro/sandbox/unavailable/bwrap
@@ -29,6 +31,9 @@ if [ -z "$missing" ] && ! sudo -n apparmor_parser --version >/dev/null 2>&1; the
 fi
 if [ -z "$missing" ] && ! command -v jq >/dev/null 2>&1; then
   missing="jq"
+fi
+if [ -z "$missing" ] && sudo -n cat /sys/kernel/security/apparmor/profiles 2>/dev/null | grep -q "^$aa_public ("; then
+  missing="a host that has not loaded AppArmor profile $aa_public"
 fi
 if [ -n "$missing" ]; then
   if [ "${GITHUB_ACTIONS:-}" = true ]; then
@@ -88,7 +93,7 @@ shape_args() {
   fi
 }
 
-profile_args=(--security-opt "seccomp=$seccomp" --security-opt "apparmor=$aa_name"
+profile_args=(--security-opt "seccomp=$seccomp" --security-opt "apparmor=$aa_public"
   --security-opt no-new-privileges)
 
 # start_server <name> <docker run args...> starts the server.
@@ -170,6 +175,7 @@ grep -qF "\"$aa_public\"" "$aa_src" || fail "sandbox/$aa_public does not name pr
 if grep -qF "\"$aa_public\"" "$aa_file"; then
   fail "the test copy of the AppArmor profile still names \"$aa_public\""
 fi
+load_profile "$aa_src"
 load_profile "$aa_file"
 
 # ---- P: the shipped profiles and the switch ----------------------------------
@@ -233,6 +239,27 @@ wait_for_log "$c" 'kiro-cli sandbox available' || fail "no 'kiro-cli sandbox ava
 docker logs "$c" 2>&1 | grep -F 'kiro-cli sandbox available' | grep -qF 'proc=tmpfs' \
   || fail "with cap_add SYS_ADMIN the available log line does not carry proc=tmpfs"
 docker rm -f "$c" >/dev/null
+
+# ---- R and U: the switch outside the shipped AppArmor profile ---------------
+# A renamed copy of the profile runs the sandboxed command (the red-check
+# control below), and with AppArmor off, as on a host without it, the seccomp
+# file's mount rules are limited by nothing: both must stay unavailable.
+r=smoke-web-terminal-kiro-sbx-R-$$
+start_server "$r" --security-opt "seccomp=$seccomp" --security-opt "apparmor=$aa_name" \
+  --security-opt no-new-privileges -e KIRO_CLI_SANDBOX=true
+u=smoke-web-terminal-kiro-sbx-U-$$
+start_server "$u" --security-opt "seccomp=$seccomp" --security-opt apparmor=unconfined \
+  --security-opt no-new-privileges -e KIRO_CLI_SANDBOX=true
+for pair in "$r:$aa_name (enforce)" "$u:unconfined"; do
+  arm=${pair%%:*}
+  label=${pair#*:}
+  state=$(sandbox_state "$arm")
+  [ "$state" = unavailable ] || fail "$arm: under AppArmor \"$label\" /api/health reports sandbox \"$state\", want unavailable"
+  wait_for_log "$arm" 'kiro-cli sandbox unavailable' || fail "$arm: no 'kiro-cli sandbox unavailable' warning under AppArmor \"$label\""
+  docker logs "$arm" 2>&1 | grep -F 'kiro-cli sandbox unavailable' | grep -F 'AppArmor confines the container as' | grep -qF "$label" \
+    || fail "$arm: the unavailable warning does not name the AppArmor confinement \"$label\""
+  docker rm -f "$arm" >/dev/null
+done
 
 # ---- D: Docker's defaults and the switch -------------------------------------
 # A bwrap already on PATH at start, and one installed after it, must both stay
@@ -300,13 +327,16 @@ seccomp_without() {
 
 oneshot block "${profile_args[@]}" || fail "control: a sandboxed /bin/true failed under the shipped profiles"
 oneshot allow "${profile_args[@]}" || fail "control: an allow-all sandboxed /bin/true failed under the shipped profiles"
+# The AppArmor red-checks below each remove a rule from this renamed copy.
+oneshot block --security-opt "seccomp=$seccomp" --security-opt "apparmor=$aa_name" --security-opt no-new-privileges \
+  || fail "control: a sandboxed /bin/true failed under the renamed copy of the AppArmor profile"
 checked=0
 
 redcheck_seccomp() {
   local label=$1 filter=$2 shape=$3 file
   file=$(seccomp_without "$filter" "$label")
   cmp -s "$file" "$seccomp" && fail "red-check $label: the jq filter changed nothing"
-  if oneshot "$shape" --security-opt "seccomp=$file" --security-opt "apparmor=$aa_name" --security-opt no-new-privileges; then
+  if oneshot "$shape" --security-opt "seccomp=$file" --security-opt "apparmor=$aa_public" --security-opt no-new-privileges; then
     fail "allowance $label is not needed: remove it from sandbox/seccomp.json"
   fi
   checked=$((checked + 1))
@@ -317,7 +347,7 @@ for call in mount umount2 pivot_root; do
   redcheck_seccomp "$call" "(.syscalls[] | select(.names == [\"mount\",\"pivot_root\",\"umount2\"]) | .names) -= [\"$call\"]" block
 done
 
-if oneshot block --security-opt "apparmor=$aa_name" --security-opt no-new-privileges; then
+if oneshot block --security-opt "apparmor=$aa_public" --security-opt no-new-privileges; then
   fail "a sandboxed command ran under Docker's default seccomp profile; the seccomp file is not needed"
 fi
 if oneshot block --security-opt "seccomp=$seccomp" --security-opt no-new-privileges; then
@@ -341,5 +371,5 @@ done < <(grep -E '^  (mount |remount |pivot_root,)' "$aa_src" | sed 's/^  //')
 [ "$n" -eq 7 ] || fail "red-checked $n AppArmor allowances, want the 7 the profile adds"
 
 ok=1
-printf 'web-terminal-kiro payload: sandbox available under the shipped profiles (proc=%s, credential folders and files hidden) with and without CAP_SYS_ADMIN and a tab finds the shim first, unavailable under Docker defaults with tabs resolving only the refusing bwrap (exit 127) over strays from before and after start, off without KIRO_CLI_SANDBOX; %s allowances red-checked\n' "$proc" "$checked"
+printf 'web-terminal-kiro payload: sandbox available under the shipped profiles (proc=%s, credential folders and files hidden) with and without CAP_SYS_ADMIN and a tab finds the shim first, unavailable under Docker defaults with tabs resolving only the refusing bwrap (exit 127) over strays from before and after start, unavailable under a renamed AppArmor profile and with AppArmor off, off without KIRO_CLI_SANDBOX; %s allowances red-checked\n' "$proc" "$checked"
 printf 'web-terminal-kiro image test: ok\n'
