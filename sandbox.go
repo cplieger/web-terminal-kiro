@@ -70,7 +70,7 @@ func parseSandboxOptIn() bool {
 
 // kasProbeArgs and sandboxShapeArgs mirror kiro-cli's own bwrap probe and the
 // namespace and mount argv of a command in its default "block all" network mode
-// (KAS LocalSandbox isAvailable and buildArgs, kiro-cli 2.31.1). The app probes
+// (KAS LocalSandbox isAvailable and buildArgs, kiro-cli 2.32.0). The app probes
 // at all because kiro-cli reports its sandbox as on when bwrap cannot start one
 // (https://github.com/kirodotdev/Kiro/issues/11941).
 var kasProbeArgs = []string{"--ro-bind", "/", "/", "--proc", "/proc", "--", "/bin/true"}

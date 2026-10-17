@@ -180,7 +180,8 @@ state=$(sandbox_state "$p")
 wait_for_log "$p" 'kiro-cli sandbox available' || fail "no 'kiro-cli sandbox available' log line under the shipped profiles"
 proc=$(docker logs "$p" 2>&1 | grep -F 'kiro-cli sandbox available' | grep -o 'proc=[a-z]*' | head -1 || true)
 proc=${proc#proc=}
-[ -n "$proc" ] || fail "the available log line carries no proc mode"
+# The profile refuses a fresh /proc, so kiro-cli's commands get an empty one.
+[ "$proc" = tmpfs ] || fail "the available log line carries proc mode \"$proc\", want tmpfs"
 [ "$(docker exec "$p" stat -c %a /run/user/0)" = 700 ] || fail "/run/user/0 is missing or not mode 700"
 if docker exec "$p" sh -c 'command -v bwrap' >/dev/null 2>&1; then
   fail "bwrap resolves on the image PATH; kiro-cli must only find it through the checked shim"
@@ -226,6 +227,11 @@ c=smoke-web-terminal-kiro-sbx-C-$$
 start_server "$c" "${profile_args[@]}" --cap-add SYS_ADMIN -e KIRO_CLI_SANDBOX=true
 state=$(sandbox_state "$c")
 [ "$state" = available ] || fail "with cap_add SYS_ADMIN /api/health reports sandbox \"$state\", want available"
+wait_for_log "$c" 'kiro-cli sandbox available' || fail "no 'kiro-cli sandbox available' log line with cap_add SYS_ADMIN"
+# Without the shim's --unshare-pid, kiro-cli's probe would bind the
+# container's /proc here and pick a fresh /proc no command can mount.
+docker logs "$c" 2>&1 | grep -F 'kiro-cli sandbox available' | grep -qF 'proc=tmpfs' \
+  || fail "with cap_add SYS_ADMIN the available log line does not carry proc=tmpfs"
 docker rm -f "$c" >/dev/null
 
 # ---- D: Docker's defaults and the switch -------------------------------------

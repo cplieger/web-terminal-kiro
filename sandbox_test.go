@@ -424,6 +424,40 @@ func writeExecutable(t *testing.T, path string, body []byte) {
 	}
 }
 
+func TestSandboxShim_execsBwrapWithTheNamespacesKiroCLIOmits(t *testing.T) {
+	const libexecBwrap = "/opt/web-terminal-kiro/libexec/bwrap"
+	shim, err := os.ReadFile(filepath.Join("sandbox", "bwrap.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(shim), libexecBwrap); n != 1 {
+		t.Fatalf("sandbox/bwrap.sh names %s %d times, want once", libexecBwrap, n)
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "bwrap-real")
+	writeExecutable(t, fake, []byte("#!/bin/sh\necho \"pid=$$\"\nfor a; do printf '[%s]\\n' \"$a\"; done\n"))
+	shimPath := filepath.Join(dir, "bwrap")
+	writeExecutable(t, shimPath, []byte(strings.Replace(string(shim), libexecBwrap, fake, 1)))
+
+	args := append(slices.Clone(kasProbeArgs), "two words", "")
+	cmd := exec.CommandContext(t.Context(), shimPath, args...)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("shim: %v", err)
+	}
+	got := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+	if want := "pid=" + strconv.Itoa(cmd.Process.Pid); got[0] != want {
+		t.Errorf("bwrap ran as %s, want %s: the shim must exec it so kiro-cli's signals reach bwrap", got[0], want)
+	}
+	want := []string{"[--unshare-user]", "[--unshare-pid]"}
+	for _, a := range args {
+		want = append(want, "["+a+"]")
+	}
+	if !slices.Equal(got[1:], want) {
+		t.Errorf("bwrap argv = %q, want %q", got[1:], want)
+	}
+}
+
 // Serial: it sets PATH.
 func TestSandboxRuntime_unavailableTabsResolveOnlyTheRefusingBwrap(t *testing.T) {
 	refuser, err := os.ReadFile(filepath.Join("sandbox", "bwrap-unavailable.sh"))
