@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# The command sandbox on a built image: "available" and a real sandboxed
-# command under the shipped profiles, "unavailable" under Docker's defaults
-# with tabs finding only the refusing bwrap, "unavailable" under a renamed copy
-# of the AppArmor profile and with AppArmor off, "off" without
-# KIRO_CLI_SANDBOX, then each added allowance removed in turn must make the
-# sandboxed command fail. Needs Docker on an AppArmor host with passwordless
-# sudo that has not loaded the shipped profile (the CI runner); elsewhere it
-# prints SKIP, and under GITHUB_ACTIONS a missing prerequisite fails.
+# The command sandbox on a built image: "available" with real sandboxed
+# commands under the shipped profiles; "unavailable" under Docker's defaults
+# (tabs find only the refusing bwrap), a renamed AppArmor profile, AppArmor off
+# and Docker's default seccomp; "off" without KIRO_CLI_SANDBOX; and each added
+# allowance red-checked. Needs Docker on an AppArmor host with passwordless sudo
+# that has not loaded the shipped profile (the CI runner); elsewhere it prints
+# SKIP, and under GITHUB_ACTIONS a missing prerequisite fails.
 set -euo pipefail
 
 image=${1:-ci-smoke:latest}
@@ -21,6 +20,19 @@ aa_name="$aa_public-test-$$-$RANDOM"
 shim=/opt/web-terminal-kiro/sandbox/bin/bwrap
 refuser=/opt/web-terminal-kiro/sandbox/unavailable/bwrap
 
+# loaded_profile_blocker prints why the suite must not load the shipped
+# profile, or nothing. The list is captured, not piped into grep -q: under
+# pipefail a match closes the pipe, cat dies of SIGPIPE (status 141) and a
+# loaded profile reads as absent.
+loaded_profile_blocker() {
+  local loaded
+  if ! loaded=$(sudo -n cat /sys/kernel/security/apparmor/profiles 2>/dev/null); then
+    printf 'passwordless sudo to read the loaded AppArmor profiles\n'
+  elif grep -q -- "^$aa_public (" <<<"$loaded"; then
+    printf 'a host that has not loaded AppArmor profile %s\n' "$aa_public"
+  fi
+}
+
 missing=""
 docker info >/dev/null 2>&1 || missing="a Docker daemon"
 if [ -z "$missing" ] && [ "$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null || true)" != Y ]; then
@@ -32,8 +44,8 @@ fi
 if [ -z "$missing" ] && ! command -v jq >/dev/null 2>&1; then
   missing="jq"
 fi
-if [ -z "$missing" ] && sudo -n cat /sys/kernel/security/apparmor/profiles 2>/dev/null | grep -q "^$aa_public ("; then
-  missing="a host that has not loaded AppArmor profile $aa_public"
+if [ -z "$missing" ]; then
+  missing=$(loaded_profile_blocker)
 fi
 if [ -n "$missing" ]; then
   if [ "${GITHUB_ACTIONS:-}" = true ]; then
@@ -117,10 +129,22 @@ sandbox_state() {
   printf '%s\n' "$state"
 }
 
+# log_has <container> <text>... succeeds when one line of the container's log
+# holds every text. The log is captured for the same SIGPIPE reason as the
+# profile list, which would fail a present line and pass a forbidden one.
+log_has() {
+  local lines needle
+  lines=$(docker logs "$1" 2>&1) || fail "could not read the log of $1"
+  shift
+  for needle in "$@"; do
+    lines=$(grep -F -- "$needle" <<<"$lines") || return 1
+  done
+}
+
 wait_for_log() {
   local i
   for i in $(seq 1 20); do
-    docker logs "$1" 2>&1 | grep -qF -- "$2" && return 0
+    log_has "$1" "$2" && return 0
     [ "$i" -lt 20 ] && sleep 0.5
   done
   return 1
@@ -184,8 +208,8 @@ start_server "$p" "${profile_args[@]}" -e KIRO_CLI_SANDBOX=true
 state=$(sandbox_state "$p")
 [ "$state" = available ] || fail "under the shipped profiles /api/health reports sandbox \"$state\", want available"
 wait_for_log "$p" 'kiro-cli sandbox available' || fail "no 'kiro-cli sandbox available' log line under the shipped profiles"
-proc=$(docker logs "$p" 2>&1 | grep -F 'kiro-cli sandbox available' | grep -o 'proc=[a-z]*' | head -1 || true)
-proc=${proc#proc=}
+log=$(docker logs "$p" 2>&1) || fail "could not read the log of $p"
+proc=$(sed -n '/kiro-cli sandbox available/{s/.*proc=\([a-z]*\).*/\1/p;q;}' <<<"$log")
 # The profile refuses a fresh /proc, so kiro-cli's commands get an empty one.
 [ "$proc" = tmpfs ] || fail "the available log line carries proc mode \"$proc\", want tmpfs"
 [ "$(docker exec "$p" stat -c %a /run/user/0)" = 700 ] || fail "/run/user/0 is missing or not mode 700"
@@ -193,7 +217,11 @@ if docker exec "$p" sh -c 'command -v bwrap' >/dev/null 2>&1; then
   fail "bwrap resolves on the image PATH; kiro-cli must only find it through the checked shim"
 fi
 docker exec "$p" test ! -e /usr/bin/bwrap || fail "/usr/bin/bwrap exists; the package was not diverted"
-docker exec "$p" /opt/web-terminal-kiro/libexec/bwrap --version | grep -q '^bubblewrap ' || fail "the diverted bwrap does not run"
+version=$(docker exec "$p" /opt/web-terminal-kiro/libexec/bwrap --version) || fail "the diverted bwrap does not run"
+case "$version" in
+  "bubblewrap "*) : ;;
+  *) fail "the diverted bwrap printed \"$version\", want its version" ;;
+esac
 docker exec "$p" socat -V >/dev/null || fail "socat does not run"
 
 out=$(sandboxed "$p" block 'echo sandbox-ok; id -u') || fail "a sandboxed command failed under the shipped profiles (exit $?)"
@@ -236,30 +264,40 @@ state=$(sandbox_state "$c")
 wait_for_log "$c" 'kiro-cli sandbox available' || fail "no 'kiro-cli sandbox available' log line with cap_add SYS_ADMIN"
 # Without the shim's --unshare-pid, kiro-cli's probe would bind the
 # container's /proc here and pick a fresh /proc no command can mount.
-docker logs "$c" 2>&1 | grep -F 'kiro-cli sandbox available' | grep -qF 'proc=tmpfs' \
+log_has "$c" 'kiro-cli sandbox available' 'proc=tmpfs' \
   || fail "with cap_add SYS_ADMIN the available log line does not carry proc=tmpfs"
 docker rm -f "$c" >/dev/null
 
-# ---- R and U: the switch outside the shipped AppArmor profile ---------------
+# ---- R, U and S: one of the shipped profiles missing ---------------------------
 # A renamed copy of the profile runs the sandboxed command (the red-check
 # control below), and with AppArmor off, as on a host without it, the seccomp
-# file's mount rules are limited by nothing: both must stay unavailable.
+# file's mount rules are limited by nothing: both must stay unavailable. Under
+# the shipped AppArmor profile with Docker's default seccomp profile, the check
+# runs bwrap, whose own error must reach the warning.
 r=smoke-web-terminal-kiro-sbx-R-$$
 start_server "$r" --security-opt "seccomp=$seccomp" --security-opt "apparmor=$aa_name" \
   --security-opt no-new-privileges -e KIRO_CLI_SANDBOX=true
 u=smoke-web-terminal-kiro-sbx-U-$$
 start_server "$u" --security-opt "seccomp=$seccomp" --security-opt apparmor=unconfined \
   --security-opt no-new-privileges -e KIRO_CLI_SANDBOX=true
+s=smoke-web-terminal-kiro-sbx-S-$$
+start_server "$s" --security-opt "apparmor=$aa_public" --security-opt no-new-privileges -e KIRO_CLI_SANDBOX=true
 for pair in "$r:$aa_name (enforce)" "$u:unconfined"; do
   arm=${pair%%:*}
   label=${pair#*:}
   state=$(sandbox_state "$arm")
   [ "$state" = unavailable ] || fail "$arm: under AppArmor \"$label\" /api/health reports sandbox \"$state\", want unavailable"
   wait_for_log "$arm" 'kiro-cli sandbox unavailable' || fail "$arm: no 'kiro-cli sandbox unavailable' warning under AppArmor \"$label\""
-  docker logs "$arm" 2>&1 | grep -F 'kiro-cli sandbox unavailable' | grep -F 'AppArmor confines the container as' | grep -qF "$label" \
+  log_has "$arm" 'kiro-cli sandbox unavailable' 'AppArmor confines the container as' "$label" \
     || fail "$arm: the unavailable warning does not name the AppArmor confinement \"$label\""
   docker rm -f "$arm" >/dev/null
 done
+state=$(sandbox_state "$s")
+[ "$state" = unavailable ] || fail "under Docker's default seccomp profile /api/health reports sandbox \"$state\", want unavailable"
+wait_for_log "$s" 'kiro-cli sandbox unavailable' || fail "no 'kiro-cli sandbox unavailable' warning under Docker's default seccomp profile"
+log_has "$s" 'kiro-cli sandbox unavailable' 'bwrap:' \
+  || fail "under Docker's default seccomp profile the unavailable warning does not carry bwrap's own error"
+docker rm -f "$s" >/dev/null
 
 # ---- D: Docker's defaults and the switch -------------------------------------
 # A bwrap already on PATH at start, and one installed after it, must both stay
@@ -274,9 +312,9 @@ start_server "$d" -e KIRO_CLI_SANDBOX=true -v "$tmp/stray:/opt/stray:ro" -e PATH
 state=$(sandbox_state "$d")
 [ "$state" = unavailable ] || fail "under Docker's default profiles /api/health reports sandbox \"$state\", want unavailable"
 wait_for_log "$d" 'kiro-cli sandbox unavailable' || fail "no 'kiro-cli sandbox unavailable' warning under Docker's defaults"
-docker logs "$d" 2>&1 | grep -F 'kiro-cli sandbox unavailable' | grep -qF 'bwrap:' \
-  || fail "the unavailable warning does not carry bwrap's own error"
-if docker logs "$d" 2>&1 | grep -qF 'a bwrap is on PATH while'; then
+log_has "$d" 'kiro-cli sandbox unavailable' 'AppArmor confines the container as' 'docker-default (enforce)' \
+  || fail "under Docker's defaults the unavailable warning does not name the AppArmor confinement \"docker-default (enforce)\""
+if log_has "$d" 'a bwrap is on PATH while'; then
   fail "the server warned about a bwrap it already hides from tabs"
 fi
 [ "$(docker exec "$d" sh -c 'command -v bwrap')" = /opt/stray/bwrap ] \
@@ -307,7 +345,7 @@ start_server "$o" "${profile_args[@]}"
 state=$(sandbox_state "$o")
 [ "$state" = off ] || fail "without KIRO_CLI_SANDBOX /api/health reports sandbox \"$state\", want off"
 wait_for_log "$o" 'web-terminal-kiro listening' || fail "the server never logged that it is listening"
-if docker logs "$o" 2>&1 | grep -qF 'kiro-cli sandbox'; then
+if log_has "$o" 'kiro-cli sandbox'; then
   fail "the server logged a sandbox verdict with the sandbox off"
 fi
 docker rm -f "$o" >/dev/null
@@ -371,5 +409,5 @@ done < <(grep -E '^  (mount |remount |pivot_root,)' "$aa_src" | sed 's/^  //')
 [ "$n" -eq 7 ] || fail "red-checked $n AppArmor allowances, want the 7 the profile adds"
 
 ok=1
-printf 'web-terminal-kiro payload: sandbox available under the shipped profiles (proc=%s, credential folders and files hidden) with and without CAP_SYS_ADMIN and a tab finds the shim first, unavailable under Docker defaults with tabs resolving only the refusing bwrap (exit 127) over strays from before and after start, unavailable under a renamed AppArmor profile and with AppArmor off, off without KIRO_CLI_SANDBOX; %s allowances red-checked\n' "$proc" "$checked"
+printf 'web-terminal-kiro payload: sandbox available under the shipped profiles (proc=%s, credential folders and files hidden) with and without CAP_SYS_ADMIN and a tab finds the shim first, unavailable under Docker defaults with tabs resolving only the refusing bwrap (exit 127) over strays from before and after start, unavailable under a renamed AppArmor profile, with AppArmor off, and with the bwrap error logged under the default seccomp profile, off without KIRO_CLI_SANDBOX; %s allowances red-checked\n' "$proc" "$checked"
 printf 'web-terminal-kiro image test: ok\n'
