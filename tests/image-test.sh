@@ -165,8 +165,8 @@ tab_path() {
   [ "$opened" -eq 1 ] || fail "$1: POST /api/sessions was refused for 300s"
   for i in $(seq 1 20); do
     path=$(docker exec "$1" sh -c 'for e in /proc/[0-9]*/environ; do
-      tr "\0" "\n" <"$e" 2>/dev/null | grep -qx TERM_PROGRAM=iTerm.app || continue
-      tr "\0" "\n" <"$e" | sed -n "s/^PATH=//p"; exit 0
+      tr "\0" "\n" 2>/dev/null <"$e" | grep -qx TERM_PROGRAM=iTerm.app || continue
+      tr "\0" "\n" 2>/dev/null <"$e" | sed -n "s/^PATH=//p"; exit 0
     done' || true)
     [ -n "$path" ] && break
     [ "$i" -lt 20 ] && sleep 0.5
