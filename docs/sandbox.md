@@ -52,11 +52,12 @@ With both profiles, any process in the container can create its own user namespa
 
 ## The startup check
 
-With `KIRO_CLI_SANDBOX=true`, the server checks the sandbox once at each container start, before it accepts connections. The profiles cannot change while the container runs, so the answer holds until the next start.
+With `KIRO_CLI_SANDBOX=true`, the server checks the sandbox once at each container start, before it accepts connections, and keeps that answer until the next start. It does not watch the host afterwards. AppArmor applies a replaced profile, a changed mode or a removed profile to the running container at once, so restart the container after any of these to check again. If the profile was removed, Docker refuses to start the container until you load the profile again. Docker stores the seccomp file's content in the container's configuration when it creates the container, so a changed seccomp file needs the container recreated, for example with `docker compose up -d --force-recreate`.
 
-1. It runs kiro-cli's own bubblewrap probe, which asks for a fresh `/proc`. The image adds a PID namespace to every `bwrap` call, as kiro-cli's commands already have, so the probe tests the same `/proc` mount those commands need.
-2. It runs `/bin/true` with the namespace and mount arguments kiro-cli uses for a command in "block all" mode. Like kiro-cli, it asks for a fresh `/proc` if the probe worked and an empty one if it did not.
-3. If that command ran, the sandbox is available. If it failed or took more than 5 seconds, the sandbox is unavailable.
+1. It reads the container's AppArmor confinement from `/proc/self/attr/apparmor/current`, or `/proc/self/attr/current` on kernels older than 5.8. Unless it names the `web-terminal-kiro-sandbox` profile in enforce mode, the sandbox is unavailable and no command runs. Docker ignores `apparmor=web-terminal-kiro-sandbox` on a host without AppArmor, and the seccomp profile's `mount` rules are then limited by nothing.
+2. It runs kiro-cli's own bubblewrap probe, which asks for a fresh `/proc`. The image adds a PID namespace to every `bwrap` call, as kiro-cli's commands already have, so the probe tests the same `/proc` mount those commands need.
+3. It runs `/bin/true` with the namespace and mount arguments kiro-cli uses for a command in "block all" mode. Like kiro-cli, it asks for a fresh `/proc` if the probe worked and an empty one if it did not.
+4. If that command ran, the sandbox is available. If it failed or took more than 5 seconds, the sandbox is unavailable.
 
 The image keeps bubblewrap off `PATH`. With the setting on, the server puts a folder holding only a `bwrap` first on each tab's `PATH`, so kiro-cli finds that one before any other. When the check passed, that `bwrap` is bubblewrap. When it failed, that `bwrap` refuses every command, and kiro-cli reports its sandbox as unavailable.
 
@@ -68,7 +69,7 @@ kiro-cli then says the system `bwrap` could not be loaded and suggests reinstall
 | --- | --- |
 | `off` | `KIRO_CLI_SANDBOX` is unset or off. No check ran. |
 | `available` | A sandboxed command ran. The log shows `kiro-cli sandbox available`. |
-| `unavailable` | The sandboxed command failed. The log warns `kiro-cli sandbox unavailable` with bubblewrap's own error. |
+| `unavailable` | The container is not under the `web-terminal-kiro-sandbox` profile in enforce mode, or the sandboxed command failed. The log warns `kiro-cli sandbox unavailable` with the confinement it found or bubblewrap's own error. |
 
 With the setting off, tabs keep their `PATH` as it is. The server then warns at start when a `bwrap` is on its `PATH`, for example one installed through the tools list, because kiro-cli would find that one and could report a sandbox that cannot run. A `bwrap` installed after the start is not checked. With the setting on, tabs never find such a `bwrap`, even one installed later.
 

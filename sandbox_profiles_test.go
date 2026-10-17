@@ -102,11 +102,15 @@ func TestSandboxProfiles_apparmorAllowsOnlyTheMeasuredNeed(t *testing.T) {
 		}
 		rules = append(rules, rule)
 	}
-	t.Run("declares the profile name the docs use", func(t *testing.T) {
+	t.Run("declares the profile name the docs and the startup check use", func(t *testing.T) {
+		name, ok := strings.CutSuffix(sandboxAppArmorLabel, " (enforce)")
+		if !ok || name != "web-terminal-kiro-sandbox" {
+			t.Fatalf("sandboxAppArmorLabel = %q, want profile web-terminal-kiro-sandbox in enforce mode", sandboxAppArmorLabel)
+		}
 		if !slices.ContainsFunc(rules, func(r string) bool {
-			return strings.HasPrefix(r, `profile "web-terminal-kiro-sandbox" flags=(attach_disconnected,mediate_deleted) {`)
+			return strings.HasPrefix(r, `profile "`+name+`" flags=(attach_disconnected,mediate_deleted) {`)
 		}) {
-			t.Errorf("no profile \"web-terminal-kiro-sandbox\" declaration in %q", rules)
+			t.Errorf("no profile %q declaration in %q", name, rules)
 		}
 	})
 	t.Run("keeps Docker's ABI and adds no userns or unconfined rule", func(t *testing.T) {

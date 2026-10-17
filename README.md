@@ -98,7 +98,7 @@ kiro-cli can run each command the agent starts in a bubblewrap sandbox, which ke
       - "apparmor=web-terminal-kiro-sandbox"
 ```
 
-The log then shows `kiro-cli sandbox available`, or warns `kiro-cli sandbox unavailable` with bubblewrap's error. [Command sandbox](docs/sandbox.md) explains that check and each profile rule.
+The log then shows `kiro-cli sandbox available`, or warns `kiro-cli sandbox unavailable` with the reason. The check also reports unavailable unless the container runs under the `web-terminal-kiro-sandbox` profile in enforce mode, because Docker ignores `apparmor=` on a host without AppArmor and the seccomp profile alone leaves mounts unchecked. [Command sandbox](docs/sandbox.md) explains that check and each profile rule.
 
 ## Configuration reference
 

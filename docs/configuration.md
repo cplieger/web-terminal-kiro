@@ -79,7 +79,7 @@ Any program running in the terminal can send a notification, so the text can hol
 
 ## KIRO_CLI_SANDBOX
 
-Set it to `true` once the container runs with both the seccomp and AppArmor profiles from [Command sandbox](sandbox.md), which needs a host with AppArmor. At each start the server then runs one command in kiro-cli's sandbox and logs whether it worked. Only when it worked does kiro-cli get a working bubblewrap, so `/sandbox` does not report a sandbox that cannot run. `true`, `yes`, `on` and `1` turn it on, in any letter case, and `false`, `no`, `off` and `0` leave it off. Any other value also leaves it off, with a warning. `/api/health` reports the result in its `sandbox` field.
+Set it to `true` once the container runs with both the seccomp and AppArmor profiles from [Command sandbox](sandbox.md), which needs a host with AppArmor. At each start the server then checks that the container runs under that AppArmor profile, runs one command in kiro-cli's sandbox, and logs whether both worked. Only when it worked does kiro-cli get a working bubblewrap, so `/sandbox` does not report a sandbox that cannot run. `true`, `yes`, `on` and `1` turn it on, in any letter case, and `false`, `no`, `off` and `0` leave it off. Any other value also leaves it off, with a warning. `/api/health` reports the result in its `sandbox` field.
 
 ## Uploads
 

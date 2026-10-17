@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -34,7 +35,15 @@ const (
 	// runUserRoot is where kiro-cli's "common dependencies" network mode puts its
 	// proxy socket; it refuses that mode when /run/user/<uid> is missing.
 	runUserRoot = "/run/user"
+	// sandboxAppArmorLabel is the label of a process under the profile
+	// sandbox/web-terminal-kiro-sandbox declares, in enforce mode.
+	sandboxAppArmorLabel = "web-terminal-kiro-sandbox (enforce)"
 )
+
+// The AppArmor-only attr file exists from Linux 5.8
+// (https://git.kernel.org/torvalds/c/6413f852ce08); older kernels expose the
+// label only in the shared one.
+var appArmorAttrPaths = []string{"/proc/self/attr/apparmor/current", "/proc/self/attr/current"}
 
 // sandboxProbeTimeout bounds each sandboxed /bin/true; the check runs two
 // before the listener binds, well inside the healthcheck start period. A var so
@@ -70,7 +79,7 @@ func parseSandboxOptIn() bool {
 
 // kasProbeArgs and sandboxShapeArgs mirror kiro-cli's own bwrap probe and the
 // namespace and mount argv of a command in its default "block all" network mode
-// (KAS LocalSandbox isAvailable and buildArgs, kiro-cli 2.31.1). The app probes
+// (KAS LocalSandbox isAvailable and buildArgs, kiro-cli 2.32.0). The app probes
 // at all because kiro-cli reports its sandbox as on when bwrap cannot start one
 // (https://github.com/kirodotdev/Kiro/issues/11941).
 var kasProbeArgs = []string{"--ro-bind", "/", "/", "--proc", "/proc", "--", "/bin/true"}
@@ -107,7 +116,28 @@ type sandboxProbe struct {
 	shim    string
 	workDir string
 	// kiroDir is bound like kiro-cli binds ~/.kiro; "" when it does not exist.
-	kiroDir string
+	kiroDir       string
+	appArmorAttrs []string
+}
+
+// checkAppArmorConfinement returns nil only when the first of paths that
+// exists holds sandboxAppArmorLabel. Docker ignores apparmor= on a host
+// without AppArmor, which leaves the seccomp profile's mount rules unchecked.
+func checkAppArmorConfinement(paths []string) error {
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read the container's AppArmor confinement: %w", err)
+		}
+		if strings.TrimSpace(string(raw)) != sandboxAppArmorLabel {
+			return fmt.Errorf("AppArmor confines the container as %q, want %q", capSandboxOutput(raw), sandboxAppArmorLabel)
+		}
+		return nil
+	}
+	return fmt.Errorf("read the container's AppArmor confinement: none of %q exists: %w", paths, fs.ErrNotExist)
 }
 
 type sandboxVerdict struct {
@@ -117,12 +147,16 @@ type sandboxVerdict struct {
 	output string
 }
 
-// check runs kiro-cli's probe, then the command shape kiro-cli would pick from
-// that probe's result. Only the second run decides: kiro-cli treats a failed
-// probe as "no fresh /proc" and carries on, so the probe alone proves nothing.
-func (p sandboxProbe) check(ctx context.Context) sandboxVerdict {
+// check confirms the container's AppArmor confinement, then runs kiro-cli's
+// probe and the command shape kiro-cli would pick from that probe's result.
+// Only the second run decides: kiro-cli treats a failed probe as "no fresh
+// /proc" and carries on, so the probe alone proves nothing.
+func (p *sandboxProbe) check(ctx context.Context) sandboxVerdict {
 	if _, err := os.Stat(p.shim); err != nil {
 		return sandboxVerdict{state: sandboxUnavailable, err: fmt.Errorf("bwrap shim %s: %w", p.shim, err)}
+	}
+	if err := checkAppArmorConfinement(p.appArmorAttrs); err != nil {
+		return sandboxVerdict{state: sandboxUnavailable, err: err}
 	}
 	_, probeErr := p.runOne(ctx, kasProbeArgs)
 	procSupported := probeErr == nil
@@ -137,7 +171,7 @@ func (p sandboxProbe) check(ctx context.Context) sandboxVerdict {
 	return sandboxVerdict{state: sandboxAvailable, proc: proc}
 }
 
-func (p sandboxProbe) runOne(ctx context.Context, args []string) ([]byte, error) {
+func (p *sandboxProbe) runOne(ctx context.Context, args []string) ([]byte, error) {
 	runCtx, cancel := context.WithTimeout(ctx, sandboxProbeTimeout)
 	defer cancel()
 	out, err := p.run(runCtx, p.shim, args...)
@@ -173,8 +207,8 @@ type sandboxDeps struct {
 	uid       int
 }
 
-// sandboxRuntime is the startup check's verdict, fixed for the container's
-// life: seccomp and AppArmor profiles are set when the container is created.
+// sandboxRuntime is the startup check's verdict. Nothing recomputes it, so a
+// host-side AppArmor change after startup goes unseen until the next start.
 type sandboxRuntime struct {
 	state string
 	// bwrapDir leads every tab's PATH so kiro-cli resolves its bwrap there; ""
@@ -194,10 +228,11 @@ func startSandbox(ctx context.Context, optIn bool, workDir, home string) sandbox
 	}
 	return startSandboxWith(ctx, optIn, &sandboxDeps{
 		probe: sandboxProbe{
-			run:     runSandboxCommand,
-			shim:    filepath.Join(sandboxBinDir, "bwrap"),
-			workDir: workDir,
-			kiroDir: kiroDir,
+			run:           runSandboxCommand,
+			shim:          filepath.Join(sandboxBinDir, "bwrap"),
+			workDir:       workDir,
+			kiroDir:       kiroDir,
+			appArmorAttrs: appArmorAttrPaths,
 		},
 		runUserRoot: runUserRoot,
 		refuseDir:   sandboxRefuseDir,
