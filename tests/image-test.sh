@@ -295,7 +295,7 @@ done
 state=$(sandbox_state "$s")
 [ "$state" = unavailable ] || fail "under Docker's default seccomp profile /api/health reports sandbox \"$state\", want unavailable"
 wait_for_log "$s" 'kiro-cli sandbox unavailable' || fail "no 'kiro-cli sandbox unavailable' warning under Docker's default seccomp profile"
-log_has "$s" 'kiro-cli sandbox unavailable' 'bwrap:' \
+log_has "$s" 'kiro-cli sandbox unavailable' 'output="bwrap: ' \
   || fail "under Docker's default seccomp profile the unavailable warning does not carry bwrap's own error"
 docker rm -f "$s" >/dev/null
 

@@ -207,8 +207,8 @@ type sandboxDeps struct {
 	uid       int
 }
 
-// sandboxRuntime is the startup check's verdict, fixed for the container's
-// life: seccomp and AppArmor profiles are set when the container is created.
+// sandboxRuntime is the startup check's verdict. Nothing recomputes it, so a
+// host-side AppArmor change after startup goes unseen until the next start.
 type sandboxRuntime struct {
 	state string
 	// bwrapDir leads every tab's PATH so kiro-cli resolves its bwrap there; ""

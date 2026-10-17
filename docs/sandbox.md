@@ -52,7 +52,7 @@ With both profiles, any process in the container can create its own user namespa
 
 ## The startup check
 
-With `KIRO_CLI_SANDBOX=true`, the server checks the sandbox once at each container start, before it accepts connections. The profiles cannot change while the container runs, so the answer holds until the next start.
+With `KIRO_CLI_SANDBOX=true`, the server checks the sandbox once at each container start, before it accepts connections, and keeps that answer until the next start. It does not watch the host afterwards. AppArmor applies a replaced profile, a changed mode or a removed profile to the running container at once, so restart the container after any of these to check again. Docker copies the seccomp file into the container when it creates it, so a changed seccomp file needs the container recreated, for example with `docker compose up -d --force-recreate`.
 
 1. It reads the container's AppArmor confinement from `/proc/self/attr/apparmor/current`, or `/proc/self/attr/current` on kernels older than 5.8. Unless it names the `web-terminal-kiro-sandbox` profile in enforce mode, the sandbox is unavailable and no command runs. Docker ignores `apparmor=web-terminal-kiro-sandbox` on a host without AppArmor, and the seccomp profile's `mount` rules are then limited by nothing.
 2. It runs kiro-cli's own bubblewrap probe, which asks for a fresh `/proc`. The image adds a PID namespace to every `bwrap` call, as kiro-cli's commands already have, so the probe tests the same `/proc` mount those commands need.
