@@ -32,7 +32,7 @@ import (
 	"github.com/cplieger/slogx"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // staticFS holds the served asset tree. It embeds the DIRECTORY rather than a file

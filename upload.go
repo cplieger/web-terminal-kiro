@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // Image paste uploads. The browser posts a clipboard image here and types the returned

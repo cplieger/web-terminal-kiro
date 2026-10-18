@@ -22,7 +22,7 @@ import (
 
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // TestDebugRoutesNotExposed pins the route surface of registerRoutes: the
