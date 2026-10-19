@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
@@ -1018,8 +1019,7 @@ func TestSessionTitleRepointWithATitleReplacesWithoutClearing(t *testing.T) {
 func capturedLog(t *testing.T) *strings.Builder {
 	t.Helper()
 	var buf strings.Builder
-	saveLogGlobals(t)
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return &buf
 }
 
