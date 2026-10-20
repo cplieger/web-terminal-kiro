@@ -1,6 +1,6 @@
 module github.com/cplieger/web-terminal-kiro
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/cplieger/atomicfile/v4 v4.1.0
