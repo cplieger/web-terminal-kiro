@@ -3,13 +3,13 @@ module github.com/cplieger/web-terminal-kiro
 go 1.27.3
 
 require (
-	github.com/cplieger/atomicfile/v4 v4.2.0-dev.1
+	github.com/cplieger/atomicfile/v4 v4.2.0
 	github.com/cplieger/envx/v2 v2.1.0-dev.2
 	github.com/cplieger/pathinside/v2 v2.1.0-dev.1
 	github.com/cplieger/pinstall/v3 v3.1.0-dev.3
 	github.com/cplieger/runesafe/v3 v3.2.0-dev.1
 	github.com/cplieger/slogx v1.8.0-dev.1
-	github.com/cplieger/toolbelt/v3 v3.11.0-dev.14
+	github.com/cplieger/toolbelt/v3 v3.11.0-dev.15
 	github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.12
 	github.com/cplieger/webhttp/v3 v3.0.2
 )
