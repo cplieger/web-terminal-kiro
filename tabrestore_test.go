@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
@@ -27,16 +25,6 @@ func plantRecord(t *testing.T, home, id, recordID, title string) string {
 		t.Fatalf("plant session.json: %v", err)
 	}
 	return dir
-}
-
-func plantLock(t *testing.T, dir string, startedAt time.Time) string {
-	t.Helper()
-	path := filepath.Join(dir, ".lock")
-	body := `{"pid":` + strconv.Itoa(os.Getpid()) + `,"started_at":"` + startedAt.UTC().Format(time.RFC3339Nano) + `"}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatalf("plant .lock: %v", err)
-	}
-	return path
 }
 
 // recordingBuilder stands in for newSessionBuilder: invoking a spec's Build reports the
@@ -66,12 +54,11 @@ func entrySet(entries ...terminal.SessionSetEntry) terminal.SessionSet {
 }
 
 func TestTabRestorer_plan(t *testing.T) {
-	boot := time.Now()
 	newRestorer := func(t *testing.T, home string, set terminal.SessionSet) (*tabRestorer, func(terminal.CreateSpec) string) {
 		t.Helper()
 		build, built := recordingBuilder()
 		var pending atomic.Bool
-		return newTabRestorer(newSessionTitleSync(t.TempDir(), home), &set, build, &pending, boot), built
+		return newTabRestorer(newSessionTitleSync(t.TempDir(), home), &set, build, &pending), built
 	}
 	planOne := func(t *testing.T, r *tabRestorer, i int) (terminal.CreateSpec, bool) {
 		t.Helper()
@@ -120,19 +107,7 @@ func TestTabRestorer_plan(t *testing.T) {
 		})
 	}
 
-	t.Run("a stale lock is cleared before the resume", func(t *testing.T) {
-		home := t.TempDir()
-		lock := plantLock(t, plantRecord(t, home, resumeA, resumeA, "t"), boot.Add(-time.Hour))
-		r, built := newRestorer(t, home, entrySet(terminal.SessionSetEntry{Alias: resumeA, Resume: resumeA}))
-		if spec, ok := planOne(t, r, 0); !ok || built(spec) != resumeA {
-			t.Errorf("plan = %+v ok=%v, want a resume", spec, ok)
-		}
-		if _, err := os.Lstat(lock); !os.IsNotExist(err) {
-			t.Errorf("the stale .lock survived the plan (%v)", err)
-		}
-	})
-
-	t.Run("an oversized record resumes and its stale lock is cleared", func(t *testing.T) {
+	t.Run("an oversized record resumes", func(t *testing.T) {
 		logs := capturedLog(t)
 		home := t.TempDir()
 		dir := plantRecord(t, home, resumeA, resumeA, "t")
@@ -140,13 +115,9 @@ func TestTabRestorer_plan(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "session.json"), big, 0o600); err != nil {
 			t.Fatalf("plant the oversized session.json: %v", err)
 		}
-		lock := plantLock(t, dir, boot.Add(-time.Hour))
 		r, built := newRestorer(t, home, entrySet(terminal.SessionSetEntry{Alias: resumeA, Resume: resumeA}))
 		if spec, ok := planOne(t, r, 0); !ok || built(spec) != resumeA {
 			t.Errorf("plan = %+v ok=%v, want a resume of %s", spec, ok, resumeA)
-		}
-		if _, err := os.Lstat(lock); !os.IsNotExist(err) {
-			t.Errorf("the stale .lock beside an unreadable record survived the plan (%v)", err)
 		}
 		if strings.Contains(logs.String(), "kiro session store unreadable") {
 			t.Error("one unreadable record was reported as an unreadable store")
@@ -200,95 +171,6 @@ func TestTabRestorer_plan(t *testing.T) {
 	})
 }
 
-func TestClearStaleKiroLock(t *testing.T) {
-	boot := time.Date(2026, 10, 12, 1, 0, 0, 0, time.UTC)
-	tests := []struct {
-		plant    func(t *testing.T, dir string) string
-		name     string
-		log      string
-		wantKept bool
-	}{
-		{name: "no lock", plant: func(*testing.T, string) string { return "" }},
-		{
-			name:  "a lock from before the boot naming a live pid",
-			plant: func(t *testing.T, dir string) string { return plantLock(t, dir, boot.Add(-time.Hour)) },
-		},
-		{
-			name:     "a lock written in this boot",
-			plant:    func(t *testing.T, dir string) string { return plantLock(t, dir, boot) },
-			log:      "kiro session is open in another process of this boot",
-			wantKept: true,
-		},
-		{
-			name: "an undecodable lock",
-			plant: func(t *testing.T, dir string) string {
-				p := filepath.Join(dir, ".lock")
-				_ = os.WriteFile(p, []byte("{garbage"), 0o600)
-				return p
-			},
-		},
-		{
-			name: "an unparseable started_at",
-			plant: func(t *testing.T, dir string) string {
-				p := filepath.Join(dir, ".lock")
-				_ = os.WriteFile(p, []byte(`{"pid":1,"started_at":"yesterday"}`), 0o600)
-				return p
-			},
-		},
-		{
-			name: "a lock that cannot be removed",
-			plant: func(t *testing.T, dir string) string {
-				p := filepath.Join(dir, ".lock")
-				if err := os.MkdirAll(filepath.Join(p, "inner"), 0o700); err != nil {
-					t.Fatal(err)
-				}
-				return p
-			},
-			log:      "could not clear a stale kiro session lock",
-			wantKept: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			logs := capturedLog(t)
-			dir := t.TempDir()
-			lock := tt.plant(t, dir)
-			clearStaleKiroLock(t.Context(), dir, resumeA, boot)
-			if lock != "" {
-				_, err := os.Lstat(lock)
-				if kept := err == nil; kept != tt.wantKept {
-					t.Errorf("lock kept = %v, want %v", kept, tt.wantKept)
-				}
-			}
-			if tt.log != "" && strings.Count(logs.String(), tt.log) != 1 {
-				t.Errorf("want one %q record, got log %q", tt.log, logs.String())
-			}
-			if tt.log == "" && lock == "" && logs.Len() != 0 {
-				t.Errorf("no lock logged %q, want nothing", logs.String())
-			}
-		})
-	}
-
-	t.Run("a symlinked lock is removed and its target kept", func(t *testing.T) {
-		dir := t.TempDir()
-		target := filepath.Join(t.TempDir(), "target")
-		if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		lock := filepath.Join(dir, ".lock")
-		if err := os.Symlink(target, lock); err != nil {
-			t.Fatal(err)
-		}
-		clearStaleKiroLock(t.Context(), dir, resumeA, boot)
-		if _, err := os.Lstat(lock); !os.IsNotExist(err) {
-			t.Errorf("the symlinked lock survived (%v)", err)
-		}
-		if got := mustReadFile(t, target); string(got) != "keep" {
-			t.Errorf("the link's target changed to %q", got)
-		}
-	})
-}
-
 // argvIgnoringCmd is a session command that accepts and ignores --resume-id.
 func argvIgnoringCmd() func() []string {
 	return staticCmd("/bin/sh", "-c", "exec cat", "sh")
@@ -310,7 +192,7 @@ func TestTabRestorer_seedsTheMapping(t *testing.T) {
 		t.Cleanup(func() { shutdownManager(t, mgr) })
 		var pending atomic.Bool
 		pending.Store(true)
-		r := newTabRestorer(pollers.titles, new(entrySet(terminal.SessionSetEntry{Alias: resumeA, Resume: resumeA})), build, &pending, time.Now())
+		r := newTabRestorer(pollers.titles, new(entrySet(terminal.SessionSetEntry{Alias: resumeA, Resume: resumeA})), build, &pending)
 
 		r.run(t.Context(), mgr, func() bool { return true }, nil)
 		pollers.pass(t.Context(), mgr)
@@ -375,7 +257,7 @@ func TestTabRestorer_keepsTheFileWhenNothingStarts(t *testing.T) {
 	}
 	var pending atomic.Bool
 	pending.Store(true)
-	newTabRestorer(newSessionTitleSync(t.TempDir(), t.TempDir()), &set, build, &pending, time.Now()).
+	newTabRestorer(newSessionTitleSync(t.TempDir(), t.TempDir()), &set, build, &pending).
 		run(t.Context(), mgr, func() bool { return true }, store)
 
 	if pending.Load() {

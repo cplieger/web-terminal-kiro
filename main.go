@@ -342,7 +342,8 @@ func checkWorkDir(workDir string) error {
 // lifecycle. Keeping the body here rather than in main is what lets the deferred
 // teardown run on every failure path.
 func run() error {
-	// First: a kiro-cli session lock written before this instant belongs to a dead boot.
+	// First: a kiro-cli session lock written before this instant belongs to a dead boot
+	// (sweepStaleKiroLocks).
 	bootTime := time.Now()
 	setupLogging()
 
@@ -532,16 +533,22 @@ func run() error {
 
 	// Bound to baseCtx, which the pre-drain hook cancels.
 	go pollers.run(baseCtx, mgr)
+	var restorer *tabRestorer
 	if restorePending.Load() {
-		restorer := newTabRestorer(pollers.titles, &set, build, &restorePending, bootTime)
-		ready := func() bool {
-			kiroOK, _ := kiro.ready()
-			return kiroOK && !tools.syncing()
-		}
-		go restorer.run(baseCtx, mgr, ready, store)
+		restorer = newTabRestorer(pollers.titles, &set, build, &restorePending)
 	} else {
 		store.arm()
 	}
+	// The sweep goes first: a restored tab resuming onto a stale lock would refuse to open.
+	go func() {
+		sweepStaleKiroLocks(baseCtx, pollers.titles.sessionsRoot, bootTime)
+		if restorer != nil {
+			restorer.run(baseCtx, mgr, func() bool {
+				kiroOK, _ := kiro.ready()
+				return kiroOK && !tools.syncing()
+			}, store)
+		}
+	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM)
