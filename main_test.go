@@ -2995,15 +2995,21 @@ func TestSetupLoggingInstallsTheParsedLevelAndWarnsByNameOnly(t *testing.T) {
 	}
 }
 
-func TestKiroSettingsTurnsFullscreenCopyOnSelectOff(t *testing.T) {
-	const key = "chat.fullscreenCopyOnSelect"
-	want := []string{"settings", key, "false"}
-	settings := kiroSettings()
-	i := slices.IndexFunc(settings, func(a pinstall.Assertion) bool { return a.Name == key })
-	if i < 0 {
-		t.Fatalf("kiroSettings() has no %q assertion", key)
-	}
-	if got := settings[i].Args; !slices.Equal(got, want) {
-		t.Errorf("kiroSettings() assertion %q = %q, want %q", key, got, want)
+func TestKiroSettingsTurnsSettingsOff(t *testing.T) {
+	for _, key := range []string{
+		"chat.fullscreenCopyOnSelect",
+		"app.warnOnElevatedPrivileges",
+	} {
+		t.Run(key, func(t *testing.T) {
+			want := []string{"settings", key, "false"}
+			settings := kiroSettings()
+			i := slices.IndexFunc(settings, func(a pinstall.Assertion) bool { return a.Name == key })
+			if i < 0 {
+				t.Fatalf("kiroSettings() has no %q assertion", key)
+			}
+			if got := settings[i].Args; !slices.Equal(got, want) {
+				t.Errorf("kiroSettings() assertion %q = %q, want %q", key, got, want)
+			}
+		})
 	}
 }
