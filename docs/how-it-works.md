@@ -8,6 +8,8 @@ A single Go server serves the web page and starts one `kiro-cli chat` process pe
 
 Each tab learns which kiro-cli session it runs from a kiro-cli hook the app installs. The hook reports the session id when the session starts and on each prompt. The server then names the tab after the session's own title and gives the tab's page address that session id. A session id is kiro-cli's own name for the conversation and grants no access to the terminal.
 
+A workflow launched in a tab runs each step in its own kiro-cli session, whose hook reports the step's id. The server maps a step back to the conversation that launched the workflow. The tab keeps that conversation's title and address, and resumes it after a restart.
+
 ## Tabs after a restart
 
 Every two seconds the server saves the open tabs to `/config/tabs.json`. The file holds their order, each tab's address name, its pinned name and its kiro-cli session id, and the split layout. At the next start it opens the same tabs in the same order. Each tab runs `kiro-cli chat --resume-id <session id>`, so kiro-cli replays the conversation, and the tab keeps its address, so a bookmarked address still opens it. The split view and the selected pane come back too. A page that is open during the restart waits until the tabs are back, then shows them.

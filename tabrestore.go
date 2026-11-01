@@ -37,23 +37,46 @@ func newTabRestorer(titles *sessionTitleSync, set *terminal.SessionSet,
 	build func(string) func(terminal.SessionID) *terminal.Handler,
 	pending *atomic.Bool,
 ) *tabRestorer {
-	// The entry whose address already names the conversation owns it, then the earliest:
-	// an old bookmark expects that tab, and order alone would let a duplicate take it.
+	return &tabRestorer{
+		titles: titles, build: build, set: *set, pending: pending,
+		owner: resumeOwners(set.Sessions), resumed: make(map[int]string),
+	}
+}
+
+// resumeOwners maps each kiro session id to the one entry allowed to resume it. The entry
+// whose address already names the conversation owns it, then the earliest: an old
+// bookmark expects that tab, and order alone would let a duplicate take it.
+func resumeOwners(entries []terminal.SessionSetEntry) map[string]int {
 	owner := make(map[string]int)
-	for i, e := range set.Sessions {
+	for i, e := range entries {
 		if validKiroResumeID(e.Resume) && e.Alias == e.Resume {
 			owner[e.Resume] = i
 		}
 	}
-	for i, e := range set.Sessions {
+	for i, e := range entries {
 		if _, held := owner[e.Resume]; !held && validKiroResumeID(e.Resume) {
 			owner[e.Resume] = i
 		}
 	}
-	return &tabRestorer{
-		titles: titles, build: build, set: *set, pending: pending,
-		owner: owner, resumed: make(map[int]string),
+	return owner
+}
+
+// adoptLaunchingSessions re-points every entry saved with a workflow step's session at the
+// conversation that launched the run (sessionTitleSync.tabSession says why a tab's mapping
+// can name a step), then re-claims the owners, since two entries may now name one session.
+func (r *tabRestorer) adoptLaunchingSessions(ctx context.Context) {
+	for i := range r.set.Sessions {
+		e := &r.set.Sessions[i]
+		if !validKiroResumeID(e.Resume) {
+			continue
+		}
+		if id, _, _ := r.titles.tabSession(ctx, e.Resume); id != e.Resume && validKiroResumeID(id) {
+			slog.Info("tab restore: stored kiro session is a workflow step; resuming the conversation that launched it",
+				"kiro_session", id)
+			e.Resume = id
+		}
 	}
+	r.owner = resumeOwners(r.set.Sessions)
 }
 
 // run waits until ready, restores the set, then arms store and clears pending. A ctx
@@ -63,6 +86,7 @@ func (r *tabRestorer) run(ctx context.Context, mgr sessionRestorer, ready func()
 	if !waitReady(ctx, ready) {
 		return
 	}
+	r.adoptLaunchingSessions(ctx)
 	res, err := mgr.RestoreSessionSet(ctx, &r.set, r.plan)
 	if ctx.Err() != nil || errors.Is(err, terminal.ErrManagerClosed) {
 		return

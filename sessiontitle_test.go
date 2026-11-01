@@ -880,7 +880,7 @@ func TestSessionTitleNeverExposesTheTabIDAsTheJoinKey(t *testing.T) {
 	}
 }
 
-// TestSessionTitleScansEveryWorkspaceHashDir pins the reason readTitle
+// TestSessionTitleScansEveryWorkspaceHashDir pins the reason findSessionRecord
 // loops over the hash level at all: kiro-cli files each session under a
 // per-workspace hash directory, a /config volume accumulates one per
 // workspace path it has ever seen, and os.ReadDir returns them sorted --
@@ -906,7 +906,7 @@ func TestSessionTitleScansEveryWorkspaceHashDir(t *testing.T) {
 	}
 }
 
-// TestSessionTitleSanitizesUntrustedTitle pins the rune policy readTitle
+// TestSessionTitleSanitizesUntrustedTitle pins the rune policy titleFromRecord
 // applies before the title reaches either sink it does not own: the slog
 // attribute in syncOne and the engine's client title rung, whose own
 // sanitizer drops only C0 + DEL.
@@ -945,7 +945,7 @@ func TestSessionTitleClearsTheRungWhenTheTabIsRepointed(t *testing.T) {
 	}
 
 	// The hook re-points the tab. The new session's record exists but
-	// holds kiro's own placeholder, which readTitle reads as "no title"
+	// holds kiro's own placeholder, which titleFromRecord reads as "no title"
 	// -- the case that used to strand the first conversation's title on
 	// the tab.
 	f.mapping("tab1", second)
@@ -1280,6 +1280,85 @@ func TestSessionTitlePublishesTheMappingItResolved(t *testing.T) {
 
 		if got := f.sync.mappedSessions(); got != nil {
 			t.Errorf("mappedSessions() = %v before any sweep, want nil", got)
+		}
+	})
+}
+
+// stepJSON is the record KAS writes for a workflow step's session, trimmed to the fields
+// the join reads: the step marker and the launching session it reports to.
+func stepJSON(id, owner, title string) string {
+	return `{"id":` + quote(id) + `,"title":` + quote(title) + `,"rootConversationId":` + quote(owner) +
+		`,"_meta":{"kiro":{"workflow":{"type":"step"},"serverSession":{"role":"workflow-step","ownerSessionId":` + quote(owner) + `}}}}`
+}
+
+// A workflow step's session runs inside the launching tab's kiro-cli process, so its hooks
+// inherit the tab's title handle and write the step's id into the tab's mapping. The tab
+// still holds the launching conversation: that is what its title, URL and saved tab set
+// must name, or a restart resumes the step's thread in the tab.
+func TestSessionTitleMapsAWorkflowStepToTheTabsConversation(t *testing.T) {
+	const tab = "sess_11111111-2222-3333-4444-555555555555"
+	const step = "sess_99999999-8888-7777-6666-555555555555"
+
+	t.Run("a step written by the current KAS", func(t *testing.T) {
+		f := newTitleFixture(t)
+		f.mapping("tab1", step)
+		f.session("hash0", tab, `{"id":`+quote(tab)+`,"title":"the tab's conversation"}`)
+		f.session("hash0", step, stepJSON(step, tab, "run · review #1"))
+		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
+
+		f.sync.pass(t.Context(), set)
+
+		want := map[terminal.SessionID]string{"tab1": tab}
+		if got := f.sync.mappedSessions(); !maps.Equal(got, want) {
+			t.Errorf("mappedSessions() = %v, want %v", got, want)
+		}
+		if want := []string{"tab1=the tab's conversation"}; !slices.Equal(set.calls, want) {
+			t.Errorf("pushed %v, want %v", set.calls, want)
+		}
+		if got := set.aliases["tab1"]; got != tab {
+			t.Errorf("alias = %q, want %q", got, tab)
+		}
+	})
+
+	t.Run("an older step record with no serverSession", func(t *testing.T) {
+		f := newTitleFixture(t)
+		f.mapping("tab1", step)
+		f.session("hash0", tab, `{"id":`+quote(tab)+`,"title":"the tab's conversation"}`)
+		f.session("hash1", step, `{"id":`+quote(step)+`,"title":"run · build #1","rootConversationId":`+quote(tab)+
+			`,"_meta":{"kiro":{"workflow":{"type":"step"}}}}`)
+
+		f.sync.pass(t.Context(), &fakeSetter{live: []terminal.SessionID{"tab1"}})
+
+		if got := f.sync.mappedSessions()["tab1"]; got != tab {
+			t.Errorf("mapped %q, want %q", got, tab)
+		}
+	})
+
+	t.Run("a top-level session with a root conversation stays itself", func(t *testing.T) {
+		f := newTitleFixture(t)
+		f.mapping("tab1", step)
+		f.session("hash0", step, `{"id":`+quote(step)+`,"title":"a fork","rootConversationId":`+quote(tab)+`}`)
+
+		f.sync.pass(t.Context(), &fakeSetter{live: []terminal.SessionID{"tab1"}})
+
+		if got := f.sync.mappedSessions()["tab1"]; got != step {
+			t.Errorf("mapped %q, want %q: only a workflow step reports to another session", got, step)
+		}
+	})
+
+	t.Run("a step naming a malformed or circular owner stays itself", func(t *testing.T) {
+		for name, owner := range map[string]string{"malformed": "../../etc", "itself": step} {
+			t.Run(name, func(t *testing.T) {
+				f := newTitleFixture(t)
+				f.mapping("tab1", step)
+				f.session("hash0", step, stepJSON(step, owner, "run · review #1"))
+
+				f.sync.pass(t.Context(), &fakeSetter{live: []terminal.SessionID{"tab1"}})
+
+				if got := f.sync.mappedSessions()["tab1"]; got != step {
+					t.Errorf("mapped %q, want %q", got, step)
+				}
+			})
 		}
 	})
 }
