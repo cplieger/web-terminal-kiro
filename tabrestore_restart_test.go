@@ -146,7 +146,8 @@ func TestTabRestore_survivesARestart(t *testing.T) {
 	if status, _ := b2.call(t, http.MethodGet, terminal.SessionsSubtreePath+"layout", ""); status != http.StatusServiceUnavailable {
 		t.Errorf("GET layout before the restore = %d, want 503", status)
 	}
-	newTabRestorer(b2.pollers.titles, &b2.set, b2.build, b2.pending, bootTime).
+	sweepStaleKiroLocks(b2.ctx, b2.pollers.titles.sessionsRoot, bootTime)
+	newTabRestorer(b2.pollers.titles, &b2.set, b2.build, b2.pending).
 		run(b2.ctx, b2.mgr, func() bool { return true }, b2.store)
 	if b2.pending.Load() {
 		t.Fatal("pending still set after the restore")
