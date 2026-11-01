@@ -37,8 +37,8 @@
     "vitest": "5.0.5"
   },
   "dependencies": {
-    "@cplieger/web-terminal-engine": "6.4.0-dev.11",
-    "@cplieger/web-terminal-ui": "8.6.0-dev.11"
+    "@cplieger/web-terminal-engine": "6.4.0-dev.15",
+    "@cplieger/web-terminal-ui": "8.6.0-dev.12"
   },
   "overrides": {
     "qs": "^6.15.2",
