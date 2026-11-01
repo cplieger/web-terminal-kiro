@@ -6,7 +6,7 @@ require (
 	github.com/cplieger/atomicfile/v4 v4.2.0
 	github.com/cplieger/envx/v2 v2.1.0
 	github.com/cplieger/pathinside/v2 v2.1.0
-	github.com/cplieger/pinstall/v3 v3.1.0-dev.4
+	github.com/cplieger/pinstall/v3 v3.1.0
 	github.com/cplieger/runesafe/v3 v3.2.0
 	github.com/cplieger/slogx v1.8.0
 	github.com/cplieger/toolbelt/v3 v3.11.0-dev.20
@@ -20,7 +20,7 @@ require (
 	github.com/cplieger/httpx/v5 v5.2.0 // indirect
 	github.com/cplieger/keyenc v1.1.0 // indirect
 	github.com/cplieger/scheduler/v4 v4.3.0 // indirect
-	github.com/cplieger/ssrf/v4 v4.5.0-dev.6 // indirect
+	github.com/cplieger/ssrf/v4 v4.5.0 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
