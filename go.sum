@@ -24,8 +24,8 @@ github.com/cplieger/ssrf/v4 v4.5.0-dev.6 h1:eR64BT7l0eXPATYgFJe0sMJwg/QsxUvL656Q
 github.com/cplieger/ssrf/v4 v4.5.0-dev.6/go.mod h1:JbdhAU/ANQBghfS7DJb35Lxzqf9CP9XmzLJUcymV7NI=
 github.com/cplieger/toolbelt/v3 v3.11.0-dev.20 h1:hn5wAvU/Gz1Q43aoSpWiHoXZVQoZQ7qLkh+yZ5rQT+o=
 github.com/cplieger/toolbelt/v3 v3.11.0-dev.20/go.mod h1:/NuXIjpWifssfo6VAQvDHn+OWfswkkntk65N3H02lRA=
-github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.13 h1:a2lqsc+nWDsluQGsgk6Ezdp0eEi7pYShtlJUI2OGLeA=
-github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.13/go.mod h1:1hBHO0Lk9kiU3WTF4F0Jb0j5ZugMxTwiBvvGnhZqunM=
+github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.14 h1:4Kx7w+7SHCjzV+EDE+GCYVD874jVmz2hrBtVTiSMi4c=
+github.com/cplieger/web-terminal-engine/v6 v6.4.0-dev.14/go.mod h1:1hBHO0Lk9kiU3WTF4F0Jb0j5ZugMxTwiBvvGnhZqunM=
 github.com/cplieger/webhttp/v3 v3.0.3 h1:2N07M8hpw6VuYRKDqtqs63OcwXu99vV09XKELcEU67I=
 github.com/cplieger/webhttp/v3 v3.0.3/go.mod h1:ETPjIF1JDXhcOx3RnfiDS1Fn4//9unvo2TnYtYbr3M0=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
