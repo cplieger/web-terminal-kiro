@@ -120,7 +120,8 @@ grep -q '^KIRO_CLI_TOOLS_DIR="\$TOOLS"$' "$ENTRYPOINT" \
 # per-tool prune would delete a `kiro-cli` entry under opt/ along with its
 # retained predecessor.
 for dir in '"$TOOLS/opt"' '"$TOOLS/kiro-cli-versions"' \
-  '"$TOOLS/npm"' '"$TOOLS/npm/bin"' '"$TOOLS/python"' '"$TOOLS/python/bin"'; do
+  '"$TOOLS/npm"' '"$TOOLS/npm/bin"' '"$TOOLS/npm/lib"' '"$TOOLS/npm/lib/node_modules"' \
+  '"$TOOLS/python"' '"$TOOLS/python/bin"' '"$TOOLS/python/tools"' '"$TOOLS/python/interpreters"'; do
   grep -qF "make_config_dir $dir" "$ENTRYPOINT" \
     && ok "make_config_dir walks $dir before the server writes into it" \
     || no "make_config_dir $dir" "the install root is not created component-by-component, so a symlink planted there is followed"
@@ -131,13 +132,13 @@ done
 
 # The install root must not be reachable as a child of a toolbelt tree, under
 # any name -- keying the check on `kiro-cli` would miss a nested root under any
-# other name. The toolbelt engine's own npm/python bin dirs are subtracted BY
-# NAME since the hardening sweep now legitimately pre-creates them.
+# other name. The engine's own npm and python dirs, the ones its root-integrity
+# check judges, are subtracted BY NAME since the hardening sweep pre-creates them.
 grep -oE 'make_config_dir "\$TOOLS/(opt|npm|python|bin)/[^"]*"' "$ENTRYPOINT" \
-  | grep -vE '"\$TOOLS/(npm|python)/bin"$' \
+  | grep -vE '"\$TOOLS/(npm/bin|npm/lib|npm/lib/node_modules|python/bin|python/tools|python/interpreters)"$' \
   | grep -q . \
-  && no "install root under a toolbelt tree" "a directory that is not one of the engine's own bin dirs is created INSIDE one of the toolbelt engine's own trees (opt/npm/python/bin); the engine's per-tool prune and bin republish own everything under those" \
-  || ok "no directory other than the engine's own npm/python bin dirs is created inside a toolbelt-engine tree, so the engine's prune cannot reach the kiro-cli install"
+  && no "install root under a toolbelt tree" "a directory that is not one of the engine's own judged dirs is created INSIDE one of the toolbelt engine's own trees (opt/npm/python/bin); the engine's per-tool prune and bin republish own everything under those" \
+  || ok "no directory other than the engine's own judged npm/python dirs is created inside a toolbelt-engine tree, so the engine's prune cannot reach the kiro-cli install"
 
 # --- the taint flag carries the observation, not a constant ------------------
 # It is the only thing stopping a forged .complete sentinel on a once-writable
