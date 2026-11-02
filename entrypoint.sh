@@ -335,6 +335,14 @@ sweep_legacy_dispatchers() {
   local dir=${1:-}
   # Never expand to /kiro-cli* on an unset/empty argument.
   [ -n "$dir" ] || return 0
+  # The glob expands THROUGH a symlinked $dir, so this root rm -rf would delete
+  # the target's kiro-cli* entries. make_config_dir's check of $dir ran while its
+  # parent could still be loose; the call site runs after harden_config_dir made
+  # the parent 0700, so no group or other writer can swap $dir after this check.
+  if [ -L "$dir" ] || [ ! -d "$dir" ]; then
+    printf 'level=warn msg="legacy kiro-cli residue dir is a symlink or not a directory; refusing to sweep through it" dir="%s" component=entrypoint\n' "$(logfmt_value "$dir")" >&2
+    return 0
+  fi
   if ! rm -rf "$dir/kiro-cli"*; then
     printf 'level=warn msg="failed to remove legacy kiro-cli residue" dir="%s" component=entrypoint\n' "$dir" >&2
   fi
