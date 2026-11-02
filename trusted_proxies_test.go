@@ -267,14 +267,6 @@ func wantInt(want int) attrCheck {
 	return func(v slog.Value) bool { return v.Kind() == slog.KindInt64 && v.Int64() == int64(want) }
 }
 
-// isNotifyFingerprint requires exactly notifyFingerprintHexDigits lowercase
-// hex digits -- the shape TestNotifyFingerprint pins, checked here because
-// the production key is unreachable so the exact value is not computable.
-func isNotifyFingerprint(v slog.Value) bool {
-	s := v.String()
-	return len(s) == notifyFingerprintHexDigits && strings.Trim(s, "0123456789abcdef") == ""
-}
-
 // assertAttrSchema pins the EXACT attribute set of the records at level
 // whose message contains msgSub: every attr must be in the schema (an
 // unexpected key fails), every attr's value must pass its check (a
@@ -284,7 +276,7 @@ func isNotifyFingerprint(v slog.Value) bool {
 // them and pass on their union). A needle sweep only catches content the
 // test already knows; this catches content under any name, of any length,
 // in any shape. Shared by the package's two credential boundaries (a
-// rejected TRUSTED_PROXIES entry and a classifier notification).
+// rejected TRUSTED_PROXIES entry and a rejected TRUSTED_INSTALL_UIDS entry).
 func assertAttrSchema(t *testing.T, records *capture.Recorder, level slog.Level, msgSub string, schema map[string]attrCheck) {
 	t.Helper()
 	expected := slices.Sorted(maps.Keys(schema))

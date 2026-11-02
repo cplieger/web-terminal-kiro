@@ -8,37 +8,31 @@ import (
 )
 
 // sessionPollInterval is deliberately slow beside the engine's 250 ms status sweep: that sweep
-// drives a live activity dot, while these sweeps drive a label, a secondary mark and the
-// withdrawal of a latch that would otherwise stand forever.
+// drives a live activity dot, while these sweeps drive a label and a secondary mark.
 const sessionPollInterval = 2 * time.Second
 
 type pollerSessions interface {
 	sessionNamer
 	workflowSessions
-	latchStore
 	sessionSetCapturer
 }
 
-// sessionPollers runs the title, workflow and pending-interaction sweeps in that order on one
-// ticker, then saves the tab set. Each reads what the one before it published in the same
-// tick, so a withdrawal is decided on one coherent picture of the tab mapping and the live
-// runs, and the saved set carries this tick's mapping. sessionEnv is nil when the state
-// directory was refused; tabs is nil when there is no /config to save to.
+// sessionPollers runs the title and workflow sweeps in that order on one ticker, then saves
+// the tab set. The workflow sweep and the saved set read the mapping the title sweep
+// published in the same tick. sessionEnv is nil when the state directory was refused; tabs
+// is nil when there is no /config to save to.
 type sessionPollers struct {
 	titles     *sessionTitleSync
 	workflows  *workflowWatch
-	pending    *pendingInteractionWatch
 	sessionEnv func(tabID terminal.SessionID) []string
 	tabs       *tabStore
 }
 
 func newSessionPollers(stateRoot, home string, tabs *tabStore) *sessionPollers {
 	titles := newSessionTitleSync(stateRoot, home)
-	workflows := newWorkflowWatch(home, titles.mappedSessions)
 	return &sessionPollers{
 		titles:     titles,
-		workflows:  workflows,
-		pending:    newPendingInteractionWatch(home, titles.mappedSessions, workflows.runOwners),
+		workflows:  newWorkflowWatch(home, titles.mappedSessions),
 		sessionEnv: enableSessionTitles(titles),
 		tabs:       tabs,
 	}
@@ -72,6 +66,5 @@ func (p *sessionPollers) run(ctx context.Context, mgr pollerSessions) {
 func (p *sessionPollers) pass(ctx context.Context, mgr pollerSessions) {
 	p.titles.pass(ctx, mgr)
 	p.workflows.pass(ctx, mgr)
-	p.pending.pass(ctx, mgr)
 	p.tabs.persist(ctx, mgr, p.titles.mappedSessions())
 }

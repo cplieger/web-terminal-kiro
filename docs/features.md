@@ -8,7 +8,7 @@ The terminal comes from [web-terminal-engine](https://github.com/cplieger/web-te
 
 - 16, 256 and 24-bit color, every text style including bold, italic, underline, reverse and strikethrough, box drawing, and wide CJK characters.
 - Mouse support and clickable links that programs send over `OSC 8`. Bare addresses are turned into links too.
-- Desktop notifications and progress indicators that programs send over `OSC 9` and `OSC 9;4`.
+- Desktop notifications and progress indicators that programs send over `OSC 9` and `OSC 9;4`, and program status over `OSC 7501`.
 - Full-screen programs such as `vim`, `htop`, `less` and `man` run on their own screen, and your history comes back when they exit.
 - Bracketed paste, a choice of cursor styles, the Kitty keyboard protocol, and clipboard writes from command-line programs over `OSC 52`.
 
@@ -26,7 +26,7 @@ The page comes from [web-terminal-ui](https://github.com/cplieger/web-terminal-u
 - Paste an image, and the page uploads it and types its path for kiro-cli to attach. [Uploads](configuration.md#uploads) has the details.
 - Typing shows on screen before the server answers, so it feels instant over a slow link.
 - Tap the terminal to focus it. A button returns to the bottom and follows new output again.
-- A status dot on each tab shows whether its session is working, done or waiting for your answer. The waiting dot clears once the question is answered, denied or cancelled, including a question raised by a workflow step or a subagent.
+- A status dot on each tab shows whether its session is working, done, failed or waiting for your answer. The waiting dot clears once the question is answered, denied or cancelled, including a question raised by a workflow step or a subagent.
 - Input methods for composed characters, keyboard access, themes and reduced motion.
 
 ## Recovery after sleep and dropped connections

@@ -798,30 +798,28 @@ func TestChildEnvComposesBothOverlays(t *testing.T) {
 	})
 }
 
-// TestClassifyStatus pins the kiro-cli OSC 9 -> latched-status mapping that
-// drives the tab activity dots. It was an inline closure with no test, so a
-// typo or an upstream wording drift in the magic strings would silently break
-// the dots. The switch is case-sensitive, so a case mismatch must NOT latch.
-func TestClassifyStatus(t *testing.T) {
+// TestClassifyNotification pins kiro-cli's two OSC 9 ask wordings, exact and
+// case-sensitive, as the only text that classifies. "Response complete" must stay unclassified: it also follows a
+// turn OSC 7501 reports as error, and a done latch would mask that error.
+func TestClassifyNotification(t *testing.T) {
 	cases := []struct {
 		name      string
 		msg       string
 		want      string
 		wantLatch bool
 	}{
-		{name: "response complete latches done", msg: "Response complete", want: terminal.StatusDone, wantLatch: true},
 		{name: "permission required latches input", msg: "Permission required", want: terminal.StatusInput, wantLatch: true},
 		{name: "input required latches input", msg: "Input required", want: terminal.StatusInput, wantLatch: true},
+		{name: "response complete is ignored", msg: "Response complete", want: "", wantLatch: false},
 		{name: "unknown message is ignored", msg: "Working on it", want: "", wantLatch: false},
 		{name: "empty message is ignored", msg: "", want: "", wantLatch: false},
-		{name: "case mismatch is ignored", msg: "response complete", want: "", wantLatch: false},
+		{name: "case mismatch is ignored", msg: "permission required", want: "", wantLatch: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			classify := newStatusClassifier(false)
-			got, latch := classify(tc.msg)
+			got, latch := classifyNotification(tc.msg)
 			if got != tc.want || latch != tc.wantLatch {
-				t.Errorf("newStatusClassifier()(%q) = (%q, %v), want (%q, %v)", tc.msg, got, latch, tc.want, tc.wantLatch)
+				t.Errorf("classifyNotification(%q) = (%q, %v), want (%q, %v)", tc.msg, got, latch, tc.want, tc.wantLatch)
 			}
 		})
 	}
@@ -1581,95 +1579,6 @@ func TestComposeGate_syncingResponseIncludesRetryAfter(t *testing.T) {
 	}
 	if got := rec.Header().Get("Retry-After"); got != "5" {
 		t.Errorf("syncing response Retry-After = %q, want %q", got, "5")
-	}
-}
-
-// TestNotifyFingerprint pins the log-hygiene substitution the classifier applies
-// to arbitrary child output before ANY of it reaches the log: the notification
-// text is replaced by a fixed-width, content-free HMAC-SHA-256 prefix, KEYED
-// with a per-classifier secret that never appears in the log stream. Four
-// properties carry the whole contract, and each has a distinct failure the
-// classifier's own tests cannot see:
-//
-//   - fixed width and hex-only, so no amount of child output can widen or
-//     shape the record (a fingerprint that leaked input length or characters
-//     would be a partial copy of the secret it exists to withhold);
-//   - stable for equal input under one key, which is what lets an operator
-//     correlate the Warn with its Debug twin and tell a repeat from a new
-//     wording;
-//   - distinct for different input, so two wordings are not conflated into
-//     "the same unrecognized notification";
-//   - KEY-DEPENDENT, which is the property an unkeyed digest lacked: the
-//     plaintext here is low-entropy by nature (a device code, a short token),
-//     so an unkeyed hash lets a log reader enumerate candidates offline and
-//     confirm one by comparing digests. Under a key the log does not carry,
-//     that oracle does not exist — and this assertion is what would fail if
-//     someone "simplified" the HMAC back to a plain SHA-256.
-//
-// The keys below are injected by the test rather than drawn: the production key
-// is generated per classifier and deliberately unreachable (see
-// notifyFingerprinter), so these properties are pinned against keys the test
-// owns.
-func TestNotifyFingerprint(t *testing.T) {
-	const secret = "verify at https://example.com/device?user_code=ABCD-EFGH"
-	fp := notifyFingerprinter{key: []byte("test-key-one-0123456789abcdef0123")}
-	otherKey := notifyFingerprinter{key: []byte("test-key-two-0123456789abcdef0123")}
-	inputs := map[string]string{
-		"empty":              "",
-		"short wording":      "Response complete",
-		"secret-shaped":      secret,
-		"multi-byte":         strings.Repeat("\u2192", 300),
-		"invalid utf-8":      "\xff\xfe not utf8",
-		"one rune different": "Response complet",
-	}
-	seen := make(map[string]string, len(inputs))
-	for name, msg := range inputs {
-		t.Run(name, func(t *testing.T) {
-			got := fp.fingerprint(msg)
-			if len(got) != notifyFingerprintHexDigits {
-				t.Errorf("fingerprint(%q) = %q (%d chars), want exactly %d; the record's width must not depend on child output", msg, got, len(got), notifyFingerprintHexDigits)
-			}
-			// Hex-only is the confidentiality assertion proper: no character of
-			// the notification (a token, a device code) can appear in the record.
-			if strings.Trim(got, "0123456789abcdef") != "" {
-				t.Errorf("fingerprint(%q) = %q, want lowercase hex only; anything else means child output reached the log verbatim", msg, got)
-			}
-			if again := fp.fingerprint(msg); again != got {
-				t.Errorf("fingerprint(%q) is unstable (%q then %q); an operator could not correlate the Warn with its Debug twin", msg, got, again)
-			}
-			// metadata is the integration point: it supplies the attrs routes.go
-			// logs, and only an EQUALITY against the keyed fingerprint pins that
-			// the emitted value IS this HMAC. Every shape assertion above (16
-			// lowercase hex digits, stable across the Warn/Debug pair) is equally
-			// satisfied by another hex-shaped transform of child output --
-			// hex.EncodeToString([]byte(msg))[:16] carries the plaintext and
-			// would keep this whole test green.
-			meta := fp.metadata(msg)
-			if len(meta) != 4 || meta[0] != "message_fingerprint" || meta[1] != got ||
-				meta[2] != "message_runes" || meta[3] != len([]rune(msg)) {
-				t.Errorf("metadata(%q) = %v, want [message_fingerprint %s message_runes %d]; the logged attribute must BE the keyed fingerprint, not another hex-shaped encoding of the notification", msg, meta, got, len([]rune(msg)))
-			}
-		})
-		got := fp.fingerprint(msg)
-		if other, dup := seen[got]; dup {
-			t.Errorf("fingerprint collides for %q and %q (both %q); two distinct wordings would read as one", msg, other, got)
-		}
-		seen[got] = msg
-	}
-
-	// The property the key exists for, stated on the input class that motivated
-	// it: a device code is short and drawn from a small alphabet, so an UNKEYED
-	// digest of it is recoverable by offline enumeration. Two keys must not
-	// agree on it — a plain hash would.
-	const deviceCode = "ABCD-EFGH"
-	underOneKey := fp.fingerprint(deviceCode)
-	underAnotherKey := otherKey.fingerprint(deviceCode)
-	if underOneKey == underAnotherKey {
-		t.Errorf("fingerprint(%q) = %q under two different keys; the identifier is unkeyed, so anyone reading the log can enumerate short candidates offline and confirm the notification's text", deviceCode, underOneKey)
-	}
-
-	if keyed := fp.metadata(deviceCode); len(keyed) != 4 || keyed[0] != "message_fingerprint" {
-		t.Errorf("keyed metadata(%q) = %v, want [message_fingerprint <hex> message_runes <n>]", deviceCode, keyed)
 	}
 }
 

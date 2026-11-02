@@ -1469,108 +1469,6 @@ func TestToolsStatus_callbackAndHealthReadAreRaceClean(t *testing.T) {
 	wg.Wait()
 }
 
-// TestParseLogOSCText_warnsByNameOnly pins the PRODUCTION knob read, which is
-// where the confidentiality property lives — and it is the ONLY test of it,
-// deliberately: the read is envx.BoolStrict, which emits no records at all, so a
-// test that captured slog around the library call alone would satisfy the "no raw
-// value in the log" claim vacuously and would stay green if main went back to
-// envx.Bool. This drives parseLogOSCText, the function main calls, so the
-// assertions cover the real call path: envx.BoolStrict plus THIS function's
-// diagnostics, which are the only log sites the knob has.
-//
-// Four properties, each a distinct regression:
-//   - the accepted VOCABULARY is envx's (true/1/yes/on, false/0/no/off,
-//     case-insensitive, padding ignored). It is asserted here rather than against
-//     a local parser because there is no local parser any more: BoolStrict shares
-//     one parser with envx.Bool, and this table is what notices if the read is
-//     ever swapped for something with a different grammar (e.g. strconv.ParseBool,
-//     which accepts "t"/"f" — pinned below as malformed);
-//   - a malformed value fails CLOSED to false, so a typo cannot widen what
-//     content reaches the log store;
-//   - the malformed path emits exactly ONE Warn, naming the key and carrying no
-//     copy of the raw value in its message or in any attribute. The returned
-//     error is deliberately not logged either, so this holds however envx words
-//     it;
-//   - the ON path warns about the widened content, and the default path is
-//     silent.
-//
-// Serial: capture.Default mutates the process-global default logger.
-func TestParseLogOSCText_warnsByNameOnly(t *testing.T) {
-	const token = "s3cr3t-token-abc123"
-	const onMsg = "LOG_OSC_TEXT is on"
-	const badMsg = "unparseable LOG_OSC_TEXT"
-	cases := map[string]struct {
-		raw       string
-		wantValue bool
-		wantWarns int
-		wantMsg   string
-		// rawMustStayOut asks for the confidentiality assertion. It is set only
-		// for values distinctive enough that finding one in the log PROVES a
-		// leak: "on", "0" and "t" occur as substrings of ordinary words in
-		// these two warnings, so asserting their absence would fail on wording
-		// alone and say nothing about the value.
-		rawMustStayOut bool
-	}{
-		// The whole accepted vocabulary, both spellings of every truth value,
-		// plus the case and padding tolerance.
-		"true":                 {raw: "true", wantValue: true, wantWarns: 1, wantMsg: onMsg},
-		"1":                    {raw: "1", wantValue: true, wantWarns: 1, wantMsg: onMsg},
-		"yes":                  {raw: "yes", wantValue: true, wantWarns: 1, wantMsg: onMsg},
-		"on":                   {raw: "on", wantValue: true, wantWarns: 1, wantMsg: onMsg},
-		"TRUE uppercase":       {raw: "TRUE", wantValue: true, wantWarns: 1, wantMsg: onMsg},
-		"yes padded":           {raw: "  yes  ", wantValue: true, wantWarns: 1, wantMsg: onMsg},
-		"false":                {raw: "false", wantValue: false, wantWarns: 0},
-		"0":                    {raw: "0", wantValue: false, wantWarns: 0},
-		"no":                   {raw: "no", wantValue: false, wantWarns: 0},
-		"off":                  {raw: "off", wantValue: false, wantWarns: 0},
-		"OFF uppercase padded": {raw: " OFF ", wantValue: false, wantWarns: 0},
-
-		// Unset and blank are not parse failures: they are the silent default.
-		"unset is the silent default":       {raw: "", wantValue: false, wantWarns: 0},
-		"whitespace-only is the same thing": {raw: "   ", wantValue: false, wantWarns: 0},
-
-		// Malformed: fail closed, one Warn, no echo. The token case is the shape
-		// that motivates BoolStrict over Bool (a compose expansion mistake).
-		"token-shaped value fails closed and warns by name": {
-			raw: token, wantValue: false, wantWarns: 1, wantMsg: badMsg, rawMustStayOut: true,
-		},
-		"a typo of true is malformed, not false": {
-			raw: "ture", wantValue: false, wantWarns: 1, wantMsg: badMsg, rawMustStayOut: true,
-		},
-		"a word outside the vocabulary is malformed": {
-			raw: "enabled", wantValue: false, wantWarns: 1, wantMsg: badMsg, rawMustStayOut: true,
-		},
-		// strconv.ParseBool accepts "t"; envx's grammar does not. This is the
-		// case that fails if the read is swapped for the stdlib parser.
-		"t is not a spelling of true": {
-			raw: "t", wantValue: false, wantWarns: 1, wantMsg: badMsg,
-		},
-		"a number other than 0 or 1 is malformed": {
-			raw: "2", wantValue: false, wantWarns: 1, wantMsg: badMsg,
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			records := capture.Default(t)
-			t.Setenv("LOG_OSC_TEXT", tc.raw)
-
-			if got := parseLogOSCText(); got != tc.wantValue {
-				t.Errorf("parseLogOSCText() with %q = %v, want %v", tc.raw, got, tc.wantValue)
-			}
-			if got := records.CountLevel(slog.LevelWarn, ""); got != tc.wantWarns {
-				t.Errorf("log = %q, want exactly %d Warn (got %d)", records.Messages(), tc.wantWarns, got)
-			}
-			if tc.wantMsg != "" && records.CountLevel(slog.LevelWarn, tc.wantMsg) != 1 {
-				t.Errorf("log = %q, want a Warn containing %q", records.Messages(), tc.wantMsg)
-			}
-			if tc.rawMustStayOut && logContains(records, tc.raw) {
-				t.Errorf("log = %q carries the raw LOG_OSC_TEXT value; a compose expansion mistake can put a credential on this key, so the malformed path must warn by NAME only (this is why the read is envx.BoolStrict and not envx.Bool, whose malformed Warn carries the value)",
-					records.Messages())
-			}
-		})
-	}
-}
-
 // The TRUSTED_INSTALL_UIDS warning, duplicated verbatim from
 // parseTrustedInstallUIDs (main.go). Duplicating the prose is the point, as it is
 // for the TRUSTED_PROXIES hints: this record is the ONLY thing an operator sees
@@ -1698,8 +1596,7 @@ func TestParseTrustedInstallUIDs(t *testing.T) {
 // ACCEPTS still gets toolbelt's answer. The wrapper exists only because
 // toolbelt's parser calls scheduler.ParseInterval WITHOUT
 // scheduler.WithRedactedValue, so its own fallback warning echoes the raw string
-// — the CWE-532 shape the LOG_OSC_TEXT remedy closed on a knob of exactly
-// this kind. Dropping the wrapper (calling toolbelt.ParseCatalogRefresh
+// — the CWE-532 shape. Dropping the wrapper (calling toolbelt.ParseCatalogRefresh
 // directly) leaves every other test green.
 // Serial: capture.Default mutates the process-global default logger.
 func TestParseCatalogRefresh_warnsByNameOnly(t *testing.T) {
