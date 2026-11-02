@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -32,7 +33,7 @@ import (
 	"github.com/cplieger/slogx"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // staticFS holds the served asset tree. It embeds the DIRECTORY rather than a file
@@ -50,13 +51,13 @@ var staticFS embed.FS
 // subset used, so one typo cannot disable proxy awareness entirely — and it never
 // fails open: unset yields nil, "trust nothing", which logs the unspoofable socket
 // peer.
-func parseTrustedProxies() []*net.IPNet {
+func parseTrustedProxies() []netip.Prefix {
 	const key = "TRUSTED_PROXIES"
 	v := envx.String(key)
 	if v == "" {
 		return nil
 	}
-	nets, invalid := webhttp.ParseCIDRs(strings.Split(v, ","))
+	prefixes, invalid := webhttp.ParseCIDRs(strings.Split(v, ","))
 	if len(invalid) > 0 {
 		// Count-only: a compose expansion mistake could put a credential in an
 		// entry, so the rejected raw values never reach the log.
@@ -65,19 +66,19 @@ func parseTrustedProxies() []*net.IPNet {
 			"hint", "each entry must be a CIDR (e.g. 192.0.2.0/28) or a bare IP (e.g. 192.0.2.5)")
 	}
 	// A default route (0.0.0.0/0 or ::/0) parses cleanly but can never describe a proxy
-	// SET, and it breaks client-IP resolution both ways: a same-family chain exhausts the
-	// trusted-hop walk and falls back to the socket peer (the proxy — exactly what setting
-	// this var was meant to stop logging), while an entry of the OTHER address family is
-	// never skipped, so a forged X-Forwarded-For becomes the logged client_ip. Warn by
+	// SET: every hop it covers is trusted, so the walk exhausts and falls back to the
+	// socket peer (the proxy, exactly what setting this var was meant to stop logging).
+	// ::/0 covers IPv4 too through the mapped form, but 0.0.0.0/0 never covers an IPv6
+	// entry, so there a forged IPv6 X-Forwarded-For becomes the logged client_ip. Warn by
 	// PREFIX LENGTH only, never the raw entry.
-	for _, n := range nets {
-		if ones, _ := n.Mask.Size(); ones == 0 {
-			slog.Warn(key+" contains a default route (0.0.0.0/0 or ::/0); every peer counts as a proxy, so client_ip logs the proxy itself and a forged X-Forwarded-For of the other address family can choose the logged client",
+	for _, p := range prefixes {
+		if p.Bits() == 0 {
+			slog.Warn(key+" contains a default route (0.0.0.0/0 or ::/0): every peer it covers counts as a proxy, so client_ip logs the proxy itself, and under 0.0.0.0/0 a forged IPv6 X-Forwarded-For can choose the logged client",
 				"hint", "list only the reverse proxy's own address(es), e.g. 192.0.2.0/28 or 192.0.2.100; leave "+key+" unset to log the unspoofable socket peer")
 			break
 		}
 	}
-	return nets
+	return prefixes
 }
 
 // parseAllowedHosts reads the comma-separated ALLOWED_HOSTS list of exact hostnames
@@ -1462,13 +1463,14 @@ func canonicalPathGuard(next http.Handler) http.Handler {
 }
 
 // buildHandler wraps the route mux in the middleware stack: Logging -> Recoverer ->
-// wsAttachLog -> SecurityHeaders -> host allowlist -> CrossOriginProtection ->
+// Gzip -> wsAttachLog -> SecurityHeaders -> host allowlist -> CrossOriginProtection ->
 // canonicalPathGuard -> mux. The order is the contract: Logging outermost so it sees
-// every final status; Recoverer inside it so the line records the 500; wsAttachLog
+// every final status; Recoverer inside it so the line records the 500; Gzip inside
+// Recoverer so a panic before the body was sent still answers 500; wsAttachLog
 // outside the host gate so a rejected Host still leaves a record; SecurityHeaders
 // outside the origin gate so a rejected request still carries the headers; the host
 // allowlist BEFORE the origin gate, since rebinding makes Origin and Host agree.
-func buildHandler(mux http.Handler, trustedProxies []*net.IPNet, csp string, hostPolicy *webhttp.HostPolicy) http.Handler {
+func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, hostPolicy *webhttp.HostPolicy) http.Handler {
 	return webhttp.Chain(mux,
 		webhttp.Logging(
 			webhttp.WithLogger(slog.Default()),
@@ -1506,6 +1508,10 @@ func buildHandler(mux http.Handler, trustedProxies []*net.IPNet, csp string, hos
 			webhttp.WithClientIP(trustedProxies...),
 		),
 		webhttp.Recoverer(webhttp.WithRecoverLogger(slog.Default())),
+		// The default JSON-only type list keeps the SSE stream (text/event-stream)
+		// unbuffered and identity; a /ws 101 is never a compression candidate and its
+		// hijack passes through; StaticHandler's assets arrive already gzipped.
+		webhttp.Gzip(),
 		wsAttachLog(trustedProxies),
 		webhttp.SecurityHeaders(
 			webhttp.WithCSP(csp),
@@ -1537,7 +1543,7 @@ const wsAttachMsg = "terminal attach attempt"
 // leaked id could be replayed with nothing to show an operator afterwards (CWE-778).
 // Logged at request start, so a rejected Host or unknown-session close is recorded
 // too, and the attacker-chosen session param stays an attribute the handler quotes.
-func wsAttachLog(trustedProxies []*net.IPNet) func(http.Handler) http.Handler {
+func wsAttachLog(trustedProxies []netip.Prefix) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == terminal.WSPath && isWebSocketUpgrade(r) {
