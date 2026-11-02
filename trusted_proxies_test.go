@@ -367,8 +367,7 @@ func captureTextLog(t *testing.T) *bytes.Buffer {
 	// against the DEFAULT level, which is what makes the probe demotion
 	// observable.
 	handler, _ := slogx.NewHandler(slogx.Options{Output: &buf})
-	saveLogGlobals(t)
-	slog.SetDefault(slog.New(handler))
+	capture.SwapDefault(t, slog.New(handler))
 	return &buf
 }
 

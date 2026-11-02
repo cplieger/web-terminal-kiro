@@ -198,9 +198,9 @@ COPY required-tools.txt bundled-tools.json ./
 # daily; the pin means the baked fallback is a REVIEWED catalog, while
 # the runtime refresh keeps a running container current.
 # renovate: datasource=github-releases depName=cplieger/tool-catalog
-ARG TOOL_CATALOG_VERSION=v2026.10.28
+ARG TOOL_CATALOG_VERSION=v2026.10.31
 # repin: dep=cplieger/tool-catalog url=https://github.com/cplieger/tool-catalog/releases/download/{version}/tool-catalog.json
-ARG TOOL_CATALOG_SHA256=734e79b7fbabdcaf79de3ab361f93ca7edb52d0772126858791dffc1f31dec84 # tool-catalog v2026.07.24.1907
+ARG TOOL_CATALOG_SHA256=872012a5bf50779aa591349f4e1c0ff3d70d5d36fbe8356d3584a9323ed50840 # tool-catalog v2026.07.24.1907
 ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/download/${TOOL_CATALOG_VERSION}/tool-catalog.json
 # The build-time verifier is the SAME module go.mod requires (the runtime engine
 # that re-verifies required-tools.txt before every catalog swap), and that is now
@@ -276,15 +276,15 @@ RUN set -e; mkdir -p static/vendor/fonts; \
 # Both packages ship TS source only; they are extracted side by side under
 # static-src/node_modules/@cplieger so tsc resolves the UI's engine import.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.2.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.4.0
 # sha256 of the tarball: npm's dist.integrity is SHA-512, so this digest cannot be
 # copied from the registry; a hand bump of the version re-runs scripts/repin-sha.sh.
 # repin: dep=@cplieger/web-terminal-engine url=https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=18d0ca02fc219a8dca3385d4cccb1b303dbdd2c93b9ea0479de61073e73088b1
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=549ef58cd29acfe05cc1c4aad6b16436ed75719fc217039ae4db4a10d457fe28
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.5.0
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.6.0
 # repin: dep=@cplieger/web-terminal-ui url=https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=f0f3d588f1eb73406b0413d1a8f3f83728021665e25a00fe318209b5845f6ebb
+ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=dcc4eebe1ad1edf08d0473f9fcd40b537221a687fcf4b90562241317c0d282a2
 # The served bundle is built from the ARG pins while local dev compiles against
 # static-src/package.json, and nothing else fails when the two disagree. go.mod
 # is deliberately not compared: the engine's Go module and npm package version
@@ -485,6 +485,10 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 #   - xz-utils: .tar.xz extraction for tools the toolbelt engine
 #     installs at runtime (several aqua/mise catalog entries ship
 #     .tar.xz archives)
+#   - bubblewrap + socat: kiro-cli's opt-in command sandbox and its network
+#     proxy. bwrap is diverted off PATH (end of this RUN) so kiro-cli only
+#     finds it through the shim the server exposes after its startup check
+#     passes (sandbox.go); a later apt upgrade lands on the diverted path too.
 #
 # Session persistence is handled by the shared web-terminal-engine
 # vt package — the server keeps an authoritative cell buffer and
@@ -511,6 +515,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN echo "OS package refresh: ${PKG_REFRESH}" \
     && apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     bash \
+    bubblewrap \
     ca-certificates \
     curl \
     git \
@@ -519,9 +524,14 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
     libasound2 \
     libatomic1 \
     openssh-client \
+    socat \
     unzip \
     xz-utils \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && install -d -m 0755 /opt/web-terminal-kiro/libexec \
+    && dpkg-divert --local --rename --divert /opt/web-terminal-kiro/libexec/bwrap --add /usr/bin/bwrap \
+    && test ! -e /usr/bin/bwrap \
+    && /opt/web-terminal-kiro/libexec/bwrap --version
 
 # Language servers and developer tools (gh, linters, runtimes) are NOT
 # baked into the image: the server's toolbelt engine installs them from
@@ -575,6 +585,10 @@ COPY --chmod=755 entrypoint.sh /opt/web-terminal-kiro/entrypoint.sh
 # executable rather than a function in entrypoint.sh; entrypoint.sh only seeds the
 # hook CONFIG that points at this path. See sessiontitle.go.
 COPY --chmod=755 hooks/session-title.sh /opt/web-terminal-kiro/hooks/session-title.sh
+# With KIRO_CLI_SANDBOX on, a tab's PATH leads with one of these two, so the
+# bwrap kiro-cli resolves is the checked shim or one that refuses (sandbox.go).
+COPY --chmod=755 sandbox/bwrap.sh /opt/web-terminal-kiro/sandbox/bin/bwrap
+COPY --chmod=755 sandbox/bwrap-unavailable.sh /opt/web-terminal-kiro/sandbox/unavailable/bwrap
 
 # Where a pasted image lands (upload.go). Made at build time because the container
 # may run as a non-root user, and sticky world-writable like /tmp for the same reason.

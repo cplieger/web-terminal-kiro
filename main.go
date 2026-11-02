@@ -342,14 +342,17 @@ func checkWorkDir(workDir string) error {
 // lifecycle. Keeping the body here rather than in main is what lets the deferred
 // teardown run on every failure path.
 func run() error {
+	// First: a kiro-cli session lock written before this instant belongs to a dead boot
+	// (sweepStaleKiroLocks).
+	bootTime := time.Now()
 	setupLogging()
 
 	// The shutdown context every long-lived goroutine in run() keys its exit
 	// off: the tools convergence watcher and boot-convergence waiter inside
-	// startTools, the session-title poller, and the server's request contexts
-	// via BaseContext. The pre-drain hook cancels it. It is created before
-	// startTools because a goroutine handed context.Background() has an exit
-	// path that can never fire. startKiroCLI keeps its own separate root.
+	// startTools, the session-title poller, the tab restorer, and the server's
+	// request contexts via BaseContext. The pre-drain hook cancels it. It is
+	// created before startTools because a goroutine handed context.Background()
+	// has an exit path that can never fire. startKiroCLI keeps its own root.
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
 
@@ -432,12 +435,25 @@ func run() error {
 		chatArgs:           chatArgs,
 		trustedInstallUIDs: parseTrustedInstallUIDs(),
 	})
+	sandbox := startSandbox(baseCtx, parseSandboxOptIn(), workDir, envx.String("HOME"))
 
 	mux := http.NewServeMux()
 	var ready webhttp.Ready
 
+	// The saved tab set, read before anything can save over it.
+	store := newTabStore(configMountDir)
+	if store == nil {
+		slog.Info("tab restore off: no /config mount", "path", configMountDir)
+	}
+	set, restoreOK := store.load(baseCtx)
+
 	// sessionPollers owns the state-directory verdict: refused means inject nothing, sweep nothing.
-	pollers := newSessionPollers(titleStateRoot, envx.String("HOME"))
+	pollers := newSessionPollers(titleStateRoot, envx.String("HOME"), store)
+
+	// True from boot until the restorer finished; holds session creation and the layout
+	// read meanwhile so no page adds a tab beside what the restore brings back.
+	var restorePending atomic.Bool
+	restorePending.Store(restoreOK && len(set.Sessions) > 0)
 
 	// The subsystem teardown, named once and deferred once, so a third subsystem is
 	// added in one place. Every return below runs it.
@@ -469,11 +485,11 @@ func run() error {
 			"hint", "add `init: true` to the compose service (or run with `docker run --init`) so an init at PID 1 reaps orphans; the shipped compose.yaml marks it required")
 	}
 
-	mgr := registerRoutes(mux, &routeDeps{
+	deps := &routeDeps{
 		static:          staticSrv,
 		listenHint:      loopbackHint(addr),
 		cmd:             kiro.cmd,
-		sessionEnv:      kiro.env,
+		sessionEnv:      sandbox.sessionEnv(kiro.env),
 		sessionTitleEnv: pollers.sessionEnv,
 		sessionActivity: pollers.workflows.sessionActivity,
 		workDir:         workDir,
@@ -481,6 +497,7 @@ func run() error {
 		scrollback:      scrollback,
 		ready:           &ready,
 		kiroReady:       kiro.ready,
+		restoring:       restorePending.Load,
 		kiroRescan:      kiro.rescan,
 		logOSCText:      logOSCText,
 		tools:           tools.engine,
@@ -488,21 +505,11 @@ func run() error {
 		toolsState:      tools.state,
 		toolsMissing:    tools.missing,
 		containment:     startContainment(),
-	})
-
-	// The engine's blocking teardown, on whatever budget the caller hands it. An
-	// expiry means a session's teardown (reaping the child, ending its cgroup,
-	// sweeping /proc for escapees) did not finish inside the grace, which is
-	// otherwise silent: there is no branch to take, because the process is
-	// stopping either way, so the only useful thing to do is say so. It is also
-	// the one place that reports a stranded session tree at shutdown, which this
-	// container carries no mem_limit to catch later.
-	shutdownSessions := func(ctx context.Context) {
-		if teardownErr := mgr.Shutdown(ctx); teardownErr != nil {
-			slog.Warn("session teardown did not finish within the shutdown grace",
-				"grace", shutdownGrace, "error", teardownErr)
-		}
+		sandbox:         sandbox.state,
 	}
+	build := newSessionBuilder(deps)
+	mgr := registerRoutes(mux, deps, build(""))
+	shutdownSessions := newSessionShutdown(cancelBase, mgr)
 
 	var lc net.ListenConfig
 	ln, err := lc.Listen(context.Background(), "tcp", addr)
@@ -526,6 +533,22 @@ func run() error {
 
 	// Bound to baseCtx, which the pre-drain hook cancels.
 	go pollers.run(baseCtx, mgr)
+	var restorer *tabRestorer
+	if restorePending.Load() {
+		restorer = newTabRestorer(pollers.titles, &set, build, &restorePending)
+	} else {
+		store.arm()
+	}
+	// The sweep goes first: a restored tab resuming onto a stale lock would refuse to open.
+	go func() {
+		sweepStaleKiroLocks(baseCtx, pollers.titles.sessionsRoot, bootTime)
+		if restorer != nil {
+			restorer.run(baseCtx, mgr, func() bool {
+				kiroOK, _ := kiro.ready()
+				return kiroOK && !tools.syncing()
+			}, store)
+		}
+	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM)
@@ -563,12 +586,12 @@ func run() error {
 }
 
 // The layout facts this app brings to the kiro-cli install: where the convenience
-// symlink goes, and what its own SHELL-era installer left on the volume.
+// symlinks go, and what its own SHELL-era installer left on the volume.
 const (
-	// kiroLinkDir holds the non-authoritative `docker exec … kiro-cli` convenience
-	// symlink. It is co-owned by the toolbelt engine, which publishes bin/<tool>
-	// symlinks of its own — which is why the legacy sweep names its targets instead
-	// of scanning it.
+	// kiroLinkDir holds the non-authoritative convenience symlinks a `docker exec`
+	// shell resolves kiro-cli and its sidecars through. It is co-owned by the
+	// toolbelt engine, which publishes bin/<tool> symlinks of its own — which is
+	// why the legacy sweep names its targets instead of scanning it.
 	kiroLinkDir = "bin"
 	// legacyStagePrefix prefixed the shell installer's staging trees directly under
 	// the tools dir, so anything matching this is an orphan its EXIT trap missed on
@@ -791,6 +814,9 @@ func kiroSettings() []pinstall.Assertion {
 		// clipboard tool the image lacks and skips OSC 52 (kirodotdev/Kiro#11820). Shift+drag
 		// stays the browser's own selection.
 		kirocli.Setting("chat.fullscreenCopyOnSelect", false),
+		// The image runs every tab as root by design (docs/hardening.md), so kiro-cli's
+		// warning at each chat start that it is running as root is noise here.
+		kirocli.Setting("app.warnOnElevatedPrivileges", false),
 	}
 }
 
@@ -1178,7 +1204,7 @@ func toolsConfig(cfg *baseTools, toolsRoot string, onJob func(*toolbelt.Job)) *t
 			Interval: cfg.refreshInterval,
 		},
 		Seed:         toolbelt.DefaultSeed(),
-		System:       []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
+		System:       []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash", "socat"},
 		Logger:       slog.Default(),
 		OnJobChanged: onJob,
 		GitHubToken:  githubTokenSource(cfg.githubToken),

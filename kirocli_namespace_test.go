@@ -3,9 +3,9 @@ package main
 // Two engines write into the same persistent tools tree: toolbelt owns bin/,
 // opt/, npm/ and python/ (unit is opt/<tool>/<version>/ plus a
 // force-replaced bin/<tool> symlink), and the kiro-cli install manager owns
-// kiro-cli-versions/<version>/ plus one convenience symlink. The namespace
-// split is the only thing that keeps them from deleting each other's
-// installs.
+// kiro-cli-versions/<version>/ plus a convenience symlink per installed
+// artifact. The namespace split is the only thing that keeps them from
+// deleting each other's installs.
 //
 // These tests plant a toolbelt footprint for a tool literally named
 // `kiro-cli` -- the worst case, not a hypothetical: the engine's name
@@ -90,12 +90,12 @@ func (e *nsEnv) manager() *pinstall.Manager {
 // The tree's primary artifact is a script that records its own execution,
 // so "never READ" is observable rather than inferred.
 //
-// bin/kiro-cli is deliberately NOT linked here: the convenience symlink
-// force-replaces that ONE path by design, so a boot legitimately owns it and
-// its end state cannot distinguish "refused then republished" from "deleted
-// then republished" (the library's purge suite pins the refusal). The
-// sidecar links below are touched by NO code path, which is what makes them
-// the assertable half.
+// bin/kiro-cli is deliberately NOT linked here: the install manager owns a
+// link only where the slot is empty or already points into its own version
+// tree, so a foreign link at any declared name must survive, and the caller
+// asserts that for the sidecar names. Leaving the primary name free lets the
+// same boot also prove the manager publishes its own link where nothing
+// foreign sits (the library's purge suite pins the foreign-primary case).
 //
 // It returns every path that must survive untouched, plus the tree directory.
 func (e *nsEnv) plantToolbeltKiroCLI(linked ...string) (survivors []string, tree string) {
@@ -287,7 +287,7 @@ func TestToolbeltKiroCLIFootprintSurvivesABoot(t *testing.T) {
 	if strings.HasPrefix(mgr.Path(), tree+string(filepath.Separator)) {
 		t.Fatalf("Path() = %q resolves INSIDE the toolbelt-owned tree", mgr.Path())
 	}
-	// The convenience symlink is the one path in the shared bin dir a boot owns: it
+	// The primary name was left free, so the boot publishes its own link there: it
 	// must point into the app's own install, never at the colliding tree.
 	link := filepath.Join(env.tools, kiroLinkDir, nsTool)
 	target, err := os.Readlink(link)
@@ -461,14 +461,14 @@ func TestLegacySweepSparesToolbeltSymlinks(t *testing.T) {
 // bin dir can only find another owner's files. A SECOND boot must
 // therefore remove nothing at all.
 //
-// The sidecar name is the replant target because nothing republishes it:
-// the primary's path in the shared bin dir is legitimately overwritten by
-// the convenience symlink on every boot, so it could not tell a sweep from
-// a publish.
+// The term dispatcher is the replant target because nothing republishes it:
+// this app declares no kiro-cli-term artifact, while every artifact it does
+// declare gets a convenience symlink at its name on every boot, which could
+// not tell a sweep from a publish.
 func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 	env := newNSEnv(t)
 	env.plantOwnVersion()
-	residue := env.plantLegacyResidue(nsTool + "-chat")
+	residue := env.plantLegacyResidue(nsTool + "-term")
 
 	if err := env.manager().Ensure(t.Context()); err != nil {
 		t.Fatalf("first Ensure: %v", err)
@@ -485,7 +485,7 @@ func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 
 	// Plant the sweep's own targets again, in the shape it removes. Only a second
 	// pass could take them.
-	replanted := env.plantLegacyResidue(nsTool + "-chat")
+	replanted := env.plantLegacyResidue(nsTool + "-term")
 	if err := env.manager().Ensure(t.Context()); err != nil {
 		t.Fatalf("second Ensure: %v", err)
 	}

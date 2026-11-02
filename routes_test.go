@@ -466,6 +466,41 @@ func TestAPICachePolicy_EveryAPIPathSetsNoStore(t *testing.T) {
 	}
 }
 
+// TestSessionSeenRoute pins that the engine's seen route is reachable through the
+// app's own chain: a read on one device clears the unread dot on every other one
+// only if the ack reaches the manager.
+func TestSessionSeenRoute(t *testing.T) {
+	deps := newToolsDeps(t)
+	mux, mgr, csp := mustRegisterRoutes(t, deps)
+	quietTeardown(t, deps)
+	h := buildHandler(mux, nil, csp, nil)
+	liveID, err := mgr.Create()
+	if err != nil {
+		t.Fatalf("mgr.Create: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		id   string
+		body string
+		want int
+	}{
+		{"a live session", string(liveID), `{"seq":0}`, http.StatusNoContent},
+		{"an unknown session", "deadbeef", `{"seq":0}`, http.StatusNotFound},
+		{"a body without seq", string(liveID), `{}`, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, terminal.SessionsPath+"/"+tc.id+"/seen", strings.NewReader(tc.body))
+			req.RemoteAddr = "127.0.0.1:54321"
+			req.Host = "localhost:9848"
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Errorf("PUT seen %s = %d, want %d; body %q", tc.body, rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestAPICachePolicy_UnmatchedAPIPathCarriesNoDirective records the ONE thing
 // the /api/-wide wrapper used to do that nothing does now, as a decision rather
 // than an oversight: an /api/ path no route matches gets no Cache-Control.
@@ -885,6 +920,10 @@ func TestHealthEndpoint_envelopeMatchesTheLibrary(t *testing.T) {
 		// Unknown is absent, so "not counted yet" can never be misread as
 		// converged.
 		{"an uncounted tree omits the field", depsWithToolsMissing(false, 0), http.StatusOK, `{"status":"ok","tools":"ok"}`},
+		// The sandbox state is informational and last, on 200 and 503 alike: an
+		// operator reads "unavailable" while the instance is still starting.
+		{"ready carries the sandbox state last", withSandbox(depsWithToolsMissing(true, 0), sandboxAvailable), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":0,"sandbox":"available"}`},
+		{"unready carries the sandbox state", withSandbox(newTestDeps(false), sandboxUnavailable), http.StatusServiceUnavailable, `{"status":"unready","reason":"starting up or shutting down","sandbox":"unavailable"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mux, _, _ := mustRegisterRoutes(t, tc.deps)
@@ -939,7 +978,7 @@ func libraryEnvelope(t *testing.T, ready bool) (body, cacheControl string) {
 	return strings.TrimSpace(rec.Body.String()), rec.Header().Get("Cache-Control")
 }
 
-// withDefaultPolicies fills the four routeDeps POLICY functions with the
+// withDefaultPolicies fills the routeDeps POLICY functions with the
 // permissive off-shape defaults main.go's composition root supplies
 // (unmanagedKiroRuntime, degradedRuntime, startTools' absent-config-dir arm), so
 // a test literal only names the fields it cares about. registerRoutes' policy
@@ -950,6 +989,7 @@ func withDefaultPolicies(d *routeDeps) *routeDeps {
 	d.toolsState = func() string { return "" }
 	d.toolsMissing = func() (int, bool) { return 0, false }
 	d.kiroReady = func() (bool, string) { return true, "" }
+	d.restoring = func() bool { return false }
 	d.sessionEnv = func() []string { return nil }
 	return d
 }
@@ -1014,6 +1054,12 @@ func depsWithToolsMissing(known bool, n int) *routeDeps {
 	return d
 }
 
+// withSandbox sets the startup check's state on deps.
+func withSandbox(d *routeDeps, state string) *routeDeps {
+	d.sandbox = state
+	return d
+}
+
 // shutdownManager tears the manager down at the end of a test and fails it when
 // the teardown does not finish. It builds its own context rather than taking the
 // test's: a subtest's context is already cancelled by the time cleanups run, so a
@@ -1053,7 +1099,7 @@ func mustRegisterRoutes(t *testing.T, deps *routeDeps) (*http.ServeMux, *termina
 	t.Helper()
 	mux := http.NewServeMux()
 	_, csp := testStaticSurface()
-	mgr := registerRoutes(mux, deps)
+	mgr := registerRoutes(mux, deps, newSessionBuilder(deps)(""))
 	t.Cleanup(func() { shutdownManager(t, mgr) })
 	return mux, mgr, csp
 }
@@ -1174,7 +1220,7 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	// A non-default port, so the assertion below fails if the refusal goes back to a
 	// hardcoded address instead of this deployment's own.
 	deps.listenHint = loopbackHint(":8080")
-	mgr := registerRoutes(mux, deps)
+	mgr := registerRoutes(mux, deps, newSessionBuilder(deps)(""))
 	t.Cleanup(func() { shutdownManager(t, mgr) })
 
 	// Remote peer: refused, even claiming loopback via forwarded headers.
@@ -1333,7 +1379,7 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 func TestToolsAPI_LoopbackOnly_malformedPeerFailsClosed(t *testing.T) {
 	mux := http.NewServeMux()
 	deps := newToolsDeps(t)
-	mgr := registerRoutes(mux, deps)
+	mgr := registerRoutes(mux, deps, newSessionBuilder(deps)(""))
 	t.Cleanup(func() { shutdownManager(t, mgr) })
 
 	for _, tc := range []struct{ name, remoteAddr string }{
@@ -1376,7 +1422,7 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 	syncing.Store(true)
 	deps.toolsSyncing = syncing.Load
 	deps.toolsState = func() string { return "syncing" }
-	mgr := registerRoutes(mux, deps)
+	mgr := registerRoutes(mux, deps, newSessionBuilder(deps)(""))
 	t.Cleanup(func() { shutdownManager(t, mgr) })
 
 	create := func() *httptest.ResponseRecorder {

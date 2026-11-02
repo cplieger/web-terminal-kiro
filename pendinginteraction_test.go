@@ -45,6 +45,10 @@ type fakeLatchStore struct {
 
 func (s *fakeLatchStore) List() []terminal.SessionInfo { return s.sessions }
 
+func (*fakeLatchStore) CaptureSessionSet(func(terminal.SessionInfo) string) terminal.SessionSet {
+	return terminal.SessionSet{}
+}
+
 func (s *fakeLatchStore) StatusLatch(id terminal.SessionID) (string, uint64, bool) {
 	l, ok := s.latches[id]
 	if !ok {

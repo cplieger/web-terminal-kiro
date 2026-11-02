@@ -178,8 +178,8 @@ done
 # past preflight and leaves node_modules broken — cp exits on a literal
 # unmatched *.ts, or tsc exits 1 with no input files, in both cases only after
 # the destructive overlay. Match the basename, not the full path (so a checkout
-# path containing 'fuzz' is not itself excluded); src/test-helpers/ is pruned as a
-# DIRECTORY because recursion would otherwise pull test-support modules (which
+# path containing 'fuzz' is not itself excluded); a vitest setup file is
+# `*-setup.ts`, and every test-helpers/ is pruned as a DIRECTORY because recursion would otherwise pull test-support modules (which
 # carry no *.test.ts basename) into the vendor emit and make the dev build depend
 # on test-only code typechecking under --strict — the published tarball excludes
 # them, so this keeps the local overlay matching what the image gets. The list
@@ -187,14 +187,15 @@ done
 # drift.
 mapfile -d '' -t engine_src < <(cd "$ENGINE_DIR/web/src" && find . \
   -type d -name 'test-helpers' -prune -o \
-  -type f -name '*.ts' ! -name '*.test.ts' ! -name '*fuzz*' ! -name '*fc-strict-setup*' -print0)
+  -type f -name '*.ts' ! -name '*.test.ts' ! -name '*fuzz*' ! -name '*-setup.ts' -print0)
 [ "${#engine_src[@]}" -gt 0 ] || {
   printf 'error: engine-src-empty: no eligible *.ts under %s (wrong ENGINE_DIR or src layout change?)\n' \
     "$ENGINE_DIR/web/src" >&2
   exit 1
 }
 mapfile -d '' -t ui_src < <(cd "$UI_DIR/src" && find . \
-  -type f -name '*.ts' ! -name '*.test.ts' ! -name '*fuzz*' ! -name '*fc-strict-setup*' -print0)
+  -type d -name 'test-helpers' -prune -o \
+  -type f -name '*.ts' ! -name '*.test.ts' ! -name '*fuzz*' ! -name '*-setup.ts' -print0)
 [ "${#ui_src[@]}" -gt 0 ] || {
   printf 'error: ui-src-empty: no eligible *.ts under %s (wrong UI_DIR or src layout change?)\n' \
     "$UI_DIR/src" >&2

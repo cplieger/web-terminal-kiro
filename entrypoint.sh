@@ -320,7 +320,7 @@ warn_if_tools_noexec() {
 # rename, so it never writes there; this sweep covers pre-existing volumes and
 # an installer resolving its prefix via getpwuid rather than $HOME. The
 # manager owns the matching sweep of $TOOLS/bin (and republishes the
-# convenience symlink there), so this script must not touch that dir.
+# convenience symlinks there), so this script must not touch that dir.
 #
 # rm -rf, not rm -f: `rm -f` fails on a directory, which would turn a hygiene
 # step into a boot failure at any caller that checked the status. The return
@@ -499,12 +499,12 @@ warn_legacy_tool_metadata() {
 # boot that installs nothing, so a renamed key or subcommand makes every
 # container report kiro-cli unavailable.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.29.1"
-KIRO_CLI_SHA256="5bad52ebd8b3f32fd28fc832cf260a0ffb5a90d87c2951fe9edd3ed7d043dc0d"
+KIRO_CLI_VERSION="2.37.1"
+KIRO_CLI_SHA256="b4049000d5a7b684947306eb9f9a480cab3a3ab2ff42584c293d05bde4d314a1"
 # The `# kiro-cli <version>` trailer is Renovate's version anchor for this
 # arch's digest lookup — do not hand-edit or drop it.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="2fb2a5aabbae3f1c6147f301a2b5f2e597277ba91165802869254305876d4cc1" # kiro-cli 2.29.1
+KIRO_CLI_SHA256_ARM64="e589bd8d8b845bb193b9f36f2ee263fe8aef7dbb19aff03ce44c5076ce6ab0c1" # kiro-cli 2.37.1
 
 export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
 KIRO_CLI_TOOLS_DIR="$TOOLS"
@@ -673,10 +673,10 @@ tightened_tool_bins=0
 for tool_bin in "$TOOLS/bin"/*; do
   # An unmatched glob, or a dangling symlink -- nothing that can be executed.
   [ -e "$tool_bin" ] || continue
-  # Exactly `kiro-cli` is the manager's own republished convenience symlink
-  # (for `docker exec … kiro-cli --version`); skip the exact name rather than
-  # a kiro-cli* prefix, since this dir is co-owned by the toolbelt engine.
-  case "${tool_bin##*/}" in kiro-cli) continue ;; esac
+  # No name is exempt, the manager's own convenience symlinks included: their
+  # targets sit under kiro-cli-versions/, tightened by the loop above, so they
+  # pass the mode check below. The manager yields to a foreign entry at those
+  # names, and that entry must be checked like any other.
   tool_bin_mode=$(stat -Lc '%a' "$tool_bin" 2>/dev/null) || tool_bin_mode=""
   if [ -n "$tool_bin_mode" ] && [ $((8#$tool_bin_mode & 0022)) -eq 0 ]; then
     continue

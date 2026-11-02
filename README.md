@@ -69,7 +69,7 @@ services:
 
 Run `docker logs web-terminal-kiro`. You should see `web-terminal-kiro listening`, then `version active` once kiro-cli has downloaded. Until then, a new tab answers `kiro-cli installing`. The log also warns that `ALLOWED_HOSTS` is unset until you set it.
 
-Leave out any `user:` line. The image runs as root so that `git`, `gh` and SSH work. Files it writes to the mounted folders therefore belong to root on the host. Sessions end when the container restarts, and your sign-in, settings and tools stay in `/config`.
+Leave out any `user:` line. The image runs as root so that `git`, `gh` and SSH work. Files it writes to the mounted folders therefore belong to root on the host. Tabs come back after a restart, each resuming its kiro-cli conversation, and your sign-in, settings and tools stay in `/config`. The output of `!` shell commands and anything else outside kiro-cli's own transcript is not restored. [How it works](docs/how-it-works.md#tabs-after-a-restart) has the details.
 
 ## Adding tools and language servers
 
@@ -78,6 +78,27 @@ The image ships kiro-cli, `git` and basic utilities. Everything else is listed i
 ## Adding MCP servers
 
 kiro-cli reads MCP servers from `/config/home/.kiro/settings/mcp.json`, which stays on the volume. Edit that file, or run `docker exec -it web-terminal-kiro kiro-cli mcp add --scope global <name> ...`. Use `--scope global`, because the default scope applies only under `/workspace`. kiro-cli reads the file when a session starts, so open a new tab afterwards.
+
+## Turning on the command sandbox
+
+kiro-cli can run each command the agent starts in a bubblewrap sandbox, which keeps the system read-only, hides SSH keys and tokens, and blocks the network unless you allow it. Docker's defaults block it, so it needs both profiles from this repository, and so a host with AppArmor, such as Debian or Ubuntu.
+
+1. Copy [`sandbox/seccomp.json`](sandbox/seccomp.json) and [`sandbox/web-terminal-kiro-sandbox`](sandbox/web-terminal-kiro-sandbox) to `/opt/appdata/web-terminal-kiro/sandbox/`.
+2. Run `sudo apparmor_parser -r -W /opt/appdata/web-terminal-kiro/sandbox/web-terminal-kiro-sandbox`, and copy that file to `/etc/apparmor.d/` so it loads after a reboot.
+3. Change the service as below, keeping its other `environment:` lines, then recreate the container.
+4. In a tab, run `/sandbox` and turn it on.
+
+```yaml
+    environment:
+      - GH_TOKEN
+      - GITHUB_TOKEN
+      - KIRO_CLI_SANDBOX=true
+    security_opt:
+      - "seccomp=/opt/appdata/web-terminal-kiro/sandbox/seccomp.json"
+      - "apparmor=web-terminal-kiro-sandbox"
+```
+
+The log then shows `kiro-cli sandbox available`, or warns `kiro-cli sandbox unavailable` with the reason. The check also reports unavailable unless the container runs under the `web-terminal-kiro-sandbox` profile in enforce mode, because Docker ignores `apparmor=` on a host without AppArmor and the seccomp profile alone leaves mounts unchecked. [Command sandbox](docs/sandbox.md) explains that check and each profile rule.
 
 ## Configuration reference
 
@@ -103,7 +124,7 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 | `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the kiro-cli install folder. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
 | `LOG_OSC_TEXT` | Log the text of unrecognized terminal notifications at `debug`. That text can hold a token, so turn it on only while diagnosing. | `false` |
 
-[Configuration](docs/configuration.md) lists three more settings and the details of each one.
+[Configuration](docs/configuration.md) lists four more settings and the details of each one.
 
 | Mount | Description |
 | --- | --- |
@@ -135,6 +156,7 @@ The healthcheck asks `/api/health` every 30 seconds whether kiro-cli is ready, a
 - The kiro-cli install fails with a permission error. The disk behind `/config` must allow running programs.
 - A page answers `host not allowed`. Add that host name to `ALLOWED_HOSTS`.
 - The log warns that GitHub's rate limit for requests without a token was reached. Set `GH_TOKEN` to a GitHub token and recreate the container.
+- The log warns `kiro-cli sandbox unavailable`. Apply both profiles from [Turning on the command sandbox](#turning-on-the-command-sandbox).
 
 [How it works](docs/how-it-works.md) explains startup failures and the install in more detail.
 
@@ -143,6 +165,7 @@ The healthcheck asks `/api/health` every 30 seconds whether kiro-cli is ready, a
 - [Configuration](docs/configuration.md) lists every setting and what it changes.
 - [Tools](docs/tools.md) covers the tool list, the catalog and the in-container commands.
 - [Security](docs/hardening.md) covers the reverse proxy, stored scrollback and what the image contains.
+- [Command sandbox](docs/sandbox.md) explains the profile rules and the startup check.
 - [Features](docs/features.md) lists what the terminal supports, on desktop and on touch.
 - [How it works](docs/how-it-works.md) covers the kiro-cli install, health, logs and the projects this is built on.
 

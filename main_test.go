@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -2884,50 +2883,6 @@ func TestParseCatalogRefreshStillWarnsByName(t *testing.T) {
 	t.Errorf("no warning named %s for an unusable value; the operator gets no diagnostic at all", catalogRefreshKey)
 }
 
-// saveLogGlobals captures the three globals slog.SetDefault mutates and restores
-// them when the test ends; call it before the swap.
-//
-// SetDefault also aims the log package at the installed handler and skips that
-// redirect for slog's own default handler, so reinstalling the previous logger
-// cannot undo it; slog's default handler emits through log.Output, so a dead log
-// writer silences the package. slog restores first because a non-default previous
-// handler re-runs the redirect.
-func saveLogGlobals(t *testing.T) {
-	t.Helper()
-	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(prevLogger)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-}
-
-// TestSaveLogGlobalsRestoresTheLogPackageToo red-checks the two restores saveLogGlobals owns
-// beyond slog's own; drop either and this test fails.
-func TestSaveLogGlobalsRestoresTheLogPackageToo(t *testing.T) {
-	prevWriter, prevFlags := log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
-	// Neither the process default nor what SetDefault installs (a slog
-	// handlerWriter and 0), so neither assertion can pass by coincidence.
-	log.SetOutput(io.Discard)
-	log.SetFlags(log.Lshortfile)
-
-	t.Run("swap", func(t *testing.T) {
-		saveLogGlobals(t)
-		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	})
-
-	if got := log.Writer(); got != io.Discard {
-		t.Errorf("log.Writer() = %T, want the writer set before the swap: slog.SetDefault aimed log at its own handler and restoring slog alone leaves it there", got)
-	}
-	if got := log.Flags(); got != log.Lshortfile {
-		t.Errorf("log.Flags() = %d, want %d: slog.SetDefault zeroes them and restoring slog alone leaves them at zero", got, log.Lshortfile)
-	}
-}
-
 // setupLoggingStderr runs setupLogging with os.Stderr replaced by a pipe and
 // returns everything the handler it INSTALLED wrote while doing so. Nothing
 // cheaper works: setupLogging's own slogx.Setup replaces the default logger, so
@@ -2943,7 +2898,7 @@ func setupLoggingStderr(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	saveLogGlobals(t)
+	capture.SwapDefault(t, slog.New(slog.DiscardHandler))
 	prevStderr := os.Stderr
 	t.Cleanup(func() {
 		os.Stderr = prevStderr
@@ -3040,15 +2995,21 @@ func TestSetupLoggingInstallsTheParsedLevelAndWarnsByNameOnly(t *testing.T) {
 	}
 }
 
-func TestKiroSettingsTurnsFullscreenCopyOnSelectOff(t *testing.T) {
-	const key = "chat.fullscreenCopyOnSelect"
-	want := []string{"settings", key, "false"}
-	settings := kiroSettings()
-	i := slices.IndexFunc(settings, func(a pinstall.Assertion) bool { return a.Name == key })
-	if i < 0 {
-		t.Fatalf("kiroSettings() has no %q assertion", key)
-	}
-	if got := settings[i].Args; !slices.Equal(got, want) {
-		t.Errorf("kiroSettings() assertion %q = %q, want %q", key, got, want)
+func TestKiroSettingsTurnsSettingsOff(t *testing.T) {
+	for _, key := range []string{
+		"chat.fullscreenCopyOnSelect",
+		"app.warnOnElevatedPrivileges",
+	} {
+		t.Run(key, func(t *testing.T) {
+			want := []string{"settings", key, "false"}
+			settings := kiroSettings()
+			i := slices.IndexFunc(settings, func(a pinstall.Assertion) bool { return a.Name == key })
+			if i < 0 {
+				t.Fatalf("kiroSettings() has no %q assertion", key)
+			}
+			if got := settings[i].Args; !slices.Equal(got, want) {
+				t.Errorf("kiroSettings() assertion %q = %q, want %q", key, got, want)
+			}
+		})
 	}
 }

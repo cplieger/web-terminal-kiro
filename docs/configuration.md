@@ -25,6 +25,7 @@ Settings are environment variables on the container, under `environment:` in `co
 | `GITHUB_TOKEN` | Read in place of `GH_TOKEN` when that one is unset or empty. | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the kiro-cli install folder. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
 | `LOG_OSC_TEXT` | Log the text of unrecognized terminal notifications at `debug`. That text can hold a token, so turn it on only while diagnosing. | `false` |
+| `KIRO_CLI_SANDBOX` | Check at start that kiro-cli's command sandbox can run, and give it bubblewrap when it can. Needs the profiles in [Command sandbox](sandbox.md). | `false` |
 
 ## ALLOWED_HOSTS
 
@@ -44,7 +45,7 @@ The image's healthcheck calls `127.0.0.1` on the port taken from this value. A l
 
 ## KIRO_CLI_CHAT_ARGS
 
-Use it for any flag `kiro-cli chat` accepts, for example `--effort high` or `--v3`. The flags go only to `kiro-cli chat`, not to the sign-in commands. Their values never reach the log. The startup line records only how many flags there are.
+Use it for any flag `kiro-cli chat` accepts, for example `--effort high` or `--v3`. The flags go only to `kiro-cli chat`, not to the sign-in commands. Their values never reach the log. The startup line records only how many flags there are. The flags also apply to every conversation restored after a restart, so a `--model` or `--agent` given here replaces the model or agent that conversation was using.
 
 ## LOG_LEVEL
 
@@ -75,6 +76,10 @@ Each user ID you list states that the account is already as privileged as this s
 ## LOG_OSC_TEXT
 
 Any program running in the terminal can send a notification, so the text can hold a token, a sign-in code or an address with a token in it. With this off, the log still records a fingerprint and a length for each wording. Turn it on only for an active diagnosis. The server logs a warning at startup while it is on.
+
+## KIRO_CLI_SANDBOX
+
+Set it to `true` once the container runs with both the seccomp and AppArmor profiles from [Command sandbox](sandbox.md), which needs a host with AppArmor. At each start the server then checks that the container runs under that AppArmor profile, runs one command in kiro-cli's sandbox, and logs whether both worked. Only when it worked does kiro-cli get a working bubblewrap, so `/sandbox` does not report a sandbox that cannot run. `true`, `yes`, `on` and `1` turn it on, in any letter case, and `false`, `no`, `off` and `0` leave it off. Any other value also leaves it off, with a warning. `/api/health` reports the result in its `sandbox` field.
 
 ## Uploads
 
