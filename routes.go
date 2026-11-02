@@ -2,10 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,9 +10,7 @@ import (
 	"path"
 	"slices"
 	"strings"
-	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"
@@ -102,10 +96,6 @@ type routeDeps struct {
 	uploadDir string
 	// sandbox is the startup check's /api/health state; "" omits the field.
 	sandbox string
-	// logOSCText is the LOG_OSC_TEXT opt-in: when true, an unrecognized OSC 9
-	// notification's full text is logged at Debug. Default false — arbitrary child
-	// output that may carry a token or device code.
-	logOSCText bool
 }
 
 // buildStaticSurface assembles the embedded-static serving surface: the static handler
@@ -137,7 +127,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 
 	mgrOpts := []terminal.ManagerOption{
 		terminal.WithManagerLogger(slog.Default()),
-		terminal.WithStatusClassifier(newStatusClassifier(deps.logOSCText)),
+		terminal.WithStatusClassifier(classifyNotification),
 	}
 	if deps.sessionActivity != nil {
 		mgrOpts = append(mgrOpts, terminal.WithSessionActivity(deps.sessionActivity))
@@ -301,9 +291,9 @@ func newSessionBuilder(deps *routeDeps) func(resumeID string) func(terminal.Sess
 }
 
 func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID) *terminal.Handler {
-	// WithKeepUnfocused pins the process to the DEC 1004 "unfocused" state so kiro-cli
-	// keeps emitting its focus-gated OSC 9 notifications even though no browser tab
-	// claims focus; web-terminal-server deliberately does not use this.
+	// WithKeepUnfocused pins DEC 1004 "unfocused" so kiro-cli keeps emitting the focus-gated
+	// OSC 9 notifications that browser notifications and classifyNotification read;
+	// web-terminal-server deliberately does not use this.
 	//
 	// No TERM_PROGRAM override: the engine advertises iTerm.app, which puts kiro-cli in
 	// its OSC 9;4 progress allowlist and enables DEC 2026 synchronized output.
@@ -437,172 +427,17 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 // quiet branch asserts an ABSENCE, which a reworded literal would satisfy vacuously.
 const sessionFastDeathMsg = "session process exited almost immediately after start; kiro-cli may be missing or broken"
 
-// unrecognizedNotifyMsg is the one wording both the bounded Warn and the per-occurrence
-// Debug emit, so the two records a log search correlates cannot drift apart.
-const unrecognizedNotifyMsg = "unrecognized kiro-cli OSC 9 notification; tab status dots will not latch (kiro-cli notification wording may have changed on a version bump)"
-
-// unrecognizedNotifyCapMsg is emitted once the distinct-message budget is exhausted, so a
-// silent stop is never mistaken for "nothing new appeared". Shares no substring with
-// unrecognizedNotifyMsg — the two log searches must not match each other.
-const unrecognizedNotifyCapMsg = "kiro-cli OSC 9 notification warn budget exhausted; further distinct wordings are Debug-only (set LOG_LEVEL=debug)"
-
-// recognizedNotifyMsg is the POSITIVE half of the classifier trace. Without it a debug
-// session that sees no classifier records cannot tell "kiro-cli emitted no notification"
-// from "notifications mapped fine, the dot is lost downstream". Logs only the matched
-// literal from the closed switch, never arbitrary child output.
-const recognizedNotifyMsg = "kiro-cli OSC 9 notification mapped to a tab status"
-
-// unrecognizedNotifyCap bounds how many DISTINCT unrecognized notifications are promoted
-// to Warn: log volume, and the seen-set below, whose key comes from child process output
-// and would otherwise grow without limit under a chatty or hostile session.
-const unrecognizedNotifyCap = 8
-
-// unrecognizedNotifyCapRearm is how long the budget-exhausted announcement stays silent
-// before firing again. The seen-set is keyed on CHILD output, so the budget can be spent
-// entirely on benign wordings; re-arming keeps a rewording that begins AFTER exhaustion
-// visible in the default log stream.
-const unrecognizedNotifyCapRearm = 6 * time.Hour
-
-// unrecognizedNotifyHint is the operator-facing next step both Warn arms carry.
-const unrecognizedNotifyHint = `re-verify the "Response complete" / "Permission required" / "Input required" strings in the pinned kiro-cli-chat binary and update newStatusClassifier; set LOG_OSC_TEXT=true with LOG_LEVEL=debug to log the notification text itself (it is arbitrary child output and may contain a token or device code)`
-
-// notifyFingerprintHexDigits bounds the fingerprint written in place of the notification
-// text. 64 bits of HMAC-SHA-256 is far more than enough to tell a handful of distinct
-// wordings apart while staying short enough to read in a log line.
-const notifyFingerprintHexDigits = 16
-
-// notifyFingerprintKeyBytes is the width of the per-classifier HMAC key, generated at
-// classifier construction and never logged.
-const notifyFingerprintKeyBytes = 32
-
-// notifyFingerprinter renders the stable, content-free identifier the log carries INSTEAD
-// of an unrecognized notification's text.
-//
-// A bounded EXCERPT does not redact — a short token or device code fits inside any excerpt
-// (CWE-532). An UNKEYED digest does not either: the plaintext is low-entropy, so a reader
-// holding SHA-256(msg) can enumerate candidates offline. Keying with a secret the log
-// never contains removes that oracle (CWE-760).
-type notifyFingerprinter struct {
-	key []byte
-}
-
-// newNotifyFingerprinter draws the per-classifier key. crypto/rand.Read never returns an
-// error — it crashes the program irrecoverably if the OS source fails — so there is no
-// keyless state to degrade into.
-func newNotifyFingerprinter() notifyFingerprinter {
-	key := make([]byte, notifyFingerprintKeyBytes)
-	_, _ = rand.Read(key) // documented never to fail; it crashes the process instead
-	return notifyFingerprinter{key: key}
-}
-
-// fingerprint returns the leading notifyFingerprintHexDigits hex digits of
-// HMAC-SHA-256(key, msg).
-func (f notifyFingerprinter) fingerprint(msg string) string {
-	mac := hmac.New(sha256.New, f.key)
-	// hash.Hash.Write is documented never to return an error.
-	_, _ = mac.Write([]byte(msg))
-	return hex.EncodeToString(mac.Sum(nil))[:notifyFingerprintHexDigits]
-}
-
-// metadata is the content-free description both the Warn arm and the default Debug arm
-// log: which distinct wording it was, and how long it was.
-func (f notifyFingerprinter) metadata(msg string) []any {
-	return []any{
-		"message_fingerprint", f.fingerprint(msg),
-		"message_runes", utf8.RuneCountInString(msg),
+// classifyNotification maps kiro-cli's two ask notifications to StatusInput and leaves
+// every other OSC 9 text unclassified, so done and error come from OSC 7501 alone. The
+// engine shows a classified notification newer than the last OSC 7501 change until the
+// next one, which covers kiro-cli reporting error over a pending ask
+// (https://github.com/kirodotdev/Kiro/issues/11987).
+func classifyNotification(msg string) (string, bool) {
+	switch msg {
+	case "Permission required", "Input required":
+		return terminal.StatusInput, true
 	}
-}
-
-// notifyWarningState is newStatusClassifier's bounded warn budget for unrecognized OSC 9
-// notifications. One instance per classifier instance, never a package var, so a test
-// gets a fresh budget.
-type notifyWarningState struct {
-	warned map[string]struct{}
-	// lastCapWarn is when the budget-exhausted announcement last fired; the zero value
-	// means never, so the first one always fires.
-	lastCapWarn time.Time
-	// mu guards warned and lastCapWarn.
-	mu sync.Mutex
-}
-
-// observe records msg against the warn budget and reports which record the caller should
-// emit: warnFirst for the first occurrence of a DISTINCT message while budget remains,
-// warnCapped at most once per unrecognizedNotifyCapRearm window for a distinct message the
-// cap turns away. Both false means Debug-only. The engine shares one classifier across
-// every session and calls it from per-session goroutines, so state is mutex guarded and
-// the caller logs OUTSIDE the lock.
-func (s *notifyWarningState) observe(msg string) (warnFirst, warnCapped bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, seen := s.warned[msg]; seen {
-		return false, false
-	}
-	if len(s.warned) < unrecognizedNotifyCap {
-		s.warned[msg] = struct{}{}
-		return true, false
-	}
-	// Re-arms rather than firing once per process: the seen-set fills first-come from
-	// arbitrary child output, so a single announcement would leave a LATER rewording with
-	// no default-level record at all. time.Since saturates for the zero value, so the
-	// first turned-away message announces with no carve-out.
-	if time.Since(s.lastCapWarn) < unrecognizedNotifyCapRearm {
-		return false, false
-	}
-	s.lastCapWarn = time.Now()
-	return false, true
-}
-
-// newStatusClassifier returns the kiro-cli OSC 9 -> session-status mapping the composition
-// root injects into the engine, with a bounded warn latch on DISTINCT unrecognized
-// notifications. Per-DISTINCT rather than one-per-classifier: a single sync.Once was
-// consumed by the first unrecognized message of ANY kind, so a later bump rewording
-// "Response complete" warned NOTHING while every turn-end silently stopped latching.
-//
-// Those three strings live in the kiro-cli-chat SIDECAR binary, not the dispatcher, so
-// re-verify them there on every kiro-cli bump, in the same PR as the pin move.
-func newStatusClassifier(logText bool) func(string) (string, bool) {
-	warnings := notifyWarningState{warned: make(map[string]struct{}, unrecognizedNotifyCap)}
-	fingerprints := newNotifyFingerprinter()
-	return func(msg string) (string, bool) {
-		switch msg {
-		case "Response complete":
-			slog.Debug(recognizedNotifyMsg, "notification", msg, "status", terminal.StatusDone)
-			return terminal.StatusDone, true
-		case "Permission required", "Input required":
-			slog.Debug(recognizedNotifyMsg, "notification", msg, "status", terminal.StatusInput)
-			return terminal.StatusInput, true
-		default:
-			// Any OSC 9 text the pinned kiro-cli build does not emit for turn-end or
-			// tool-approval. If a bump reworded one of the three, every notification lands
-			// here and the per-tab status dots silently stop latching. The Warn never
-			// carries the TEXT: it is arbitrary child output, and sanitizeNotification
-			// guarantees the record cannot be FORGED but redacts NOTHING. Decide under the
-			// lock, log outside it — slog handlers can block on I/O.
-			warnFirst, warnCapped := warnings.observe(msg)
-
-			switch {
-			case warnFirst:
-				slog.Warn(unrecognizedNotifyMsg,
-					append(fingerprints.metadata(msg), "hint", unrecognizedNotifyHint)...)
-			case warnCapped:
-				// The fingerprint of the message that hit the full budget, so a re-armed
-				// announcement identifies WHICH wording drove it — otherwise two firings
-				// six hours apart are indistinguishable from the same wording twice.
-				slog.Warn(unrecognizedNotifyCapMsg,
-					append(fingerprints.metadata(msg),
-						"distinct_limit", unrecognizedNotifyCap,
-						"hint", unrecognizedNotifyHint)...)
-			}
-			// ONE Debug record either way; the opt-in only ADDS the text. The fingerprint
-			// rides along so this record pairs with whichever Warn sent the operator here.
-			attrs := fingerprints.metadata(msg)
-			if logText {
-				attrs = append(attrs, "message", msg)
-			}
-			slog.Debug(unrecognizedNotifyMsg, attrs...)
-			return "", false
-		}
-	}
+	return "", false
 }
 
 // Cache-Control policies handed to webhttp.StaticHandler. Only a content-addressed asset may

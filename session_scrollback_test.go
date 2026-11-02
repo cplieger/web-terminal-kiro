@@ -107,9 +107,9 @@ func TestSessionScrollbackHonoursTheSharedEnvVar(t *testing.T) {
 // retained-history knob: the depth it returns AND what it puts in the log. The
 // log half is what nothing else covers, and it is a house rule rather than a
 // preference — TRUSTED_PROXIES (count only), KIRO_CLI_CHAT_ARGS (flag count),
-// LOG_LEVEL, LOG_OSC_TEXT and TOOL_CATALOG_REFRESH are all read
-// by-name-only because a compose expansion mistake can put a credential on any
-// key (CWE-532), and the last two each carry a test saying so. Four properties:
+// LOG_LEVEL and TOOL_CATALOG_REFRESH are all read by-name-only because a
+// compose expansion mistake can put a credential on any key (CWE-532), and the
+// last carries a test saying so. Four properties:
 //
 //   - absent and blank fall through to the engine default, and do so SILENTLY: a
 //     warning on the path every deployment that never set the knob takes is a

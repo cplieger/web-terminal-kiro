@@ -498,11 +498,11 @@ warn_legacy_tool_metadata() {
 # Exported below and consumed by the server's install manager (cplieger/pinstall,
 # wired by main.go's kiroInstallConfig). They stay shell literals here because
 # that is where Renovate's custom datasource finds them.
-# COUPLING (re-verify on every bump): routes.go's status classifier matches
-# kiro-cli's EXACT OSC 9 notification strings "Response complete", "Permission
-# required" and "Input required" (verified against this version) -- a bump
-# that rewords any of them silently stops the per-tab status dots from
-# latching. Also re-verify `kiro-cli settings app.disableAutoupdates true`
+# COUPLING (re-verify on every bump): the per-tab status dots come from
+# kiro-cli's OSC 7501 reports, and routes.go's classifyNotification matches its
+# EXACT OSC 9 strings "Permission required" and "Input required" -- a bump that
+# drops the reports or rewords either string silently changes the dots. Also
+# re-verify `kiro-cli settings app.disableAutoupdates true`
 # still succeeds: it gates publication of a staged install AND readiness on a
 # boot that installs nothing, so a renamed key or subcommand makes every
 # container report kiro-cli unavailable.
