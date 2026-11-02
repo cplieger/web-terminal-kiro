@@ -811,7 +811,7 @@ func kiroSettings() []pinstall.Assertion {
 		kirocli.SettingRaw("chat.notificationMethod", "osc9"),
 		kirocli.Setting("chat.terminalTitle", false),
 		// On, a full-screen drag reports "Copied" while copying nothing: the drag copy needs a
-		// clipboard tool the image lacks and skips OSC 52 (kirodotdev/Kiro#11820). Shift+drag
+		// clipboard tool the image lacks and skips OSC 52 (kirodotdev/Kiro#12210). Shift+drag
 		// stays the browser's own selection.
 		kirocli.Setting("chat.fullscreenCopyOnSelect", false),
 		// The image runs every tab as root by design (docs/hardening.md), so kiro-cli's
