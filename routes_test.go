@@ -22,7 +22,7 @@ import (
 
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/webhttp/v4"
 )
 
 // TestDebugRoutesNotExposed pins the route surface of registerRoutes: the
@@ -189,17 +189,11 @@ func TestStaticETagRevalidation(t *testing.T) {
 	}
 }
 
-// TestSSEStreamsThroughLoggingMiddleware is the regression guard for the tab
-// status stream behind web-terminal-kiro's own middleware. webhttp.Logging wraps most
-// requests in a webhttp.StatusRecorder; if the SSE path were wrapped by
-// something opaque to streaming the engine's flush probe would fail and the
-// stream would 500. It is instead in Logging's WithSkipPaths set (like /ws), so
-// it flows through the streaming-transparent primitives. This drives
-// /api/sessions/events through the full production middleware stack
-// (buildHandler: Logging + Recoverer + SecurityHeaders + CrossOriginProtection)
-// and asserts the stream opens (200 + text/event-stream) and flushes an event
-// -- also proving the SecurityHeaders/Recoverer layers stay transparent to the
-// SSE stream.
+// TestSSEStreamsThroughLoggingMiddleware drives /api/sessions/events through
+// buildHandler with a gzip-offering client: a layer opaque to streaming would
+// fail the engine's flush probe and answer 500, and a compressing one would
+// buffer the stream. It asserts the stream opens as uncompressed
+// text/event-stream and flushes an event.
 func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	mux, _, csp, id := mustStartSession(t, newTestDeps(true))
 
@@ -209,6 +203,8 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/sessions/events", http.NoBody)
+	// Set by hand, so the transport leaves any Content-Encoding visible.
+	req.Header.Set("Accept-Encoding", "gzip")
 	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET /api/sessions/events: %v", err)
@@ -219,6 +215,9 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
 		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
+	}
+	if ce := resp.Header.Get("Content-Encoding"); ce != "" {
+		t.Fatalf("Content-Encoding = %q, want none (a compressed event stream is buffered, not streamed)", ce)
 	}
 	sc := bufio.NewScanner(resp.Body)
 	for sc.Scan() {
@@ -1394,6 +1393,38 @@ func TestToolsAPI_LoopbackOnly_malformedPeerFailsClosed(t *testing.T) {
 				t.Errorf("RemoteAddr %q: status = %d, want %d (a peer that cannot be proven loopback must be refused)", tc.remoteAddr, rec.Code, http.StatusForbidden)
 			}
 		})
+	}
+}
+
+// TestToolsAPI_ErrorCarriesRequestID pins that a toolbelt error envelope correlates
+// with its access-log line through the real chain. webhttp's request-id context key
+// is private to each major, so a toolbelt built against a different major than the
+// app's Logging writes request_id empty with every other test green.
+func TestToolsAPI_ErrorCarriesRequestID(t *testing.T) {
+	deps := newToolsDeps(t)
+	mux, _, csp := mustRegisterRoutes(t, deps)
+	quietTeardown(t, deps)
+	h := buildHandler(mux, nil, csp, nil)
+
+	req := httptest.NewRequest(http.MethodPost, toolsPath, strings.NewReader("not json"))
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Host = "localhost:9848"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST %s with an undecodable body: status = %d, want 400 (body %s)", toolsPath, rec.Code, rec.Body.String())
+	}
+	var got webhttp.ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body %q is not the webhttp error envelope: %v", rec.Body.String(), err)
+	}
+	header := rec.Header().Get("X-Request-ID")
+	if got.RequestID == "" {
+		t.Errorf("envelope request_id is empty (X-Request-ID %q); a tools-API error must correlate with its access-log line", header)
+	}
+	if got.RequestID != header {
+		t.Errorf("envelope request_id = %q, want the X-Request-ID response header %q", got.RequestID, header)
 	}
 }
 
