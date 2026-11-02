@@ -7,20 +7,13 @@ import (
 	"testing"
 )
 
-// TestKeepUnfocusedWiredIntoSessionFactory pins the OTHER half of the OSC 9
-// notification chain the tab activity dots depend on: registerRoutes' session
-// factory passes terminal.WithKeepUnfocused(), which makes the engine write a
-// DEC 1004 focus-out (ESC [ O) to the PTY whenever the child enables focus
-// reporting, so kiro-cli — which emits its turn/permission notifications only
-// while it believes it is unfocused — keeps emitting them. Nothing asserted
-// this option: TestStatusClassifierWiredIntoManager injects the OSC 9 sequence
-// with printf, so it stays green with the option deleted, and the dots would
-// silently stop latching against the real kiro-cli.
-//
-// The child switches the PTY out of canonical mode (a canonical read would
-// block on the newline-less escape sequence), enables focus reporting, records
-// the first three bytes the server writes back, then stays alive under cat so
-// the session is not torn down mid-write.
+// TestKeepUnfocusedWiredIntoSessionFactory pins terminal.WithKeepUnfocused():
+// the engine writes a DEC 1004 focus-out (ESC [ O) once the child enables focus
+// reporting, so kiro-cli keeps emitting the OSC 9 notifications it sends only
+// while unfocused. The program-status tests inject OSC 9 with printf, so only
+// this test sees the option. The child leaves canonical mode (a canonical read
+// would block on the newline-less sequence), enables focus reporting, records
+// the first three bytes back, then stays alive under cat.
 func TestKeepUnfocusedWiredIntoSessionFactory(t *testing.T) {
 	if _, err := exec.LookPath("stty"); err != nil {
 		// A skip is right on a stripped dev machine, but under CI it would turn
@@ -38,7 +31,7 @@ func TestKeepUnfocusedWiredIntoSessionFactory(t *testing.T) {
 	)
 	mustStartSession(t, deps)
 
-	if got := string(readMarkerWithin(t, marker, 3, "receive a DEC 1004 focus-out after enabling focus reporting; registerRoutes must pass terminal.WithKeepUnfocused() or kiro-cli stops emitting the OSC 9 notifications that latch the tab status dots")); got != "\x1b[O" {
+	if got := string(readMarkerWithin(t, marker, 3, "receive a DEC 1004 focus-out after enabling focus reporting; registerRoutes must pass terminal.WithKeepUnfocused() or kiro-cli stops emitting its OSC 9 notifications")); got != "\x1b[O" {
 		t.Errorf("child received %q, want the DEC 1004 focus-out %q", got, "\x1b[O")
 	}
 }

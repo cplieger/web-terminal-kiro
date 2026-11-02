@@ -15,7 +15,7 @@ Work with the Kiro agent from any device and pick up each session where you left
 - Works on a phone, with on-screen keys for Tab, Esc, the arrows, Enter and Ctrl.
 - Keeps each session running while your phone sleeps or the network drops, and restores the screen on return.
 - Downloads kiro-cli on first start and installs the tools you list, language servers included.
-- Marks each tab as working, done or waiting for your answer.
+- Marks each tab as working, done, failed or waiting for your answer.
 
 ## Who it is for
 
@@ -122,7 +122,6 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 | `GH_TOKEN` | A GitHub token for tool version checks, which raises GitHub's limit of 60 requests an hour. Every tab sees it. Takes precedence over `GITHUB_TOKEN`. | _(unset)_ |
 | `GITHUB_TOKEN` | Read in place of `GH_TOKEN` when that one is unset or empty. | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the kiro-cli install folder. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
-| `LOG_OSC_TEXT` | Log the text of unrecognized terminal notifications at `debug`. That text can hold a token, so turn it on only while diagnosing. | `false` |
 
 [Configuration](docs/configuration.md) lists four more settings and the details of each one.
 

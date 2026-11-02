@@ -14,10 +14,9 @@ import (
 )
 
 type fakePollerSessions struct {
-	sessions   []terminal.SessionInfo
-	lists      atomic.Int32
-	latchReads atomic.Int32
-	captures   atomic.Int32
+	sessions []terminal.SessionInfo
+	lists    atomic.Int32
+	captures atomic.Int32
 }
 
 // fakeCapturedSet is what fakePollerSessions captures: a fixed one-entry set, built
@@ -42,49 +41,8 @@ func (*fakePollerSessions) SetSessionTitle(terminal.SessionID, string) bool { re
 
 func (*fakePollerSessions) SetSessionAlias(terminal.SessionID, string) bool { return true }
 
-func (f *fakePollerSessions) StatusLatch(terminal.SessionID) (string, uint64, bool) {
-	f.latchReads.Add(1)
-	return "", 0, true
-}
-
-func (*fakePollerSessions) WithdrawStatusLatch(terminal.SessionID, string, uint64) bool {
-	return false
-}
-
-func TestSessionPollersJoinTheAskToTheTabInOneTick(t *testing.T) {
-	home := t.TempDir()
-	p := newSessionPollers(filepath.Join(t.TempDir(), "state"), home, nil)
-	if p.sessionEnv == nil {
-		t.Fatal("a verified state directory produced no session title environment")
-	}
-	handle := titleHandleFor(t, p.titles, "tab1")
-	if err := os.WriteFile(filepath.Join(p.titles.stateDir, handle), []byte(pendingFixtureSession+"\n"), 0o600); err != nil {
-		t.Fatalf("write the mapping file: %v", err)
-	}
-	wf := &workflowFixture{t: t, home: home}
-	wf.run("hash0", "wf_live", "running.json", pendingFixtureSession, tabStart.Add(time.Minute))
-	now := time.Now()
-	pf := &pendingFixture{t: t, home: home}
-	pf.messages("hash0", pendingFixtureSession, eventRow("turn_start", "exec-1", now.Add(-time.Hour)))
-	pf.messages("hash1", workflowFixtureStepOne,
-		pendingApprovalRow("step-tool-1", now.Add(-2*time.Second)),
-		resolvedRow("step-tool-1", "accept", now.Add(-time.Second)))
-	store := &fakeLatchStore{
-		latches:  map[terminal.SessionID]fakeLatch{"tab1": {status: terminal.StatusInput, seq: 7}},
-		relatch:  map[terminal.SessionID]fakeLatch{},
-		sessions: []terminal.SessionInfo{{ID: "tab1"}},
-	}
-
-	p.pass(t.Context(), store)
-
-	want := withdrawCall{tab: "tab1", want: terminal.StatusInput, seq: 7, ok: true}
-	if got := store.calls; len(got) != 1 || got[0] != want {
-		t.Errorf("withdraw calls after one tick = %+v, want [%+v]: the tick must map the tab, publish the run's owners and read the step's file in that order", got, want)
-	}
-}
-
 func TestSessionPollersRunUnderTheStateDirectoryGuard(t *testing.T) {
-	t.Run("a verified state directory sweeps all three each tick and stops with its context", func(t *testing.T) {
+	t.Run("a verified state directory sweeps both each tick and stops with its context", func(t *testing.T) {
 		p := newSessionPollers(filepath.Join(t.TempDir(), "state"), t.TempDir(), nil)
 		if p.sessionEnv == nil {
 			t.Fatal("a verified state directory produced no session title environment")
@@ -101,11 +59,8 @@ func TestSessionPollersRunUnderTheStateDirectoryGuard(t *testing.T) {
 			time.Sleep(sessionPollInterval)
 			synctest.Wait()
 
-			if got := mgr.lists.Load(); got != 3 {
-				t.Errorf("List calls after one interval = %d, want 3: one sweep each from the title, workflow and pending pollers", got)
-			}
-			if got := mgr.latchReads.Load(); got != 1 {
-				t.Errorf("StatusLatch calls after one interval = %d, want 1: the pending poller must sweep the manager it was handed", got)
+			if got := mgr.lists.Load(); got != 2 {
+				t.Errorf("List calls after one interval = %d, want 2: one sweep each from the title and workflow pollers", got)
 			}
 
 			cancel()
@@ -181,7 +136,7 @@ func TestSessionPollersRunUnderTheStateDirectoryGuard(t *testing.T) {
 			synctest.Wait()
 
 			if got := mgr.lists.Load(); got != 0 {
-				t.Errorf("List calls after 1.5 intervals = %d, want 0: no title, workflow or pending sweep may run", got)
+				t.Errorf("List calls after 1.5 intervals = %d, want 0: no title or workflow sweep may run", got)
 			}
 			if got := mgr.captures.Load(); got != 1 {
 				t.Errorf("CaptureSessionSet calls after 1.5 intervals = %d, want 1: the tab set is still saved", got)

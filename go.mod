@@ -9,7 +9,7 @@ require (
 	github.com/cplieger/pinstall/v3 v3.1.0
 	github.com/cplieger/runesafe/v3 v3.2.0
 	github.com/cplieger/slogx v1.8.0
-	github.com/cplieger/toolbelt/v3 v3.12.0
+	github.com/cplieger/toolbelt/v3 v3.13.0
 	github.com/cplieger/web-terminal-engine/v6 v6.4.0
 	github.com/cplieger/webhttp/v3 v3.0.3
 )
@@ -21,6 +21,7 @@ require (
 	github.com/cplieger/keyenc v1.1.0 // indirect
 	github.com/cplieger/scheduler/v4 v4.3.0 // indirect
 	github.com/cplieger/ssrf/v4 v4.5.0 // indirect
+	github.com/cplieger/webhttp/v4 v4.0.0 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect

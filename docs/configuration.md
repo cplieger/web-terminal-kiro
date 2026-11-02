@@ -24,7 +24,6 @@ Settings are environment variables on the container, under `environment:` in `co
 | `GH_TOKEN` | A GitHub token for tool version checks, which raises GitHub's limit of 60 requests an hour. Every tab sees it. Takes precedence over `GITHUB_TOKEN`. | _(unset)_ |
 | `GITHUB_TOKEN` | Read in place of `GH_TOKEN` when that one is unset or empty. | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the kiro-cli install folder. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
-| `LOG_OSC_TEXT` | Log the text of unrecognized terminal notifications at `debug`. That text can hold a token, so turn it on only while diagnosing. | `false` |
 | `KIRO_CLI_SANDBOX` | Check at start that kiro-cli's command sandbox can run, and give it bubblewrap when it can. Needs the profiles in [Command sandbox](sandbox.md). | `false` |
 
 ## ALLOWED_HOSTS
@@ -49,7 +48,7 @@ Use it for any flag `kiro-cli chat` accepts, for example `--effort high` or `--v
 
 ## LOG_LEVEL
 
-The value is read in any case, so `DEBUG` works too. `debug` adds the diagnostics behind each tab's status dot, which help when a dot stays stuck.
+The value is read in any case, so `DEBUG` works too. `debug` adds the diagnostics behind each tab's name and the mark a workflow run puts on it, which help when one stays stuck.
 
 ## SCROLLBACK
 
@@ -72,10 +71,6 @@ Every tab inherits the server's environment, so `gh` and other programs in a ter
 Before installing kiro-cli, the server checks who can write each folder on the way to the install under `/config/tools`. It refuses when another account can, because what lands there later runs as root. Leave this unset, which makes no exception, for almost every setup. Set it only when the check refuses a volume you know is safe.
 
 Each user ID you list states that the account is already as privileged as this server. Listing an account that is not hands it a way to run code as root. An entry that is not a whole number above `0` is skipped with a warning that names the variable and how many entries were dropped.
-
-## LOG_OSC_TEXT
-
-Any program running in the terminal can send a notification, so the text can hold a token, a sign-in code or an address with a token in it. With this off, the log still records a fingerprint and a length for each wording. Turn it on only for an active diagnosis. The server logs a warning at startup while it is on.
 
 ## KIRO_CLI_SANDBOX
 

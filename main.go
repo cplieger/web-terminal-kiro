@@ -163,31 +163,6 @@ func parseCatalogRefresh(raw string) time.Duration {
 	return toolbelt.ParseCatalogRefresh(toolbelt.RefreshEnv(raw), catalogRefreshKey)
 }
 
-// parseLogOSCText reads the LOG_OSC_TEXT knob (default false), reporting whether
-// an unrecognized OSC 9 notification's TEXT may be logged. That text is arbitrary
-// child output — any program in the terminal can emit `ESC ] 9 ; <text>` — so it can
-// carry a token or a device code; hence the content-free default.
-//
-// envx.BoolStrict, NOT envx.Bool, and that is the confidentiality property rather
-// than a style choice: Bool's malformed path Warns with the RAW value (CWE-532), while
-// BoolStrict shares its parser but logs nothing.
-func parseLogOSCText() bool {
-	const key = "LOG_OSC_TEXT"
-	logOSCText, _, err := envx.BoolStrict(key)
-	if err != nil {
-		// Fail closed, stated rather than inherited from BoolStrict's zero value.
-		// err itself is never logged.
-		logOSCText = false
-		slog.Warn("unparseable "+key+"; keeping notification text out of the log (the default)",
-			"hint", "use true or false")
-	}
-	if logOSCText {
-		slog.Warn(key+" is on: terminal notification text is logged at debug level and may contain secrets (a token, a device code, a tokenised URL) emitted by any program running in the terminal",
-			"hint", "leave it off outside an active diagnostic session; the default records a content-free fingerprint that still distinguishes kiro-cli wording drift")
-	}
-	return logOSCText
-}
-
 // parseTrustedInstallUIDs decodes TRUSTED_INSTALL_UIDS, a comma-separated list of
 // numeric uids, into the identities pinstall may find with write access to the kiro-cli
 // installation tree without treating custody as broken. EMPTY BY DEFAULT, and the
@@ -408,8 +383,6 @@ func run() error {
 			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.0.2.5,webterm.example.com)")
 	}
 
-	logOSCText := parseLogOSCText()
-
 	// KIRO_CLI_CHAT_ARGS appends extra launch flags to the per-session `kiro-cli
 	// chat` command (whitespace-separated, e.g. "--v3"). The values reach chat as
 	// positional shell params (see sessionCommand), never via string splicing.
@@ -499,7 +472,6 @@ func run() error {
 		kiroReady:       kiro.ready,
 		restoring:       restorePending.Load,
 		kiroRescan:      kiro.rescan,
-		logOSCText:      logOSCText,
 		tools:           tools.engine,
 		toolsSyncing:    tools.syncing,
 		toolsState:      tools.state,
@@ -801,8 +773,8 @@ func kiroInstallConfig(cfg *baseKiro) *pinstall.Config {
 //
 // app.disableAutoupdates is deliberately NOT here: kirocli.Release() declares it
 // Mandatory, so the library forces it Required whatever a deployment passes and the
-// integrity gate cannot be weakened from this list. The two notification settings are
-// load-bearing for the per-tab status dots.
+// integrity gate cannot be weakened from this list. The two notification settings feed
+// browser notifications and classifyNotification.
 func kiroSettings() []pinstall.Assertion {
 	return []pinstall.Assertion{
 		kirocli.Setting("telemetry.enabled", false),
