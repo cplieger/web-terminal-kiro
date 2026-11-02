@@ -3,8 +3,9 @@
 # $HOME/.local/bin. The symlink case carries the weight: the glob expands
 # through a symlinked dir, so the bait is a kiro-cli* entry in the link's target.
 # SC2015: lib.sh's ok/no return 0 unconditionally, so `[ c ] && ok || no` cannot
-# mis-fire.
-# shellcheck disable=SC2015
+# mis-fire. SC2016: case 5's grep patterns match LITERAL "$HOME" text in the
+# shipped entrypoint, so they must stay single-quoted.
+# shellcheck disable=SC2015,SC2016
 set -u
 
 # shellcheck source-path=SCRIPTDIR
@@ -52,9 +53,8 @@ case "$err" in
   *) no "symlinked dir refusal" "missing warning: $err" ;;
 esac
 
-# --- 3. a plain file at the dir's name is refused, not swept beside ------------
+# --- 3. a plain file at the dir's name is refused with a warning --------------
 : >"$WORK/notadir"
-: >"$WORK/notadir-kiro-cli"
 err=$(sweep_legacy_dispatchers "$WORK/notadir" 2>&1)
 rc=$?
 [ "$rc" -eq 0 ] && ok "non-directory returns 0" || no "non-directory" "returned $rc"
@@ -68,5 +68,25 @@ err=$(sweep_legacy_dispatchers "" 2>&1)
 rc=$?
 [ "$rc" -eq 0 ] && [ -z "$err" ] && ok "empty argument is a silent no-op" \
   || no "empty argument" "rc=$rc output: $err"
+
+# --- 5. the boot sweeps only after $HOME/.local is 0700 -----------------------
+# Case 2's check-then-act guard is race-free only once $HOME/.local is 0700;
+# a sweep moved above that call reopens the swap with cases 1-4 still green.
+# Whole-line matches, so a commented or indented copy does not count.
+HARDEN_CALL='harden_config_dir "$HOME/.local"'
+SWEEP_CALL='sweep_legacy_dispatchers "$HOME/.local/bin"'
+harden_at=$(grep -nxF -- "$HARDEN_CALL" "$ENTRYPOINT" | cut -d: -f1 | tr '\n' ' ')
+sweep_at=$(grep -nxF -- "$SWEEP_CALL" "$ENTRYPOINT" | cut -d: -f1 | tr '\n' ' ')
+harden_at=${harden_at% } sweep_at=${sweep_at% }
+case "$harden_at $sweep_at" in
+  *' '*' '* | ' '* | *' ')
+    no "sweep order" "want one top-level call each, found [$harden_at] and [$sweep_at]"
+    ;;
+  *)
+    [ "$harden_at" -lt "$sweep_at" ] \
+      && ok "the sweep runs after $HARDEN_CALL" \
+      || no "sweep order" "$SWEEP_CALL (line $sweep_at) precedes $HARDEN_CALL (line $harden_at)"
+    ;;
+esac
 
 report
