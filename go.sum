@@ -26,8 +26,8 @@ github.com/cplieger/toolbelt/v3 v3.13.0 h1:wXGD0kw8N/OIS+24d+6TET220N3tcbbTrfKSY
 github.com/cplieger/toolbelt/v3 v3.13.0/go.mod h1:N4zypxg2r7/QST+lyLbFQzMER3EY/yFbL+UkPoUYpiQ=
 github.com/cplieger/web-terminal-engine/v6 v6.4.0 h1:DlPJphnQUi0lX43CDEC+z7HnaENzWe2rWDmki/oZPvw=
 github.com/cplieger/web-terminal-engine/v6 v6.4.0/go.mod h1:1hBHO0Lk9kiU3WTF4F0Jb0j5ZugMxTwiBvvGnhZqunM=
-github.com/cplieger/webhttp/v4 v4.1.0-dev.1 h1:9cbw1uCtHwKxClDZQKjEFZJqIGOuA7tjo/PQmCxrz78=
-github.com/cplieger/webhttp/v4 v4.1.0-dev.1/go.mod h1:FsqOl/g8TdMUQ66N8aav21JrQSZSdWMYo0GULI/QIkA=
+github.com/cplieger/webhttp/v4 v4.1.0 h1:Nxdfpg07cUHfbN0FodgFrPYTnsERxSWMorcLxzIXN1k=
+github.com/cplieger/webhttp/v4 v4.1.0/go.mod h1:FsqOl/g8TdMUQ66N8aav21JrQSZSdWMYo0GULI/QIkA=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
 github.com/expr-lang/expr v1.17.8 h1:W1loDTT+0PQf5YteHSTpju2qfUfNoBt4yw9+wOEU9VM=

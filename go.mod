@@ -11,7 +11,7 @@ require (
 	github.com/cplieger/slogx v1.8.0
 	github.com/cplieger/toolbelt/v3 v3.13.0
 	github.com/cplieger/web-terminal-engine/v6 v6.4.0
-	github.com/cplieger/webhttp/v4 v4.1.0-dev.1
+	github.com/cplieger/webhttp/v4 v4.1.0
 )
 
 require (
