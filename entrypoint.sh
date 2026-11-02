@@ -222,7 +222,7 @@ secure_tools_dir() {
   # `owned` decides what an UNRECOVERABLE state costs. This is a dev-box
   # container the operator reshapes, so a broken state must heal itself or be
   # fixable from inside it.
-  #   owned=1  the NINE dirs make_config_dir creates outside $HOME: a symlink or
+  #   owned=1  the THIRTEEN dirs make_config_dir creates outside $HOME: a symlink or
   #            plain file there is anomalous and a reinstall repairs it. Fatal.
   #   owned=0  $TOOLS/go and $TOOLS/go/bin (GOPATH/bin): on PATH but never
   #            created or repaired here, no integrity-gated binary. Warn, skip.
@@ -547,12 +547,17 @@ make_config_dir "$TOOLS/bin"
 # named `kiro-cli` there could delete the active install and its retained
 # predecessor.
 make_config_dir "$TOOLS/opt"
-# The toolbelt engine's two package-manager roots; their bin dirs hold npm -g
-# / uv tool launchers that $TOOLS/bin symlinks into and root executes.
+# The toolbelt engine's two package-manager roots and every directory beneath
+# them its root-integrity check judges: the bin dirs hold the npm -g / uv tool
+# launchers $TOOLS/bin symlinks into, and the others hold what they run.
 make_config_dir "$TOOLS/npm"
 make_config_dir "$TOOLS/npm/bin"
+make_config_dir "$TOOLS/npm/lib"
+make_config_dir "$TOOLS/npm/lib/node_modules"
 make_config_dir "$TOOLS/python"
 make_config_dir "$TOOLS/python/bin"
+make_config_dir "$TOOLS/python/tools"
+make_config_dir "$TOOLS/python/interpreters"
 make_config_dir "$TOOLS/kiro-cli-versions"
 make_config_dir "$HOME/.local"
 make_config_dir "$HOME/.local/bin"
@@ -573,18 +578,12 @@ if ! probe=$(mktemp "$TOOLS/.write-probe.XXXXXX") || ! rm -f "$probe"; then
   fatal '/config/tools is not writable (read-only bind mount?)'
 fi
 
-# Tighten the /config-resident dirs created above (see harden_config_dir for
-# why, and for the symlink guard).
-harden_config_dir "$HOME/.ssh"
-harden_config_dir "$HOME/.kiro/settings"
-harden_config_dir "$HOME/.kiro"
-harden_config_dir "$HOME/.local"
-harden_config_dir "$HOME"
-
-# Same argument one level out, for the tree holding the first-on-PATH binary
-# rather than credentials. /config is checked too: a writable parent lets an
-# attacker replace $TOOLS wholesale. Runs BEFORE the exec, so the taint flag
-# exported below is final by the time the manager reads it.
+# Tightens the tree holding the first-on-PATH binary. /config is checked too: a
+# writable parent lets an attacker replace $TOOLS wholesale. Runs BEFORE the
+# exec, so the taint flag exported below is final by the time the manager reads it.
+# Parents first, here and in the harden_config_dir pass below: each check and
+# chmod acts on a path, which only holds once root alone can write its parent
+# (tools_dir_hardening_test.sh pins the order).
 secure_tools_dir /config
 secure_tools_dir "$TOOLS"
 secure_tools_dir "$TOOLS/bin"
@@ -594,8 +593,20 @@ secure_tools_dir "$TOOLS/kiro-cli-versions"
 # to distrust a version directory and re-download.
 secure_tools_dir "$TOOLS/npm" 0 1
 secure_tools_dir "$TOOLS/npm/bin" 0 1
+secure_tools_dir "$TOOLS/npm/lib" 0 1
+secure_tools_dir "$TOOLS/npm/lib/node_modules" 0 1
 secure_tools_dir "$TOOLS/python" 0 1
 secure_tools_dir "$TOOLS/python/bin" 0 1
+secure_tools_dir "$TOOLS/python/tools" 0 1
+secure_tools_dir "$TOOLS/python/interpreters" 0 1
+
+# The credential-bearing dirs created above (see harden_config_dir for why, and
+# for the symlink guard).
+harden_config_dir "$HOME"
+harden_config_dir "$HOME/.local"
+harden_config_dir "$HOME/.kiro"
+harden_config_dir "$HOME/.kiro/settings"
+harden_config_dir "$HOME/.ssh"
 
 # Writable is not executable, and the install needs both (see the function). Placed
 # below the tightening pass on purpose: the probe is exec'd as root, so it must not
