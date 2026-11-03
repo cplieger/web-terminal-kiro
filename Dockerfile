@@ -198,9 +198,9 @@ COPY required-tools.txt bundled-tools.json ./
 # daily; the pin means the baked fallback is a REVIEWED catalog, while
 # the runtime refresh keeps a running container current.
 # renovate: datasource=github-releases depName=cplieger/tool-catalog
-ARG TOOL_CATALOG_VERSION=v2026.11.02
+ARG TOOL_CATALOG_VERSION=v2026.11.03
 # repin: dep=cplieger/tool-catalog url=https://github.com/cplieger/tool-catalog/releases/download/{version}/tool-catalog.json
-ARG TOOL_CATALOG_SHA256=1e43eb5ea12f6f11b2902bc89de25f3f35cc5e8dcbd389a4e654859da1c559bb # tool-catalog v2026.07.24.1907
+ARG TOOL_CATALOG_SHA256=60c782d2248e7c5dd364978a801897f4b2981049c5ad2043312498b37f198b38 # tool-catalog v2026.07.24.1907
 ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/download/${TOOL_CATALOG_VERSION}/tool-catalog.json
 # The build-time verifier is the SAME module go.mod requires (the runtime engine
 # that re-verifies required-tools.txt before every catalog swap), and that is now
