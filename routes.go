@@ -77,6 +77,9 @@ type routeDeps struct {
 	// directory leading PATH). A nil result leaves the child with the server's own
 	// environment.
 	sessionEnv func() []string
+	// engineEnv returns the high-throughput overlay for kiro-cli's agent engine
+	// (engineTuning.env); nil, or a nil result, adds nothing.
+	engineEnv func() []string
 	// sessionTitleEnv returns the per-session variables a kiro-cli hook needs to
 	// report which kiro session this tab is running (the tab's TITLE HANDLE, not the
 	// session id — see sessiontitle.go). A nil function leaves tabs on the engine's
@@ -256,22 +259,22 @@ func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 }
 
 // childEnv is the environment overlay for one tab's kiro-cli process: the active version's
-// PATH lead, plus the two variables a hook needs to report which kiro session this tab is
-// running. Built as a fresh slice rather than appending to sessionEnv's return, so one
-// session's overlay can never alias another's backing array.
+// PATH lead, the agent-engine overlay, and the two variables a hook needs to report which
+// kiro session this tab is running. Built as a fresh slice rather than appending to
+// sessionEnv's return, so one session's overlay can never alias another's backing array.
 func (d *routeDeps) childEnv(id terminal.SessionID) []string {
 	base := d.sessionEnv()
-	var extra []string
-	if d.sessionTitleEnv != nil {
-		extra = d.sessionTitleEnv(id)
+	var engine, title []string
+	if d.engineEnv != nil {
+		engine = d.engineEnv()
 	}
-	if len(extra) == 0 {
+	if d.sessionTitleEnv != nil {
+		title = d.sessionTitleEnv(id)
+	}
+	if len(engine) == 0 && len(title) == 0 {
 		return base
 	}
-	out := make([]string, 0, len(base)+len(extra))
-	out = append(out, base...)
-	out = append(out, extra...)
-	return out
+	return slices.Concat(base, engine, title)
 }
 
 // newSessionBuilder returns the per-session handler factory for one resume id ("" starts
