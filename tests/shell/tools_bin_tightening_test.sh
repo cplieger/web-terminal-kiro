@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The $TOOLS/bin tightening loop: no entry is exempt by name.
 #
-# The install manager yields to a foreign entry at kiro-cli and kiro-cli-chat
-# instead of replacing it, so a toolbelt link at either name can survive a boot
-# and lead PATH. Its target must be checked and tightened like any other bin
+# The install manager yields to a foreign entry at kiro-cli instead of
+# replacing it, so a toolbelt link at that name can survive a boot and lead
+# PATH. A link a 2.x install left at kiro-cli-chat or kiro-cli-term can too. Its target must be checked and tightened like any other bin
 # entry. The manager's own links need no exemption: their targets sit under
 # kiro-cli-versions/, which an earlier loop tightens.
 #
@@ -46,13 +46,13 @@ for name in kiro-cli kiro-cli-chat kiro-cli-term other-tool; do
 done
 
 tools=$(mktemp -d "$WORK/tools.XXXXXX")
-mkdir -p "$tools/bin" "$tools/kiro-cli-versions/2.0.0"
-: >"$tools/kiro-cli-versions/2.0.0/kiro-cli-chat"
-chmod 0755 "$tools/kiro-cli-versions/2.0.0/kiro-cli-chat"
-ln -s "$tools/kiro-cli-versions/2.0.0/kiro-cli-chat" "$tools/bin/kiro-cli-chat"
+mkdir -p "$tools/bin" "$tools/kiro-cli-versions/3.0.0"
+: >"$tools/kiro-cli-versions/3.0.0/kiro-cli"
+chmod 0755 "$tools/kiro-cli-versions/3.0.0/kiro-cli"
+ln -s "$tools/kiro-cli-versions/3.0.0/kiro-cli" "$tools/bin/kiro-cli"
 run_loop "$tools"
-[ "$(mode_of "$tools/bin/kiro-cli-chat")" = 755 ] && [ ! -s "$WORK/loop.log" ] \
+[ "$(mode_of "$tools/bin/kiro-cli")" = 755 ] && [ ! -s "$WORK/loop.log" ] \
   && ok "a manager link to an already tight version-dir target passes silently" \
-  || no "manager link" "mode $(mode_of "$tools/bin/kiro-cli-chat"), log: $(cat "$WORK/loop.log")"
+  || no "manager link" "mode $(mode_of "$tools/bin/kiro-cli"), log: $(cat "$WORK/loop.log")"
 
 report

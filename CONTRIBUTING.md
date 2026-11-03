@@ -32,9 +32,9 @@ export KIRO_CLI_TOOLS_DIR=/tmp/kweb-tools KIRO_CLI_VERSION=2.14.2
 export KIRO_CLI_SHA256=0000000000000000000000000000000000000000000000000000000000000000
 V="$KIRO_CLI_TOOLS_DIR/kiro-cli-versions/$KIRO_CLI_VERSION"
 mkdir -p "$V"
-cp /path/to/kiro-cli /path/to/kiro-cli-chat "$V/"
+cp /path/to/kiro-cli "$V/"
 printf '%s\n' "$KIRO_CLI_VERSION" >"$V/.complete"
 WORK_DIR=/path/to/folder ./web-terminal-kiro-dev-bin
 ```
 
-With both variables set but no digest for this architecture, the install manager is never built and every session is refused as `kiro-cli unavailable`. Both binaries can be shell scripts. `kiro-cli --version` must print `kiro-cli 2.14.2` and `kiro-cli settings app.disableAutoupdates true` must exit 0, or readiness stays withheld. A failure of any other `settings` call only logs a warning.
+With both variables set but no digest for this architecture, the install manager is never built and every session is refused as `kiro-cli unavailable`. The binary can be a shell script. `kiro-cli --version` must print `kiro-cli 2.14.2` and `kiro-cli settings app.disableAutoupdates true` must exit 0, or readiness stays withheld. A failure of any other `settings` call only logs a warning.

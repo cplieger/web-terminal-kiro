@@ -65,25 +65,26 @@ func execKasNode(node string, args []string) error {
 // engineTuning decides, per tab, whether kiro-cli's agent engine starts through
 // the launcher. A nil *engineTuning is the setting turned off.
 type engineTuning struct {
-	// chatBinary returns the active kiro-cli-chat, or "" while none is installed.
-	chatBinary func() string
-	reported   map[string]bool
-	key        nodeCheckKey
-	node       string
-	validated  string
-	launcher   string
-	verdict    string
-	mu         sync.Mutex
+	// engineBinary returns the active kiro-cli, the binary that embeds the agent
+	// engine and its Node.js, or "" while none is installed.
+	engineBinary func() string
+	reported     map[string]bool
+	key          nodeCheckKey
+	node         string
+	validated    string
+	launcher     string
+	verdict      string
+	mu           sync.Mutex
 }
 
 // nodeCheckKey identifies the files one verdict was computed from.
 type nodeCheckKey struct {
-	node, sum, chat os.FileInfo
-	chatPath        string
+	node, sum, engine os.FileInfo
+	enginePath        string
 }
 
 func (k nodeCheckKey) same(o nodeCheckKey) bool {
-	return k.chatPath == o.chatPath && sameFile(k.node, o.node) && sameFile(k.sum, o.sum) && sameFile(k.chat, o.chat)
+	return k.enginePath == o.enginePath && sameFile(k.node, o.node) && sameFile(k.sum, o.sum) && sameFile(k.engine, o.engine)
 }
 
 func sameFile(a, b os.FileInfo) bool {
@@ -103,7 +104,7 @@ func parseHighThroughput() bool {
 
 // newEngineTuning returns nil when the setting is off or cannot apply, logging why
 // in the second case. dataHome is kiro-cli's data home (kiroDataHome).
-func newEngineTuning(on bool, validated, dataHome string, chatBinary func() string) *engineTuning {
+func newEngineTuning(on bool, validated, dataHome string, engineBinary func() string) *engineTuning {
 	if !on {
 		return nil
 	}
@@ -130,11 +131,11 @@ func newEngineTuning(on bool, validated, dataHome string, chatBinary func() stri
 	}
 	slog.Info("high-throughput flags on for kiro-cli's agent engine", "validated_node", validated)
 	return &engineTuning{
-		chatBinary: chatBinary,
-		node:       filepath.Join(dataHome, "kiro-cli", "node"),
-		validated:  validated,
-		launcher:   kasNodeLauncher,
-		reported:   map[string]bool{},
+		engineBinary: engineBinary,
+		node:         filepath.Join(dataHome, "kiro-cli", "node"),
+		validated:    validated,
+		launcher:     kasNodeLauncher,
+		reported:     map[string]bool{},
 	}
 }
 
@@ -150,7 +151,7 @@ func kiroDataHome() string {
 }
 
 // env is one tab's overlay: the launcher as kiro-cli's agent-engine node when
-// kiro-cli's unpacked Node.js is intact, is the one the active kiro-cli-chat
+// kiro-cli's unpacked Node.js is intact, is the one the active kiro-cli
 // embeds, and is the validated version; else nil, so the tab starts as stock
 // kiro-cli. kiro-cli skips its Node.js unpack while KIRO_KAS_NODE_PATH is set, so
 // a stock start is also what repairs a missing or stale file for the next tab.
@@ -166,7 +167,7 @@ func (t *engineTuning) env() []string {
 		return nil
 	}
 	if !key.same(t.key) {
-		t.key, t.verdict = key, t.check(key.chatPath)
+		t.key, t.verdict = key, t.check(key.enginePath)
 	}
 	if t.verdict != "" {
 		t.report(t.verdict)
@@ -177,15 +178,15 @@ func (t *engineTuning) env() []string {
 
 // stat reads the identity of the three files a verdict depends on.
 func (t *engineTuning) stat() (key nodeCheckKey, why string) {
-	chat := ""
-	if t.chatBinary != nil {
-		chat = t.chatBinary()
+	engine := ""
+	if t.engineBinary != nil {
+		engine = t.engineBinary()
 	}
-	if chat == "" {
-		return nodeCheckKey{}, "no active kiro-cli-chat to check its Node.js against"
+	if engine == "" {
+		return nodeCheckKey{}, "no active kiro-cli to check its Node.js against"
 	}
 	var err error
-	key.chatPath = chat
+	key.enginePath = engine
 	if key.node, err = os.Stat(t.node); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return key, "missing"
@@ -195,14 +196,14 @@ func (t *engineTuning) stat() (key nodeCheckKey, why string) {
 	if key.sum, err = os.Stat(t.node + ".sha256"); err != nil {
 		return key, fmt.Sprintf("cannot read %s.sha256: %v", t.node, err)
 	}
-	if key.chat, err = os.Stat(chat); err != nil {
-		return key, fmt.Sprintf("cannot read %s: %v", chat, err)
+	if key.engine, err = os.Stat(engine); err != nil {
+		return key, fmt.Sprintf("cannot read %s: %v", engine, err)
 	}
 	return key, ""
 }
 
 // check returns "" when the flags apply, else why not.
-func (t *engineTuning) check(chat string) string {
+func (t *engineTuning) check(engine string) string {
 	raw, err := os.ReadFile(t.node + ".sha256")
 	if err != nil {
 		return fmt.Sprintf("cannot read %s.sha256: %v", t.node, err)
@@ -215,12 +216,12 @@ func (t *engineTuning) check(chat string) string {
 	if got != want {
 		return "the unpacked Node.js does not match its node.sha256 (a partial or altered unpack)"
 	}
-	embedded, err := fileContains(chat, []byte(want))
+	embedded, err := fileContains(engine, []byte(want))
 	if err != nil {
-		return fmt.Sprintf("cannot read %s: %v", chat, err)
+		return fmt.Sprintf("cannot read %s: %v", engine, err)
 	}
 	if !embedded {
-		return "the unpacked Node.js is not the one the active kiro-cli-chat embeds (left by another kiro-cli version)"
+		return "the unpacked Node.js is not the one the active kiro-cli embeds (left by another kiro-cli version)"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), nodeVersionTimeout)
 	defer cancel()

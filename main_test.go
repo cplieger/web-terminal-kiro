@@ -104,7 +104,7 @@ func TestSessionCommand_loginGuard(t *testing.T) {
 }
 
 // TestSessionCommand_extraChatArgs pins the KIRO_CLI_CHAT_ARGS contract: extra
-// launch flags (e.g. --v3) are appended to the chat invocation as separate,
+// launch flags (e.g. --tui) are appended to the chat invocation as separate,
 // LITERAL argv entries — an arg carrying shell metacharacters or spaces must
 // arrive verbatim (positional-param passing, not string splicing into the
 // script) — and they never leak into the login call. Without extra args, chat
@@ -115,7 +115,7 @@ func TestSessionCommand_extraChatArgs(t *testing.T) {
 		cliPath, loginMarker, chatMarker := fakeCLI(t, dir, 1) // logged out: login runs too
 
 		injection := `$(touch ` + filepath.Join(dir, "pwned") + `); two words`
-		argv := sessionCommand(cliPath, "--v3", "--effort", "high", injection)
+		argv := sessionCommand(cliPath, "--tui", "--effort", "high", injection)
 		out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput() // #nosec G204 -- test executes its own wrapper
 		if err != nil {
 			t.Fatalf("wrapper run: %v\noutput: %s", err, out)
@@ -125,7 +125,7 @@ func TestSessionCommand_extraChatArgs(t *testing.T) {
 		if readErr != nil {
 			t.Fatalf("chat was not invoked (marker missing): %v", readErr)
 		}
-		want := "--v3\n--effort\nhigh\n" + injection + "\n"
+		want := "--tui\n--effort\nhigh\n" + injection + "\n"
 		if string(got) != want {
 			t.Errorf("chat argv = %q, want %q (args must pass as literal positional params)", got, want)
 		}
