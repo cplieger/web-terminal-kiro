@@ -291,9 +291,9 @@ func newSessionBuilder(deps *routeDeps) func(resumeID string) func(terminal.Sess
 }
 
 func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID) *terminal.Handler {
-	// WithKeepUnfocused pins DEC 1004 "unfocused" so kiro-cli keeps emitting the focus-gated
-	// OSC 9 notifications that browser notifications and classifyNotification read;
-	// web-terminal-server deliberately does not use this.
+	// The child gets the engine's real DEC 1004 focus, not WithKeepUnfocused: kiro-cli draws
+	// its home ghost in colour and animates it only while focused, and tab status rides OSC
+	// 7501, which focus does not gate.
 	//
 	// No TERM_PROGRAM override: the engine advertises iTerm.app, which puts kiro-cli in
 	// its OSC 9;4 progress allowlist and enables DEC 2026 synchronized output.
@@ -308,7 +308,6 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 		sessionLogger := slog.Default().With("session", safeID)
 		opts := []terminal.Option{
 			terminal.WithWorkDir(deps.workDir),
-			terminal.WithKeepUnfocused(true),
 			terminal.WithLogger(sessionLogger),
 			terminal.WithCommandLogValue("[redacted]"),
 			// The active kiro-cli version's own directory first on the child's PATH, plus
