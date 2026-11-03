@@ -21,12 +21,12 @@ import (
 // (no splicing), each argument survives as its own element (no joining or
 // re-quoting), and the element count is exact (nothing dropped or added).
 func FuzzSessionCommandNeverSplices(f *testing.F) {
-	f.Add("/config/tools/kiro-cli-versions/2.14.2/kiro-cli", "--v3")
+	f.Add("/config/tools/kiro-cli-versions/2.14.2/kiro-cli", "--tui")
 	f.Add("/opt/kiro cli/kiro-cli", "$(touch /tmp/pwned)")
 	f.Add("", "")
 	f.Add("kiro-cli", "'; rm -rf / #")
 	f.Add("kiro-cli", "--effort\nhigh")
-	f.Add("kiro-cli", "\x00--v3")
+	f.Add("kiro-cli", "\x00--tui")
 	f.Add("$0", "$@")
 
 	// The script the wrapper must return for EVERY input, captured once from a

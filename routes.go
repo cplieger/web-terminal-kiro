@@ -326,9 +326,8 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 			// are never touched.
 			terminal.WithMinimumContrast(4.5),
 			// Closing a tab must end the whole tree, and for this app it otherwise does
-			// not: `kiro-cli chat` runs kiro-cli -> kiro-cli-chat -> the TUI -> the agent
-			// server, and that last process calls setsid(), so no signal the engine can
-			// aim reaches it. A nil containment is a no-op.
+			// not: `kiro-cli chat` starts the agent server as a descendant, and that
+			// process calls setsid(), so no signal the engine can aim reaches it. A nil containment is a no-op.
 			terminal.WithContainment(deps.containment, id),
 			// A dev-box tab can live for days; containment reclaims only at teardown, so
 			// a tab whose agent connection died while its TUI stays alive keeps holding

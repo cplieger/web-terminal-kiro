@@ -393,7 +393,7 @@ func run() error {
 	}
 
 	// KIRO_CLI_CHAT_ARGS appends extra launch flags to the per-session `kiro-cli
-	// chat` command (whitespace-separated, e.g. "--v3"). The values reach chat as
+	// chat` command (whitespace-separated, e.g. "--effort high"). The values reach chat as
 	// positional shell params (see sessionCommand), never via string splicing.
 	chatArgs := strings.Fields(envx.String("KIRO_CLI_CHAT_ARGS"))
 	if len(chatArgs) > 0 {
@@ -418,7 +418,7 @@ func run() error {
 		trustedInstallUIDs: parseTrustedInstallUIDs(),
 	})
 	sandbox := startSandbox(baseCtx, parseSandboxOptIn(), workDir, envx.String("HOME"))
-	tuning := newEngineTuning(parseHighThroughput(), envx.String(nodeValidatedKey), kiroDataHome(), kiro.chatBinary)
+	tuning := newEngineTuning(parseHighThroughput(), envx.String(nodeValidatedKey), kiroDataHome(), kiro.engineBinary)
 
 	mux := http.NewServeMux()
 	var ready webhttp.Ready
@@ -571,11 +571,8 @@ func run() error {
 // The layout facts this app brings to the kiro-cli install: where the convenience
 // symlinks go, and what its own SHELL-era installer left on the volume.
 const (
-	// kiroChatName is kiro-cli's chat sidecar, the binary that embeds the
-	// agent engine and its Node.js.
-	kiroChatName = kirocli.Name + "-chat"
-	// kiroLinkDir holds the non-authoritative convenience symlinks a `docker exec`
-	// shell resolves kiro-cli and its sidecars through. It is co-owned by the
+	// kiroLinkDir holds the non-authoritative convenience symlink a `docker exec`
+	// shell resolves kiro-cli through. It is co-owned by the
 	// toolbelt engine, which publishes bin/<tool> symlinks of its own — which is
 	// why the legacy sweep names its targets instead of scanning it.
 	kiroLinkDir = "bin"
@@ -619,8 +616,9 @@ type kiroRuntime struct {
 	// env is the per-session environment overlay, or nil when there is nothing to
 	// add. The engine appends it last, so PATH here wins.
 	env func() []string
-	// chatBinary is the active kiro-cli-chat, or "" while none is installed.
-	chatBinary func() string
+	// engineBinary is the active kiro-cli, the binary that embeds the agent
+	// engine and its Node.js, or "" while none is installed.
+	engineBinary func() string
 	// ready is the /api/health and session-create verdict plus its 503 reason, or
 	// nil when this app does not own the install (a bare `go run` with no pins)
 	// and readiness stays pure-listener.
@@ -642,8 +640,8 @@ func unmanagedKiroRuntime(chatArgs []string) kiroRuntime {
 	return kiroRuntime{
 		cmd: func() []string { return argv },
 		env: func() []string { return nil },
-		chatBinary: func() string {
-			p, _ := exec.LookPath(kiroChatName)
+		engineBinary: func() string {
+			p, _ := exec.LookPath(kirocli.Name)
 			return p
 		},
 		ready: func() (bool, string) { return true, "" },
@@ -659,11 +657,11 @@ func unmanagedKiroRuntime(chatArgs []string) kiroRuntime {
 // repair path stay alive, per this app's failure posture.
 func unavailableKiroRuntime() kiroRuntime {
 	return kiroRuntime{
-		cmd:        func() []string { return sessionCommand(kirocli.Name) },
-		env:        func() []string { return nil },
-		chatBinary: func() string { return "" },
-		ready:      func() (bool, string) { return false, reasonUnavailable },
-		stop:       func() {},
+		cmd:          func() []string { return sessionCommand(kirocli.Name) },
+		env:          func() []string { return nil },
+		engineBinary: func() string { return "" },
+		ready:        func() (bool, string) { return false, reasonUnavailable },
+		stop:         func() {},
 	}
 }
 
@@ -737,14 +735,9 @@ func startKiroCLI(cfg *baseKiro) kiroRuntime {
 	// than a pointer into the composition root's config.
 	chatArgs := cfg.chatArgs
 	return kiroRuntime{
-		cmd: func() []string { return sessionCommand(mgr.Path(), chatArgs...) },
-		env: mgr.PathEnv,
-		chatBinary: func() string {
-			if dir := mgr.PathEntry(); dir != "" {
-				return filepath.Join(dir, kiroChatName)
-			}
-			return ""
-		},
+		cmd:          func() []string { return sessionCommand(mgr.Path(), chatArgs...) },
+		env:          mgr.PathEnv,
+		engineBinary: mgr.Path,
 		ready: func() (bool, string) {
 			ok, why := mgr.Ready()
 			return ok, kiroReasonText(why)
@@ -774,15 +767,12 @@ func kiroInstallConfig(cfg *baseKiro) *pinstall.Config {
 		},
 		Root:    cfg.toolsDir,
 		LinkDir: kiroLinkDir,
-		// The chat sidecar is REQUIRED because `kiro-cli chat` over a PTY IS the product: a
-		// version directory holding only the main dispatcher answers --version correctly
-		// and then kills every terminal at chat. The library always requires the release's
-		// primary artifact, so this names only the addition. No Optional set, so
-		// kiro-cli-term is not installed here at all; marotte's set differs, and neither
+		// No Require or Optional set: since 3.0.0 the archive ships kiro-cli alone, which
+		// embeds the chat UI, the agent engine and its Node.js, and the library always
+		// requires the release's primary artifact. marotte's set differs, and neither
 		// should be copied across without a caller that needs it.
-		Require: []string{kiroChatName},
-		Assert:  kiroSettings(),
-		Purge:   kiroLegacyPurge(),
+		Assert: kiroSettings(),
+		Purge:  kiroLegacyPurge(),
 		// With the taint set, no pre-existing version directory may be activated at
 		// all: a forgeable sentinel is worthless evidence on a tree another host
 		// user could write. marotte deliberately leaves this UNSET — it has no

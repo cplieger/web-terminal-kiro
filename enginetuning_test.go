@@ -29,17 +29,17 @@ func TestMain(m *testing.M) {
 
 const validatedNode = "22.23.4"
 
-// kiroInstall is a fake kiro-cli data home and active kiro-cli-chat.
+// kiroInstall is a fake kiro-cli data home and active kiro-cli.
 type kiroInstall struct {
 	dataHome string
-	chat     string
+	engine   string
 	node     string
 }
 
 func newKiroInstall(t *testing.T) *kiroInstall {
 	t.Helper()
 	dir := t.TempDir()
-	in := &kiroInstall{dataHome: filepath.Join(dir, "share"), chat: filepath.Join(dir, "kiro-cli-chat")}
+	in := &kiroInstall{dataHome: filepath.Join(dir, "share"), engine: filepath.Join(dir, "kiro-cli")}
 	in.node = filepath.Join(in.dataHome, "kiro-cli", "node")
 	if err := os.MkdirAll(filepath.Dir(in.node), 0o755); err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func newKiroInstall(t *testing.T) *kiroInstall {
 }
 
 // unpack writes a node answering --version with version, its node.sha256, and,
-// when embedded, a kiro-cli-chat carrying that hash the way the real one does.
+// when embedded, a kiro-cli carrying that hash the way the real one does.
 // The node is renamed into place so a replacement is a new file, as kiro-cli's
 // own unpack makes it.
 func (in *kiroInstall) unpack(t *testing.T, version string, embedded bool) {
@@ -64,17 +64,17 @@ func (in *kiroInstall) unpack(t *testing.T, version string, embedded bool) {
 	if err := os.WriteFile(in.node+".sha256", []byte(hexSum), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	chat := []byte("\x7fELF..." + strings.Repeat("x", 4096))
+	engine := []byte("\x7fELF..." + strings.Repeat("x", 4096))
 	if embedded {
-		chat = append(chat, hexSum+"KIRO_KAS_NODE_PATHKIRO_KAS_SERVER_PATH"...)
+		engine = append(engine, hexSum+"KIRO_KAS_NODE_PATHKIRO_KAS_SERVER_PATH"...)
 	}
-	if err := os.WriteFile(in.chat, chat, 0o755); err != nil {
+	if err := os.WriteFile(in.engine, engine, 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func (in *kiroInstall) tuning() *engineTuning {
-	return newEngineTuning(true, validatedNode, in.dataHome, func() string { return in.chat })
+	return newEngineTuning(true, validatedNode, in.dataHome, func() string { return in.engine })
 }
 
 // noPresetKasNode clears an inherited KIRO_KAS_NODE_PATH and points the launcher
@@ -142,9 +142,9 @@ func TestEngineTuning_eachGuardStartsStockAndWarnsOnce(t *testing.T) {
 			wantReason: "does not match its node.sha256",
 		},
 		{
-			name:       "a node the active kiro-cli-chat does not embed",
+			name:       "a node the active kiro-cli does not embed",
 			arrange:    func(t *testing.T, in *kiroInstall) { in.unpack(t, "v"+validatedNode, false) },
-			wantReason: "not the one the active kiro-cli-chat embeds",
+			wantReason: "not the one the active kiro-cli embeds",
 		},
 	}
 	for _, tc := range cases {
@@ -212,16 +212,16 @@ func TestEngineTuning_noActiveKiroCLIStartsStock(t *testing.T) {
 	in.unpack(t, "v"+validatedNode, true)
 	tuning := newEngineTuning(true, validatedNode, in.dataHome, func() string { return "" })
 	if got := tuning.env(); got != nil {
-		t.Errorf("env() with no active kiro-cli-chat = %q, want nothing", got)
+		t.Errorf("env() with no active kiro-cli = %q, want nothing", got)
 	}
 }
 
 func TestNewEngineTuning_refusesWhatItCannotApply(t *testing.T) {
-	chat := func() string { return "/bin/sh" }
+	engine := func() string { return "/bin/sh" }
 	t.Run("an operator's own KIRO_KAS_NODE_PATH", func(t *testing.T) {
 		t.Setenv(kasNodePathKey, "/usr/local/bin/node")
 		records := capture.Default(t)
-		if got := newEngineTuning(true, validatedNode, t.TempDir(), chat); got != nil {
+		if got := newEngineTuning(true, validatedNode, t.TempDir(), engine); got != nil {
 			t.Errorf("newEngineTuning = %+v, want nil so the operator's override stays", got)
 		}
 		if records.CountLevel(slog.LevelWarn, "") != 1 {
@@ -231,7 +231,7 @@ func TestNewEngineTuning_refusesWhatItCannotApply(t *testing.T) {
 	t.Run("no validated version exported", func(t *testing.T) {
 		noPresetKasNode(t)
 		records := capture.Default(t)
-		if got := newEngineTuning(true, " ", t.TempDir(), chat); got != nil {
+		if got := newEngineTuning(true, " ", t.TempDir(), engine); got != nil {
 			t.Errorf("newEngineTuning = %+v, want nil", got)
 		}
 		if records.CountLevel(slog.LevelWarn, "") != 1 {
@@ -242,7 +242,7 @@ func TestNewEngineTuning_refusesWhatItCannotApply(t *testing.T) {
 		noPresetKasNode(t)
 		kasNodeLauncher = filepath.Join(t.TempDir(), "absent")
 		records := capture.Default(t)
-		if got := newEngineTuning(true, validatedNode, t.TempDir(), chat); got != nil {
+		if got := newEngineTuning(true, validatedNode, t.TempDir(), engine); got != nil {
 			t.Errorf("newEngineTuning = %+v, want nil: a KIRO_KAS_NODE_PATH naming nothing stops the agent engine", got)
 		}
 		if records.CountLevel(slog.LevelWarn, "") != 1 {
@@ -252,7 +252,7 @@ func TestNewEngineTuning_refusesWhatItCannotApply(t *testing.T) {
 	t.Run("no data home", func(t *testing.T) {
 		noPresetKasNode(t)
 		records := capture.Default(t)
-		if got := newEngineTuning(true, validatedNode, "", chat); got != nil {
+		if got := newEngineTuning(true, validatedNode, "", engine); got != nil {
 			t.Errorf("newEngineTuning = %+v, want nil", got)
 		}
 		if records.CountLevel(slog.LevelWarn, "") != 1 {
@@ -264,7 +264,7 @@ func TestNewEngineTuning_refusesWhatItCannotApply(t *testing.T) {
 		capture.Default(t)
 		in := newKiroInstall(t)
 		in.unpack(t, "v"+validatedNode, true)
-		got := newEngineTuning(true, "v"+validatedNode, in.dataHome, func() string { return in.chat }).env()
+		got := newEngineTuning(true, "v"+validatedNode, in.dataHome, func() string { return in.engine }).env()
 		if len(got) == 0 {
 			t.Error("env() = nothing, want the overlay: v22.23.4 and 22.23.4 name one version")
 		}

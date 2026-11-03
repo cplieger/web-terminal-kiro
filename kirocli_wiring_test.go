@@ -351,7 +351,7 @@ func TestKiroRescan_absentWithoutManager(t *testing.T) {
 // serve a session at all.
 func TestStartKiroCLI_shapes(t *testing.T) {
 	t.Run("no pins falls back to the bare name", func(t *testing.T) {
-		rt := startKiroCLI(&baseKiro{chatArgs: []string{"--v3"}})
+		rt := startKiroCLI(&baseKiro{chatArgs: []string{"--tui"}})
 		t.Cleanup(rt.stop)
 		if rt.ready == nil {
 			t.Fatal("a pin-less run left the readiness policy nil; the route layer's contract is total, so a nil policy panics on first call")
@@ -365,8 +365,8 @@ func TestStartKiroCLI_shapes(t *testing.T) {
 		if got := rt.cmd()[3]; got != "kiro-cli" {
 			t.Errorf("pin-less argv cli path = %q, want the bare name for PATH resolution", got)
 		}
-		if got := strings.Join(rt.cmd()[4:], " "); got != "--v3" {
-			t.Errorf("pin-less argv chat args = %q, want --v3", got)
+		if got := strings.Join(rt.cmd()[4:], " "); got != "--tui" {
+			t.Errorf("pin-less argv chat args = %q, want --tui", got)
 		}
 		if rt.env == nil {
 			t.Fatal("a pin-less run left the session-env policy nil; the route layer's contract is total, so a nil policy panics on first call")
