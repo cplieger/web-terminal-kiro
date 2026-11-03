@@ -1113,10 +1113,8 @@ func quietTeardown(t *testing.T, deps *routeDeps) {
 
 // readMarkerWithin polls a marker file the session's child process writes and
 // returns its bytes once it holds at least minBytes, failing the test at the
-// deadline with what the child never did. The option pins that observe an engine
-// option THROUGH the child (working directory, DEC 1004 focus-out) both need this
-// wait, and neither should re-implement the deadline bookkeeping around its own
-// one-line assertion.
+// deadline with what the child never did, for the pins that observe an engine
+// option THROUGH the child.
 func readMarkerWithin(t *testing.T, path string, minBytes int, what string) []byte {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
