@@ -215,4 +215,31 @@ for var in GH_TOKEN GITHUB_TOKEN; do
     || no "$var README row" "the README settings table does not document $var"
 done
 
+# --- the Node.js the high-throughput flags were validated on -----------------
+# The image smoke test compares this literal with the pinned kiro-cli's own
+# Node.js and enginetuning.go compares it at every tab, so both read it by name.
+grep -qE '^KIRO_CLI_NODE_VALIDATED="[0-9]+\.[0-9]+\.[0-9]+"$' "$ENTRYPOINT" \
+  && ok "KIRO_CLI_NODE_VALIDATED is a bare major.minor.patch literal" \
+  || no "KIRO_CLI_NODE_VALIDATED literal" "no 'KIRO_CLI_NODE_VALIDATED=\"x.y.z\"' line; the smoke test's Node.js check and the per-tab guard have nothing to compare with"
+grep -qE '^export ([A-Z0-9_]+ )*KIRO_CLI_NODE_VALIDATED( |$)' "$ENTRYPOINT" \
+  && ok "KIRO_CLI_NODE_VALIDATED is exported to the server" \
+  || no "KIRO_CLI_NODE_VALIDATED export" "entrypoint.sh never exports it, so KIRO_CLI_HIGH_THROUGHPUT applies to no tab"
+grep -q '"KIRO_CLI_NODE_VALIDATED"' "$GO_SOURCE_ROOT/enginetuning.go" \
+  && ok "enginetuning.go reads KIRO_CLI_NODE_VALIDATED under that exact name" \
+  || no "KIRO_CLI_NODE_VALIDATED read" "enginetuning.go does not mention \"KIRO_CLI_NODE_VALIDATED\"; the exported version reaches nothing"
+grep -q 'KIRO_CLI_NODE_VALIDATED=' "$REPO/tests/image-smoke.conf" \
+  && ok "the image smoke test reads KIRO_CLI_NODE_VALIDATED" \
+  || no "KIRO_CLI_NODE_VALIDATED smoke check" "tests/image-smoke.conf no longer compares the pinned kiro-cli's Node.js with the validated version"
+
+# --- KIRO_CLI_HIGH_THROUGHPUT is documented, and off in the example ----------
+grep -q '"KIRO_CLI_HIGH_THROUGHPUT"' "$GO_SOURCE_ROOT/enginetuning.go" \
+  && ok "enginetuning.go reads KIRO_CLI_HIGH_THROUGHPUT" \
+  || no "KIRO_CLI_HIGH_THROUGHPUT read" "enginetuning.go does not mention \"KIRO_CLI_HIGH_THROUGHPUT\""
+grep -q '^| `KIRO_CLI_HIGH_THROUGHPUT` |' "$README" \
+  && ok "the README settings table has a KIRO_CLI_HIGH_THROUGHPUT row" \
+  || no "KIRO_CLI_HIGH_THROUGHPUT README row" "the README settings table does not document KIRO_CLI_HIGH_THROUGHPUT"
+grep -q 'KIRO_CLI_HIGH_THROUGHPUT' "$COMPOSE" \
+  && no "KIRO_CLI_HIGH_THROUGHPUT in compose.yaml" "the example compose turns the experimental flags on for everyone who copies it; it stays off unless an operator sets it" \
+  || ok "the example compose.yaml leaves KIRO_CLI_HIGH_THROUGHPUT unset"
+
 report

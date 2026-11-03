@@ -115,6 +115,7 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 | `TRUSTED_PROXIES` | Reverse-proxy CIDRs or IPs whose `X-Forwarded-For` the access log trusts to name the real client. | _(unset)_ |
 | `LISTEN_ADDR` | Listen address as `host:port`. Keep the host part empty so the healthcheck can still reach it on `127.0.0.1`. | `:9848` |
 | `KIRO_CLI_CHAT_ARGS` | Extra flags added to every tab's `kiro-cli chat` command, separated by spaces, for example `--v3`. | _(unset)_ |
+| `KIRO_CLI_HIGH_THROUGHPUT` | Experimental. `true` starts each tab's kiro-cli agent engine with two Node.js flags, a larger young generation and AsyncLocalStorage without promise hooks, when kiro-cli's Node.js is the version they were tested on. They pay off when one tab runs many sessions at once, such as workflows and subagents. [Configuration](docs/configuration.md#kiro_cli_high_throughput) has the numbers. | `false` |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error`. An unknown value falls back to `info` with a warning. | `info` |
 | `WORK_DIR` | The folder each new tab starts in. It must exist. | `/workspace` |
 | `SCROLLBACK` | Lines of history kept per tab. kiro-cli wipes history when it redraws the whole screen, so in practice a tab keeps about 3000 lines. | `100000` |

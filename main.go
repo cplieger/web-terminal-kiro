@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -219,6 +220,13 @@ func loopbackHint(addr string) string {
 // reports failure by returning an error, so no startup branch can exit past a
 // pending defer and skip the subsystem teardown.
 func main() {
+	// Started through the image's launcher link, this binary is kiro-cli's
+	// agent-engine node (enginetuning.go), not the server.
+	if filepath.Base(os.Args[0]) == kasNodeLauncherName {
+		err := execKasNode(os.Getenv(kasRealNodeKey), os.Args[1:])
+		fmt.Fprintln(os.Stderr, kasNodeLauncherName+":", err)
+		os.Exit(127)
+	}
 	if err := run(); err != nil {
 		// Rendered once, here: the failure branches in run carry their operator hint
 		// inside the returned error, so a startup failure produces exactly one ERROR
@@ -410,6 +418,7 @@ func run() error {
 		trustedInstallUIDs: parseTrustedInstallUIDs(),
 	})
 	sandbox := startSandbox(baseCtx, parseSandboxOptIn(), workDir, envx.String("HOME"))
+	tuning := newEngineTuning(parseHighThroughput(), envx.String(nodeValidatedKey), kiroDataHome(), kiro.chatBinary)
 
 	mux := http.NewServeMux()
 	var ready webhttp.Ready
@@ -464,6 +473,7 @@ func run() error {
 		listenHint:      loopbackHint(addr),
 		cmd:             kiro.cmd,
 		sessionEnv:      sandbox.sessionEnv(kiro.env),
+		engineEnv:       tuning.env,
 		sessionTitleEnv: pollers.sessionEnv,
 		sessionActivity: pollers.workflows.sessionActivity,
 		workDir:         workDir,
@@ -561,6 +571,9 @@ func run() error {
 // The layout facts this app brings to the kiro-cli install: where the convenience
 // symlinks go, and what its own SHELL-era installer left on the volume.
 const (
+	// kiroChatName is kiro-cli's chat sidecar, the binary that embeds the
+	// agent engine and its Node.js.
+	kiroChatName = kirocli.Name + "-chat"
 	// kiroLinkDir holds the non-authoritative convenience symlinks a `docker exec`
 	// shell resolves kiro-cli and its sidecars through. It is co-owned by the
 	// toolbelt engine, which publishes bin/<tool> symlinks of its own — which is
@@ -606,6 +619,8 @@ type kiroRuntime struct {
 	// env is the per-session environment overlay, or nil when there is nothing to
 	// add. The engine appends it last, so PATH here wins.
 	env func() []string
+	// chatBinary is the active kiro-cli-chat, or "" while none is installed.
+	chatBinary func() string
 	// ready is the /api/health and session-create verdict plus its 503 reason, or
 	// nil when this app does not own the install (a bare `go run` with no pins)
 	// and readiness stays pure-listener.
@@ -625,8 +640,12 @@ type kiroRuntime struct {
 func unmanagedKiroRuntime(chatArgs []string) kiroRuntime {
 	argv := sessionCommand(kirocli.Name, chatArgs...)
 	return kiroRuntime{
-		cmd:   func() []string { return argv },
-		env:   func() []string { return nil },
+		cmd: func() []string { return argv },
+		env: func() []string { return nil },
+		chatBinary: func() string {
+			p, _ := exec.LookPath(kiroChatName)
+			return p
+		},
 		ready: func() (bool, string) { return true, "" },
 		stop:  func() {},
 	}
@@ -640,10 +659,11 @@ func unmanagedKiroRuntime(chatArgs []string) kiroRuntime {
 // repair path stay alive, per this app's failure posture.
 func unavailableKiroRuntime() kiroRuntime {
 	return kiroRuntime{
-		cmd:   func() []string { return sessionCommand(kirocli.Name) },
-		env:   func() []string { return nil },
-		ready: func() (bool, string) { return false, reasonUnavailable },
-		stop:  func() {},
+		cmd:        func() []string { return sessionCommand(kirocli.Name) },
+		env:        func() []string { return nil },
+		chatBinary: func() string { return "" },
+		ready:      func() (bool, string) { return false, reasonUnavailable },
+		stop:       func() {},
 	}
 }
 
@@ -719,6 +739,12 @@ func startKiroCLI(cfg *baseKiro) kiroRuntime {
 	return kiroRuntime{
 		cmd: func() []string { return sessionCommand(mgr.Path(), chatArgs...) },
 		env: mgr.PathEnv,
+		chatBinary: func() string {
+			if dir := mgr.PathEntry(); dir != "" {
+				return filepath.Join(dir, kiroChatName)
+			}
+			return ""
+		},
 		ready: func() (bool, string) {
 			ok, why := mgr.Ready()
 			return ok, kiroReasonText(why)
@@ -754,7 +780,7 @@ func kiroInstallConfig(cfg *baseKiro) *pinstall.Config {
 		// primary artifact, so this names only the addition. No Optional set, so
 		// kiro-cli-term is not installed here at all; marotte's set differs, and neither
 		// should be copied across without a caller that needs it.
-		Require: []string{kirocli.Name + "-chat"},
+		Require: []string{kiroChatName},
 		Assert:  kiroSettings(),
 		Purge:   kiroLegacyPurge(),
 		// With the taint set, no pre-existing version directory may be activated at

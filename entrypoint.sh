@@ -513,8 +513,13 @@ KIRO_CLI_SHA256="b4049000d5a7b684947306eb9f9a480cab3a3ab2ff42584c293d05bde4d314a
 # arch's digest lookup — do not hand-edit or drop it.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
 KIRO_CLI_SHA256_ARM64="e589bd8d8b845bb193b9f36f2ee263fe8aef7dbb19aff03ce44c5076ce6ab0c1" # kiro-cli 2.37.1
+# The Node.js bundled with the pinned kiro-cli that KIRO_CLI_HIGH_THROUGHPUT's
+# flags were measured on. The image smoke test fails when the pin bundles another
+# one: re-measure the flags on it, then update this literal. At runtime a tab whose
+# Node.js differs starts without the flags (enginetuning.go).
+KIRO_CLI_NODE_VALIDATED="22.23.4"
 
-export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
+export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64 KIRO_CLI_NODE_VALIDATED
 KIRO_CLI_TOOLS_DIR="$TOOLS"
 export KIRO_CLI_TOOLS_DIR
 

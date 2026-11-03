@@ -771,6 +771,17 @@ func TestChildEnvComposesBothOverlays(t *testing.T) {
 			t.Errorf("childEnv = %v, want %v", got, want)
 		}
 	})
+	t.Run("the engine overlay rides between them", func(t *testing.T) {
+		d := &routeDeps{
+			sessionEnv:      func() []string { return []string{"PATH=/pinned"} },
+			engineEnv:       func() []string { return []string{kasNodePathKey + "=" + kasNodeLauncher} },
+			sessionTitleEnv: func(id terminal.SessionID) []string { return []string{"WT_TITLE_HANDLE=" + string(id)} },
+		}
+		want := []string{"PATH=/pinned", kasNodePathKey + "=" + kasNodeLauncher, "WT_TITLE_HANDLE=tab7"}
+		if got := d.childEnv("tab7"); !slices.Equal(got, want) {
+			t.Errorf("childEnv = %v, want %v", got, want)
+		}
+	})
 	t.Run("nil title env is harmless", func(t *testing.T) {
 		d := &routeDeps{sessionEnv: func() []string { return []string{"PATH=/pinned"} }}
 		if got := d.childEnv("tab7"); !slices.Equal(got, []string{"PATH=/pinned"}) {

@@ -589,11 +589,13 @@ COPY --chmod=755 hooks/session-title.sh /opt/web-terminal-kiro/hooks/session-tit
 # bwrap kiro-cli resolves is the checked shim or one that refuses (sandbox.go).
 COPY --chmod=755 sandbox/bwrap.sh /opt/web-terminal-kiro/sandbox/bin/bwrap
 COPY --chmod=755 sandbox/bwrap-unavailable.sh /opt/web-terminal-kiro/sandbox/unavailable/bwrap
-
 # Where a pasted image lands (upload.go). Made at build time because the container
 # may run as a non-root user, and sticky world-writable like /tmp for the same reason.
 # A volume mounted here hides it and must be writable by that user.
-RUN mkdir -p /uploads && chmod 1777 /uploads
+# The kas-node link makes the server binary kiro-cli's agent-engine node launcher
+# when KIRO_CLI_HIGH_THROUGHPUT is on (enginetuning.go kasNodeLauncher).
+RUN mkdir -p /uploads /opt/web-terminal-kiro/engine && chmod 1777 /uploads && \
+    ln -s /app/web-terminal-kiro /opt/web-terminal-kiro/engine/kas-node
 
 WORKDIR /workspace
 EXPOSE 9848
