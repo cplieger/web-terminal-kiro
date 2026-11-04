@@ -99,7 +99,7 @@ func TestClearStaleKiroLock(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			lock := tt.plant(t, dir)
-			removed, err := clearStaleKiroLock(t.Context(), dir, boot)
+			removed, err := clearStaleKiroLock(t.Context(), filepath.Join(dir, ".lock"), boot)
 			if removed != tt.wantRemoved || (err != nil) != tt.wantErr {
 				t.Errorf("clearStaleKiroLock = (%v, %v), want removed %v, error %v", removed, err, tt.wantRemoved, tt.wantErr)
 			}
@@ -116,7 +116,7 @@ func TestClearStaleKiroLock(t *testing.T) {
 		if err := os.Symlink(target, lock); err != nil {
 			t.Fatal(err)
 		}
-		if removed, err := clearStaleKiroLock(t.Context(), dir, boot); !removed || err != nil {
+		if removed, err := clearStaleKiroLock(t.Context(), lock, boot); !removed || err != nil {
 			t.Errorf("clearStaleKiroLock = (%v, %v), want the link removed", removed, err)
 		}
 		if exists(t, lock) {
@@ -156,6 +156,32 @@ func TestSweepStaleKiroLocks(t *testing.T) {
 		}
 		if !strings.Contains(logs.String(), "cleared=2") {
 			t.Errorf("want one summary naming cleared=2, got log %q", logs.String())
+		}
+	})
+
+	t.Run("clears a V2 session's stale lock and nothing else in cli", func(t *testing.T) {
+		logs := capturedLog(t)
+		root := filepath.Join(t.TempDir(), "sessions")
+		cli := filepath.Join(root, "cli")
+		stale := plantFile(t, filepath.Join(cli, "47400f57-1c2d-4e5f-8a9b-00000000000e.lock"),
+			`{"pid":1,"started_at":"2026-10-11T00:00:00.000Z"}`)
+		live := plantFile(t, filepath.Join(cli, "47400f57-1c2d-4e5f-8a9b-00000000000f.lock"),
+			`{"pid":1,"started_at":"`+boot.Add(time.Minute).Format(time.RFC3339)+`"}`)
+		conversation := plantFile(t, filepath.Join(cli, "47400f57-1c2d-4e5f-8a9b-00000000000e.json"), "{}")
+		dirLock := plantFile(t, filepath.Join(cli, "index.json.lock", "owner.json"), "{}")
+
+		sweepStaleKiroLocks(t.Context(), root, boot)
+
+		if exists(t, stale) {
+			t.Error("the stale V2 lock survived the sweep")
+		}
+		for _, p := range []string{live, conversation, dirLock} {
+			if !exists(t, p) {
+				t.Errorf("%s was removed, want it kept", p)
+			}
+		}
+		if got := logs.String(); !strings.Contains(got, "cleared=1") || strings.Contains(got, "could not be cleared") {
+			t.Errorf("want one summary naming cleared=1 and no failure, got log %q", got)
 		}
 	})
 

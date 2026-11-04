@@ -9,16 +9,18 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 // maxKiroLockBytes bounds the read of kiro-cli's {"pid","started_at",...} lock file.
 const maxKiroLockBytes = 4096
 
-// sweepStaleKiroLocks removes every <hash>/<session id>/.lock under sessionsRoot written
-// before bootTime; it runs once at boot, ahead of the tab restore. A container stop
-// leaves kiro-cli's lock behind, and a lock holding only a pid reads live to kiro-cli
-// while any process or thread reuses that pid ("session is active in another terminal").
+// sweepStaleKiroLocks removes every <hash>/<session id>/.lock and cli/<session id>.lock
+// under sessionsRoot written before bootTime; it runs once at boot, ahead of the tab
+// restore. A container stop leaves kiro-cli's lock behind, and a lock holding only a pid
+// reads live to kiro-cli while any process or thread reuses that pid ("session is active
+// in another terminal").
 // Every kiro-cli this app runs is a child of this boot, so an older lock is never held.
 func sweepStaleKiroLocks(ctx context.Context, sessionsRoot string, bootTime time.Time) {
 	// An empty HOME makes the root relative, and the sweep would walk the server's cwd.
@@ -35,8 +37,12 @@ func sweepStaleKiroLocks(ctx context.Context, sessionsRoot string, bootTime time
 	}
 	var t lockSweepTally
 	for _, hd := range hashDirs {
-		if hd.IsDir() {
-			t.sweepHashDir(ctx, filepath.Join(sessionsRoot, hd.Name()), bootTime)
+		dir := filepath.Join(sessionsRoot, hd.Name())
+		switch {
+		case hd.IsDir() && hd.Name() == kiroV2SessionsDir:
+			t.sweepV2Dir(ctx, dir, bootTime)
+		case hd.IsDir():
+			t.sweepHashDir(ctx, dir, bootTime)
 		}
 		if ctx.Err() != nil {
 			return
@@ -50,6 +56,10 @@ func sweepStaleKiroLocks(ctx context.Context, sessionsRoot string, bootTime time
 		slog.Info("kiro session locks: cleared the stale locks a previous boot left", "cleared", t.cleared)
 	}
 }
+
+// kiroV2SessionsDir holds kiro-cli's V2-engine sessions as flat <id>.json, <id>.jsonl and
+// <id>.lock files, beside the V3 hash dirs.
+const kiroV2SessionsDir = "cli"
 
 type lockSweepTally struct {
 	firstErr        error
@@ -67,12 +77,31 @@ func (t *lockSweepTally) sweepHashDir(ctx context.Context, hashDir string, bootT
 		if !sd.IsDir() || !validKiroResumeID(sd.Name()) {
 			continue
 		}
-		switch removed, err := clearStaleKiroLock(ctx, filepath.Join(hashDir, sd.Name()), bootTime); {
-		case err != nil:
-			t.fail(err)
-		case removed:
-			t.cleared++
+		t.clear(ctx, filepath.Join(hashDir, sd.Name(), ".lock"), bootTime)
+	}
+}
+
+// sweepV2Dir clears every stale <session id>.lock file in the V2 sessions dir. A directory
+// named *.lock is another lock kind (a held mkdir lock), never a session's.
+func (t *lockSweepTally) sweepV2Dir(ctx context.Context, dir string, bootTime time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.fail(err)
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".lock") {
+			t.clear(ctx, filepath.Join(dir, e.Name()), bootTime)
 		}
+	}
+}
+
+func (t *lockSweepTally) clear(ctx context.Context, path string, bootTime time.Time) {
+	switch removed, err := clearStaleKiroLock(ctx, path, bootTime); {
+	case err != nil:
+		t.fail(err)
+	case removed:
+		t.cleared++
 	}
 }
 
@@ -81,10 +110,9 @@ func (t *lockSweepTally) fail(err error) {
 	t.firstErr = cmp.Or(t.firstErr, err)
 }
 
-// clearStaleKiroLock removes dir's kiro-cli session lock unless a process of this boot
-// wrote it, reporting whether it removed one. A missing lock is (false, nil).
-func clearStaleKiroLock(ctx context.Context, dir string, bootTime time.Time) (bool, error) {
-	path := filepath.Join(dir, ".lock")
+// clearStaleKiroLock removes the kiro-cli session lock at path unless a process of this
+// boot wrote it, reporting whether it removed one. A missing lock is (false, nil).
+func clearStaleKiroLock(ctx context.Context, path string, bootTime time.Time) (bool, error) {
 	raw, err := readSmallFile(ctx, path, maxKiroLockBytes)
 	if errors.Is(err, fs.ErrNotExist) || ctx.Err() != nil {
 		return false, nil
