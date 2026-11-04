@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
@@ -20,7 +20,7 @@ import (
 // /ws attach capability, while the kiro-cli session id it carries grants nothing.
 const tabsFileName = "tabs.json"
 
-// tabsStaleTempAge is how old an atomicfile temp beside tabs.json must be before load
+// tabsStaleTempAge is how old a filesafe temp beside tabs.json must be before load
 // reclaims it: far beyond the one small write this store ever has in flight.
 const tabsStaleTempAge = time.Hour
 
@@ -64,9 +64,9 @@ func (s *tabStore) load(ctx context.Context) (terminal.SessionSet, bool) {
 	if s == nil {
 		return terminal.SessionSet{}, false
 	}
-	// A SIGKILL between an atomicfile create and its rename leaves a temp here, and the
+	// A SIGKILL between a filesafe create and its rename leaves a temp here, and the
 	// next write picks a new name, so without the sweep they accumulate.
-	swept, err := atomicfile.CleanupStaleTemps(ctx, s.dir, tabsStaleTempAge, atomicfile.WithRecursive(false))
+	swept, err := filesafe.CleanupStaleTemps(ctx, s.dir, tabsStaleTempAge, filesafe.WithRecursive(false))
 	if (err != nil || swept.Failed > 0) && ctx.Err() == nil {
 		slog.Warn("tabs.json: stale temp sweep incomplete", "dir", s.dir, "failed", swept.Failed, "error", err)
 	}
@@ -137,8 +137,8 @@ func (s *tabStore) persist(ctx context.Context, mgr sessionSetCapturer, mapped m
 		return
 	}
 	if err == nil {
-		_, err = atomicfile.WriteFile(ctx, s.path, data,
-			atomicfile.WithMode(0o600), atomicfile.WithMaxBytes(terminal.MaxSessionSetBytes))
+		_, err = filesafe.WriteFile(ctx, s.path, data,
+			filesafe.WithMode(0o600), filesafe.WithMaxBytes(terminal.MaxSessionSetBytes))
 	}
 	s.recordWrite(ctx, data, err)
 }

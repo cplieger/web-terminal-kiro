@@ -13,7 +13,7 @@ type sessionShutdowner interface{ Shutdown(context.Context) error }
 var _ sessionShutdowner = (*terminal.SessionManager)(nil)
 
 // newSessionShutdown returns the engine's blocking teardown, on whatever budget the caller
-// hands it. It cancels the base context first on every path, including webhttp.Run's error
+// hands it. It cancels the base context first on every path, including httpserver.Run's error
 // path, which skips the pre-drain hook: a tab-set save that captured the emptied manager
 // must see a cancelled context, or it would save an empty set over tabs.json.
 //

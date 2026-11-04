@@ -28,7 +28,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/pathinside/v2"
+	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/pinstall/v3"
 )
 

@@ -18,7 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/envx/v2"
+	"github.com/cplieger/go/envx"
 )
 
 const (

@@ -8,9 +8,9 @@ import (
 )
 
 // TestStaticCachePolicyServedOnResponses pins the WIRING of the app-owned
-// cache policy into webhttp.StaticHandler. TestKiroCacheControl covers the
+// cache policy into httpserver.StaticHandler. TestKiroCacheControl covers the
 // policy FUNCTION in isolation, so dropping
-// webhttp.WithStaticCacheControl(kiroCacheControl) from buildStaticSurface
+// httpserver.WithStaticCacheControl(kiroCacheControl) from buildStaticSurface
 // leaves the helper's default header on every asset and the whole suite stays
 // green (verified by deleting the option: fonts then answer "no-cache" and
 // only this test fails). The two branches are what the header must prove:
@@ -47,7 +47,7 @@ func TestStaticCachePolicyServedOnResponses(t *testing.T) {
 				t.Fatalf("GET %s: status = %d, want %d", tc.path, rec.Code, http.StatusOK)
 			}
 			if got := rec.Header().Get("Cache-Control"); got != tc.wantCache {
-				t.Errorf("GET %s: Cache-Control = %q, want %q (kiroCacheControl must be wired into webhttp.StaticHandler)", tc.path, got, tc.wantCache)
+				t.Errorf("GET %s: Cache-Control = %q, want %q (kiroCacheControl must be wired into httpserver.StaticHandler)", tc.path, got, tc.wantCache)
 			}
 		})
 	}

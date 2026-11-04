@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
@@ -686,14 +686,14 @@ func TestSessionTitleRejectsHostileIdentifiers(t *testing.T) {
 
 // TestSessionTitleBoundsFileReads pins that neither state file can make the server
 // allocate without bound: an oversized mapping file is REFUSED at the read
-// (atomicfile.ErrFileTooLarge) rather than truncated, and nothing is pushed.
+// (filesafe.ErrFileTooLarge) rather than truncated, and nothing is pushed.
 func TestSessionTitleBoundsFileReads(t *testing.T) {
 	f := newTitleFixture(t)
 	huge := filepath.Join(f.sync.stateDir, f.handle("tab1"))
 	if err := os.WriteFile(huge, []byte(strings.Repeat("a", maxTitleFileBytes*3)), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if _, err := readSmallFile(t.Context(), huge, maxTitleFileBytes); !errors.Is(err, atomicfile.ErrFileTooLarge) {
+	if _, err := readSmallFile(t.Context(), huge, maxTitleFileBytes); !errors.Is(err, filesafe.ErrFileTooLarge) {
 		t.Fatalf("readSmallFile(t.Context(), oversized, maxTitleFileBytes) = %v, want ErrFileTooLarge", err)
 	}
 	set := &fakeSetter{live: []terminal.SessionID{"tab1"}}

@@ -23,8 +23,8 @@ import (
 	"syscall"
 	"unicode/utf8"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
@@ -157,7 +157,7 @@ func (s *sessionTitleSync) seedMapping(ctx context.Context, tabID terminal.Sessi
 	if !ok {
 		return nil
 	}
-	_, err := atomicfile.WriteFile(ctx, filepath.Join(s.stateDir, handle), []byte(kiroID+"\n"), atomicfile.WithMode(0o600))
+	_, err := filesafe.WriteFile(ctx, filepath.Join(s.stateDir, handle), []byte(kiroID+"\n"), filesafe.WithMode(0o600))
 	if err != nil {
 		slog.Debug("session title: could not seed a restored tab's mapping",
 			"title_handle", handle, "error", err)
@@ -254,8 +254,8 @@ func enforceLevelMode(dir string) (os.FileMode, error) {
 		return 0, err
 	}
 	defer func() { _ = f.Close() }()
-	stored, err := atomicfile.EnforceMode(f, 0o700)
-	if errors.Is(err, atomicfile.ErrModeNotStored) {
+	stored, err := filesafe.EnforceMode(f, 0o700)
+	if errors.Is(err, filesafe.ErrModeNotStored) {
 		// Reported, not refused: refusing would turn titles off for good on such a mount.
 		return stored.Perm(), nil
 	}
@@ -572,7 +572,7 @@ func titleFromRecord(kiroID string, raw []byte) string {
 	}
 	// The engine's rung drops only C0 and DEL, so C1, Bidi and U+2028/29 are sanitized here,
 	// before the trim, so a control-only title reads as no title.
-	title := strings.TrimSpace(runesafe.SanitizeSingleLine(rec.Title))
+	title := strings.TrimSpace(textsafe.SanitizeSingleLine(rec.Title))
 	if title == placeholderTitle {
 		return ""
 	}
@@ -592,12 +592,12 @@ func (s *sessionTitleSync) forget(handle string) {
 // readSmallFile reads one regular, non-symlink state file of at most limit bytes, refusing a
 // larger one. The caller picks the bound: a mapping is a line, a run record holds reports.
 func readSmallFile(ctx context.Context, path string, limit int) ([]byte, error) {
-	f, _, err := atomicfile.OpenRegular(path)
+	f, _, err := filesafe.OpenRegular(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }() // read-only
-	return atomicfile.ReadBoundedFile(ctx, f, int64(limit))
+	return filesafe.ReadBoundedFile(ctx, f, int64(limit))
 }
 
 // validKiroResumeID is the only shape passed to --resume-id: "sess_" plus a canonical UUID,

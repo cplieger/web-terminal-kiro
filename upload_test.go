@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
 )
 
 const (
@@ -70,7 +70,7 @@ func uploadRequest(t *testing.T, parts ...uploadPart) *http.Request {
 
 // uploadChain is the production handler chain with uploads written under a fresh
 // <tmp>/uploads, so a test can also prove nothing escaped into <tmp>.
-func uploadChain(t *testing.T, hostPolicy *webhttp.HostPolicy) (h http.Handler, dir string) {
+func uploadChain(t *testing.T, hostPolicy *httpserver.HostPolicy) (h http.Handler, dir string) {
 	t.Helper()
 	dir = filepath.Join(t.TempDir(), "uploads")
 	deps := newTestDeps(true)

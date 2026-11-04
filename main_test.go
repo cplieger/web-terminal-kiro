@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // fakeCLI writes an executable shell stub standing in for kiro-cli. Its whoami
@@ -730,7 +730,7 @@ func TestHostAllowlist_loopbackCarveOut(t *testing.T) {
 // TestHostAllowlist_blankConfigurationStaysPermissive drives a configured but
 // blank ALLOWED_HOSTS (only commas and whitespace) through the real
 // parseAllowedHosts into the middleware: blank entries never engage the gate
-// (webhttp.ParseHostList leaves the policy INACTIVE), so the documented
+// (httpserver.ParseHostList leaves the policy INACTIVE), so the documented
 // permissive state must hold. Accidentally treating a blank entry as
 // non-blank would turn a blank configuration into a deny-all outage.
 func TestHostAllowlist_blankConfigurationStaysPermissive(t *testing.T) {
@@ -907,12 +907,12 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 // URL-shaped entry (scheme/path/CIDR pasted where a bare hostname belongs)
 // must emit exactly one named Warn while being DROPPED per ParseHostList's
 // drop-and-report contract — the entry canonicalizes to a value no
-// browser-sent Host ever matches, so retaining it (the pre-webhttp behavior)
+// browser-sent Host ever matches, so retaining it (the behaviour before httpserver)
 // only created an unmatchable key an attacker-chosen Host like "http:9848"
 // could in principle collide with. The valid subset must keep working.
 // Serial: capture.Default mutates the process-global default logger.
 func TestParseAllowedHosts(t *testing.T) {
-	allows := func(t *testing.T, policy *webhttp.HostPolicy, host, remoteAddr string) bool {
+	allows := func(t *testing.T, policy *httpserver.HostPolicy, host, remoteAddr string) bool {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/probe", http.NoBody)
 		if remoteAddr != "" {
@@ -949,7 +949,7 @@ func TestParseAllowedHosts(t *testing.T) {
 		if !allows(t, policy, "localhost:9848", "192.168.1.50:44444") {
 			t.Error("valid entry localhost missing from the allowlist")
 		}
-		// The pre-webhttp parser RETAINED the malformed entry as the
+		// The parser before httpserver RETAINED the malformed entry as the
 		// unmatchable key "http"; the drop-and-report contract removes it, so
 		// a request whose Host canonicalizes to "http" must now be rejected.
 		if allows(t, policy, "http:9848", "192.168.1.50:44444") {
@@ -1643,7 +1643,7 @@ func TestParseCatalogRefresh_warnsByNameOnly(t *testing.T) {
 // may arrive in a repeated field line or a comma list, matching is case- and
 // whitespace-insensitive, and a token SUBSTRING must not match. This is now the
 // app's ONLY upgrade-shaped predicate — the access log's skip is decided from
-// the response by webhttp.WithSkipUpgrades — and a divergence here is silent,
+// the response by httpserver.WithSkipUpgrades — and a divergence here is silent,
 // dropping the attach record for a request that presented a session capability
 // token.
 func TestIsWebSocketUpgrade_requiresBothListTokens(t *testing.T) {
@@ -1675,12 +1675,12 @@ func TestIsWebSocketUpgrade_requiresBothListTokens(t *testing.T) {
 	}
 }
 
-// accessLinesFor returns the webhttp access-log records captured for path, in
+// accessLinesFor returns the httpserver access-log records captured for path, in
 // order, as attribute maps. Pass "" to get every access line whatever its
 // recorded path — needed for requests under the /api/sessions/ subtree, whose
 // recorded path is the route template (or the "(unmatched)" marker) rather than
 // the raw one, because WithTemplatePathsUnder keeps session tokens out of the
-// log. The access line's message is webhttp's "http", so every other record the
+// log. The access line's message is httpserver's "http", so every other record the
 // server emits (the engine's session lines, wsAttachLog's attach record) is
 // filtered out. capture.Recorder is concurrency-safe, which is what makes it
 // usable while a real httptest server is serving.
@@ -1727,7 +1727,7 @@ func awaitAccessLines(t *testing.T, rec *capture.Recorder, path string, want int
 
 // TestAccessLogSkipsOnlyCompletedUpgrades is the payoff test for the access
 // log's move from a local willUpgrade predicate (a request-shaped PREDICTION of
-// what the engine's websocket.Accept would admit) to webhttp.WithSkipUpgrades (a
+// what the engine's websocket.Accept would admit) to httpserver.WithSkipUpgrades (a
 // response-shaped OUTCOME: a recorded 101 or a bare hijack). It drives a REAL
 // handshake against the engine over a real server, because that is the only way
 // the outcome exists at all: no fake mux can be skipped by this option, and a
@@ -1848,7 +1848,7 @@ func TestAccessLogSkipsOnlyCompletedUpgrades(t *testing.T) {
 
 // TestAccessLogKeepsStreamPathRefusals pins the half of the stream skip that the
 // SSE path skip could quietly break. The skip rules are evaluated BEFORE the
-// chain runs, so a BARE path skip (webhttp.WithSkipPaths) on the SSE route would
+// chain runs, so a BARE path skip (httpserver.WithSkipPaths) on the SSE route would
 // also swallow the 403 hostPolicy.Middleware writes — WriteError logs nothing
 // itself and the engine handler never runs — leaving a wrong-Host or DNS-rebound
 // attempt on this unauthenticated PTY with no record anywhere (CWE-778). That is
@@ -2074,7 +2074,7 @@ func TestWSAttachLog(t *testing.T) {
 // because those are the engine's OTHER refusal reasons and this predicate
 // deliberately does not model them. Nothing in this app models them any more:
 // the access log stopped predicting admission when it adopted
-// webhttp.WithSkipUpgrades, and TestAccessLogSkipsOnlyCompletedUpgrades covers
+// httpserver.WithSkipUpgrades, and TestAccessLogSkipsOnlyCompletedUpgrades covers
 // each of those refusals from the outcome side.
 func TestIsWebSocketUpgrade_agreesWithTheEngineHandshake(t *testing.T) {
 	mux, _, csp, id := mustStartSession(t, newTestDeps(true))
