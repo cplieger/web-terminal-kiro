@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
@@ -553,10 +553,10 @@ func (w *workflowWatch) publish(marks map[terminal.SessionID]workflowMark) {
 }
 
 // noteUnknownStatus warns once per distinct unrecognized status, capped. The status is the
-// ONLY text from the file that reaches a sink, so it goes through runesafe's single-line
+// ONLY text from the file that reaches a sink, so it goes through textsafe's single-line
 // policy plus a byte cap first: the record is written by a process this app does not run.
 func (w *workflowWatch) noteUnknownStatus(status string) {
-	clean := runesafe.SanitizeSingleLineBounded(status, maxWorkflowStatusLogBytes)
+	clean := textsafe.SanitizeSingleLineBounded(status, maxWorkflowStatusLogBytes)
 	if _, warned := w.unknownStatuses[clean]; warned || len(w.unknownStatuses) >= unknownWorkflowStatusCap {
 		return
 	}

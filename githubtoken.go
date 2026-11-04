@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cplieger/envx/v2"
+	"github.com/cplieger/go/envx"
 	"github.com/cplieger/toolbelt/v3"
 )
 

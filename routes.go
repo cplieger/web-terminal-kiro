@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // App-owned route paths. Every engine route comes from the engine's exported
@@ -43,7 +43,7 @@ type routeDeps struct {
 	// static is the embedded-static serving handler, built by the composition root
 	// together with the hash-pinned CSP the same tree produces.
 	static http.Handler
-	ready  *webhttp.Ready
+	ready  *httpserver.Ready
 	// listenHint is "localhost[:port]" for THIS deployment; loopback refusals quote
 	// it so the remedy works on a server that did not keep the default port.
 	listenHint string
@@ -103,7 +103,7 @@ type routeDeps struct {
 
 // buildStaticSurface assembles the embedded-static serving surface: the static handler
 // and the hash-pinned CSP policy built from the same tree, fail-loud on a malformed
-// embed. webhttp.StaticHandler supplies content-hash ETags (embed.FS reports a zero
+// embed. httpserver.StaticHandler supplies content-hash ETags (embed.FS reports a zero
 // ModTime, so a bare http.FileServer emits no validator) plus precomputed gzip; the
 // per-path cache POLICY stays this app's (kiroCacheControl).
 func buildStaticSurface(staticFS fs.FS) (http.Handler, string, error) {
@@ -115,11 +115,24 @@ func buildStaticSurface(staticFS fs.FS) (http.Handler, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	staticSrv, err := webhttp.StaticHandler(sub, webhttp.WithStaticCacheControl(kiroCacheControl))
+	staticSrv, err := httpserver.StaticHandler(sub, httpserver.WithStaticCacheControl(kiroCacheControl))
 	if err != nil {
 		return nil, "", err
 	}
 	return staticSrv, cspPolicy, nil
+}
+
+// sessionCreateGate throttles session creation in aggregate, because each
+// admitted POST forks a PTY: a burst of six absorbs a user opening several tabs
+// at once, and one token a second bounds sustained churn. Other methods on the
+// sessions path pass through without spending a token.
+func sessionCreateGate() httpserver.Middleware {
+	return httpserver.RateLimiter(6, time.Second,
+		httpserver.WithRateLimitWhen(func(r *http.Request) bool {
+			return r.Method == http.MethodPost && r.URL.Path == terminal.SessionsPath
+		}),
+		httpserver.WithRateLimitError("rate_limited", "session creation rate exceeded"),
+	)
 }
 
 // registerRoutes wires the full route table on mux and returns the session manager (for
@@ -150,7 +163,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 		ready, reason := deps.kiroReady()
 		return !ready, reason
 	}
-	createGate := webhttp.SessionCreateRateLimit(terminal.SessionsPath)
+	createGate := sessionCreateGate()
 	createGate = restorePendingGate(createGate, deps.restoring, kiroBlocked, toolsBlocked)
 	createGate = composeGate(createGate, toolsBlocked)
 	createGate = composeGate(createGate, kiroBlocked)
@@ -178,7 +191,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 		mux.Handle(kiroRescanPath, loopbackOnly("kiro-cli rescan hook", deps.listenHint,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Allow", http.MethodPost)
-				webhttp.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed",
+				httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed",
 					"kiro-cli rescan is POST-only. Call it with curl -X POST "+deps.listenHint+kiroRescanPath)
 			})))
 	}
@@ -190,7 +203,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 		// Same two-pattern shape as kiroRescanPath: the "/" mount would otherwise 404 a GET.
 		mux.HandleFunc(uploadsPath, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Allow", http.MethodPost)
-			webhttp.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "image upload is POST-only")
+			httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "image upload is POST-only")
 		})
 	}
 
@@ -225,7 +238,7 @@ func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 		// manager record "no usable version".
 		ok, err := deps.kiroRescan(r.Context())
 		if ok {
-			webhttp.WriteJSON(w, kiroRescanBody{Status: "ok"})
+			httpserver.WriteJSON(w, kiroRescanBody{Status: "ok"})
 			return
 		}
 		// A context error means the request was ABANDONED before pinstall reached any
@@ -236,7 +249,7 @@ func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			slog.Debug("kiro-cli rescan abandoned before a verdict was reached",
 				"error", err)
-			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+			httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 				kiroRescanBody{Status: "abandoned", Reason: reasonRescanAbandoned})
 			return
 		}
@@ -253,7 +266,7 @@ func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 			attrs = append(attrs, "error", err)
 		}
 		slog.Warn("kiro-cli rescan found no usable version", attrs...)
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			kiroRescanBody{Status: "unready", Reason: reason})
 	}
 }
@@ -365,7 +378,7 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 }
 
 // healthBody is /api/health's response envelope. A struct, not a map, because
-// encoding/json sorts map keys, and webhttp's own readiness handler (and therefore
+// encoding/json sorts map keys, and httpserver's own readiness handler (and therefore
 // web-terminal-server and subflux) emits {"status":…,"reason":…}. ToolsMissing is a
 // POINTER so it is absent rather than 0 when unknown, since zero means converged.
 // FIELD ORDER IS THE WIRE CONTRACT: never reorder for fieldalignment.
@@ -403,7 +416,7 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 		// instance that has begun draining.
 		w.Header().Set("Cache-Control", "no-store")
 		unready := func(reason string) {
-			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthResponse("unready", reason))
+			httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, healthResponse("unready", reason))
 		}
 		if !deps.ready.Ready() {
 			unready("starting up or shutting down")
@@ -420,7 +433,7 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 		// The tools field is INFORMATIONAL: kiro-cli is the only core dependency, so
 		// monitoring stays green during a long first-boot install while operators can
 		// still see it.
-		webhttp.WriteJSON(w, healthResponse("ok", ""))
+		httpserver.WriteJSON(w, healthResponse("ok", ""))
 	}
 }
 
@@ -441,7 +454,7 @@ func classifyNotification(msg string) (string, bool) {
 	return "", false
 }
 
-// Cache-Control policies handed to webhttp.StaticHandler. Only a content-addressed asset may
+// Cache-Control policies handed to httpserver.StaticHandler. Only a content-addressed asset may
 // promise its bytes never change, so `immutable` is earned by the name.
 const (
 	fontAssetPrefix    = "vendor/fonts/"
@@ -505,11 +518,11 @@ func buildCSPPolicy(sub fs.FS) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("buildCSPPolicy: read index.html: %w", err)
 	}
-	hashes := webhttp.InlineScriptHashes(html)
+	hashes := httpserver.InlineScriptHashes(html)
 	if len(hashes) == 0 {
 		return "", errors.New("buildCSPPolicy: no inline <script> blocks in index.html")
 	}
-	styleHashes := webhttp.InlineStyleHashes(html)
+	styleHashes := httpserver.InlineStyleHashes(html)
 	if len(styleHashes) != 1 {
 		return "", fmt.Errorf(
 			"buildCSPPolicy: want exactly one inline <style> block in index.html, found %d",
@@ -538,7 +551,7 @@ func composeGate(inner func(http.Handler) http.Handler, blocked func() (bool, st
 				// hint: neither a tools convergence nor a kiro-cli download has a
 				// predictable remaining time, so a cheap re-poll beats a computed date.
 				w.Header().Set("Retry-After", "5")
-				webhttp.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
+				httpserver.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
 				return
 			}
 			gated.ServeHTTP(w, r)
@@ -568,14 +581,14 @@ func restorePendingGate(inner func(http.Handler) http.Handler, pending func() bo
 			if layoutRead {
 				if reason, block := firstBlocked(outer); block {
 					w.Header().Set("Retry-After", "5") // composeGate's hint for the same wait
-					webhttp.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
+					httpserver.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
 					return
 				}
 			}
 			// One second: the restore itself takes milliseconds once both outer gates
 			// open, and a longer hint would hold pages on the overlay after the tabs exist.
 			w.Header().Set("Retry-After", "1")
-			webhttp.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", terminal.RestoringMessage)
+			httpserver.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", terminal.RestoringMessage)
 		})
 	}
 }
@@ -591,15 +604,15 @@ func firstBlocked(checks []func() (bool, string)) (string, bool) {
 }
 
 // loopbackOnly admits only requests whose SOCKET PEER and Host header are both loopback
-// and which carry no proxy/browser provenance header (mechanism: webhttp.LoopbackOnly).
+// and which carry no proxy/browser provenance header (mechanism: httpserver.LoopbackOnly).
 // What stays here is the refusal wording, which names the guarded surface and the
 // deployment's own listen hint — the 403 is the whole of what a refused caller is told.
 func loopbackOnly(surface, hint string, next http.Handler) http.Handler {
 	refuse := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		webhttp.WriteError(w, r, http.StatusForbidden, "loopback_only",
+		httpserver.WriteError(w, r, http.StatusForbidden, "loopback_only",
 			surface+" is loopback-only. Call it from inside the container with curl "+hint)
 	})
-	return webhttp.LoopbackOnly(refuse)(next)
+	return httpserver.LoopbackOnly(refuse)(next)
 }
 
 // sessionCostInterval is how often a contained session logs what it is currently costing.

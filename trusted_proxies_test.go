@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/slogx"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/slogx"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // trustedContains reports whether ip is inside any of the parsed trusted prefixes.
@@ -30,7 +30,7 @@ func trustedContains(prefixes []netip.Prefix, ip string) bool {
 }
 
 // TestParseTrustedProxies pins the TRUSTED_PROXIES parsing that feeds
-// webhttp.WithClientIP via webhttp.ParseCIDRs. Four contracts: unset/blank
+// httpserver.WithClientIP via httpserver.ParseCIDRs. Four contracts: unset/blank
 // yields nil (ClientIP ignores X-Forwarded-For and logs the spoof-proof
 // socket peer); a valid CIDR + bare-IP mix parses into containment-correct
 // nets; a malformed entry is warned count-only and skipped while the valid
@@ -223,7 +223,7 @@ func TestDefaultRouteClientIP(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodGet, "/probe", http.NoBody)
 			req.Header.Set("X-Forwarded-For", tc.xff)
-			if got := webhttp.ClientIP(req, trusted...); got != tc.want {
+			if got := httpserver.ClientIP(req, trusted...); got != tc.want {
 				t.Errorf("ClientIP with TRUSTED_PROXIES=%s and X-Forwarded-For %s = %q, want %q", tc.proxies, tc.xff, got, tc.want)
 			}
 		})
@@ -391,7 +391,7 @@ func captureTextLog(t *testing.T) *bytes.Buffer {
 }
 
 // TestBuildHandlerClientIPThreading proves the trusted-proxy set is
-// threaded into webhttp.WithClientIP and drives the access log's
+// threaded into httpserver.WithClientIP and drives the access log's
 // client_ip field through the production middleware chain (buildHandler).
 // Two contracts: with NO trusted proxies the logged client_ip is the
 // unspoofable socket peer and a client-supplied X-Forwarded-For is ignored
@@ -531,7 +531,7 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 			httptest.NewRequestWithContext(ctx, req.method, req.path, http.NoBody))
 	}
 	// A COMPLETE upgrade attempt cannot be exercised here: the skip is
-	// webhttp.WithSkipUpgrades, decided from the RESPONSE, and this mux has
+	// httpserver.WithSkipUpgrades, decided from the RESPONSE, and this mux has
 	// no /ws route to upgrade with -- a 404 is not a stream, so it is
 	// correctly logged. The admitted-upgrade case is
 	// TestAccessLogSkipsOnlyCompletedUpgrades, which drives a real

@@ -20,9 +20,9 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // TestDebugRoutesNotExposed pins the route surface of registerRoutes: the
@@ -115,8 +115,8 @@ func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
 // accepts it, mirroring the real page.
 const testIndexHTML = `<!doctype html><style>body{margin:0}</style><script type="importmap">{}</script>`
 
-// TestKiroCacheControl pins the cache POLICY handed to webhttp.StaticHandler (the ETag/gzip
-// mechanism now lives in webhttp and is tested there): a font whose name carries a
+// TestKiroCacheControl pins the cache POLICY handed to httpserver.StaticHandler (the ETag/gzip
+// mechanism now lives in httpserver and is tested there): a font whose name carries a
 // build-stamped content hash is immutable for a year, and everything else revalidates so a
 // deploy takes effect at once. Paths arrive normalized (no leading slash; "index.html" for
 // "/"), and the fonts prefix's trailing slash is load-bearing -- "vendor/fonts-list.json" must
@@ -154,7 +154,7 @@ func TestKiroCacheControl(t *testing.T) {
 // TestStaticETagRevalidation pins the embedded-bundle revalidation contract:
 // embed.FS reports a zero ModTime, so a bare http.FileServer emits no
 // validator and every full load would re-download the body.
-// webhttp.StaticHandler precomputes a content-hash ETag (served on the
+// httpserver.StaticHandler precomputes a content-hash ETag (served on the
 // default, non-font cache branch), so GET / returns a quoted ETag and a
 // conditional GET with a matching If-None-Match answers 304 with an
 // empty body instead of re-sending the bundle. Mirrors the sibling
@@ -228,10 +228,8 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	t.Fatalf("SSE stream delivered no data through the logging middleware (scan err: %v)", sc.Err())
 }
 
-// sessionCreateBurst pins the burst of webhttp.SessionCreateRateLimit as THIS
-// app's documented contract (six creates, then 429). A deliberate tuning
-// change in the shared preset fails this test loudly so the app's docs and
-// expectations are updated consciously rather than drifting silently.
+// sessionCreateBurst pins sessionCreateGate's burst as this app's documented
+// contract (six creates, then 429), so a tuning change has to update the docs.
 const sessionCreateBurst = 6
 
 // TestCreateRateLimit pins the create throttle as registerRoutes actually
@@ -270,7 +268,7 @@ func TestCreateRateLimit(t *testing.T) {
 }
 
 // TestSecurityHeaders_presentOnNormalResponse pins the baseline headers
-// buildHandler sends through webhttp.SecurityHeaders: nosniff, X-Frame-Options
+// buildHandler sends through httpserver.SecurityHeaders: nosniff, X-Frame-Options
 // DENY (the UI is never framed), Referrer-Policy tightened to same-origin so a UI
 // bump that drops the vendored rel="noreferrer" cannot leak this server's
 // hostname to an OSC 8 link target, and the hash-pinned CSP buildCSPPolicy
@@ -298,7 +296,7 @@ func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 		}
 	}
 	// The CSP is hash-pinned from the embedded index.html (buildCSPPolicy via
-	// webhttp.InlineScriptHashes + inlineStyleHash): script-src carries 'self'
+	// httpserver.InlineScriptHashes + inlineStyleHash): script-src carries 'self'
 	// plus at least one sha256 token and never 'unsafe-inline'; style-src is
 	// likewise hash-pinned to the page's single loading-overlay <style>, so an
 	// injected style block or style attribute cannot obscure or spoof the
@@ -431,7 +429,7 @@ func TestAPICachePolicy_EveryAPIPathSetsNoStore(t *testing.T) {
 		// path nothing downstream decorates (GET without an Upgrade header is
 		// the engine's 426) — must carry nothing at all. Without this second
 		// row the scoping is unobservable: /index.html is a KNOWN asset whose
-		// Cache-Control webhttp.StaticHandler overwrites on its way out.
+		// Cache-Control httpserver.StaticHandler overwrites on its way out.
 		{"static asset", http.MethodGet, "/index.html", "", "no-cache, must-revalidate", "kiroCacheControl"},
 		{"websocket upgrade path", http.MethodGet, terminal.WSPath, "", "", "nobody (deliberately)"},
 	} {
@@ -561,7 +559,7 @@ func TestAPICachePolicy_UnmatchedAPIPathCarriesNoDirective(t *testing.T) {
 // TestCSPScriptHashesMatchEmbeddedInlineScripts is the anti-drift guard for
 // the script-src hardening, ported from web-terminal-server: it independently
 // re-extracts every inline <script> in the REAL embedded index.html with a
-// regexp (a different implementation from webhttp's byte scanner, so agreement
+// regexp (a different implementation from httpserver's byte scanner, so agreement
 // is a genuine cross-check) and asserts the sha256 hash of each appears in the
 // CSP buildCSPPolicy assembles. Hashes are computed from the embed, never
 // hardcoded, so the test tracks index.html automatically.
@@ -733,7 +731,7 @@ func TestWSAcceptsSameOrigin(t *testing.T) {
 // with no failing test anywhere. Asserting it THROUGH registerRoutes is the only
 // place that catches a dropped option.
 func TestSessionFactoryRequestsTheTitleEnv(t *testing.T) {
-	var ready webhttp.Ready
+	var ready httpserver.Ready
 	ready.Set(true)
 
 	var gotIDs []terminal.SessionID
@@ -893,7 +891,7 @@ func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
 }
 
 // TestHealthEndpoint_envelopeMatchesTheLibrary pins the wire shape this app
-// shares with webhttp.ReadinessHandler. The verdict is composite, so the handler
+// shares with httpserver.ReadinessHandler. The verdict is composite, so the handler
 // cannot reuse the library's and keeps its key order ("status" before "reason")
 // by hand. It sets no-store itself, because a cached "ok" keeps traffic arriving
 // at an instance that has begun draining (RFC 9111 heuristic freshness), so this
@@ -953,12 +951,12 @@ func TestHealthEndpoint_envelopeMatchesTheLibrary(t *testing.T) {
 			switch tc.name {
 			case "ready":
 				if libBody, libCC := libraryEnvelope(t, true); got != libBody || rec.Header().Get("Cache-Control") != libCC {
-					t.Errorf("ready envelope = %q/%q, webhttp.ReadinessHandler emits %q/%q; the two must agree byte-for-byte",
+					t.Errorf("ready envelope = %q/%q, httpserver.ReadinessHandler emits %q/%q; the two must agree byte-for-byte",
 						got, rec.Header().Get("Cache-Control"), libBody, libCC)
 				}
 			case "unready":
 				if libBody, libCC := libraryEnvelope(t, false); got != libBody || rec.Header().Get("Cache-Control") != libCC {
-					t.Errorf("unready envelope = %q/%q, webhttp.ReadinessHandler emits %q/%q; the reason string and key order are the shared contract",
+					t.Errorf("unready envelope = %q/%q, httpserver.ReadinessHandler emits %q/%q; the reason string and key order are the shared contract",
 						got, rec.Header().Get("Cache-Control"), libBody, libCC)
 				}
 			}
@@ -966,21 +964,21 @@ func TestHealthEndpoint_envelopeMatchesTheLibrary(t *testing.T) {
 	}
 }
 
-// readyStub adapts a bool to webhttp.ReadinessChecker so the library's own
+// readyStub adapts a bool to httpserver.ReadinessChecker so the library's own
 // handler can be driven here.
 type readyStub bool
 
 func (r readyStub) Ready() bool { return bool(r) }
 
-// libraryEnvelope returns webhttp.ReadinessHandler's body and Cache-Control
+// libraryEnvelope returns httpserver.ReadinessHandler's body and Cache-Control
 // for the given readiness, so the assertions above compare this app's
 // hand-matched envelope against the REAL library output rather than against a
-// literal copied from it. A webhttp bump that reorders the keys, renames a
+// literal copied from it. A httpserver bump that reorders the keys, renames a
 // field, reworks the unready wording, or drops no-store fails HERE.
 func libraryEnvelope(t *testing.T, ready bool) (body, cacheControl string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	webhttp.ReadinessHandler(readyStub(ready)).ServeHTTP(
+	httpserver.ReadinessHandler(readyStub(ready)).ServeHTTP(
 		rec, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody),
 	)
 	return strings.TrimSpace(rec.Body.String()), rec.Header().Get("Cache-Control")
@@ -1026,7 +1024,7 @@ func testStaticSurface() (http.Handler, string) {
 // fixture, a ready flag, and a short-lived cat as the session command. Tests
 // tweak fields (cmd, kiroReady) before registering.
 func newTestDeps(ready bool) *routeDeps {
-	var r webhttp.Ready
+	var r httpserver.Ready
 	r.Set(ready)
 	staticSrv, _ := testStaticSurface()
 	return withDefaultPolicies(&routeDeps{
@@ -1173,7 +1171,7 @@ func newToolsDeps(t *testing.T) *routeDeps {
 		t.Fatalf("toolbelt.New: %v", err)
 	}
 	t.Cleanup(eng.Close)
-	var ready webhttp.Ready
+	var ready httpserver.Ready
 	ready.Set(true)
 	staticSrv, _ := testStaticSurface()
 	return withDefaultPolicies(&routeDeps{
@@ -1238,13 +1236,13 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("remote peer: status = %d, want 403 (body %s)", rec.Code, rec.Body.String())
 	}
-	// The refusal must be the webhttp.WriteError envelope with code
+	// The refusal must be the httpserver.WriteError envelope with code
 	// loopback_only (CONTRIBUTING "Rules"). An http.Error body would still be
 	// a 403 and pass every other assertion here.
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Errorf("remote peer: Content-Type = %q, want application/json (webhttp.WriteError envelope)", ct)
+		t.Errorf("remote peer: Content-Type = %q, want application/json (httpserver.WriteError envelope)", ct)
 	}
-	var denied webhttp.ErrorResponse
+	var denied httpserver.ErrorResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &denied); err != nil {
 		t.Fatalf("remote peer: body %q is not the standard envelope: %v", rec.Body.String(), err)
 	}
@@ -1294,7 +1292,7 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	// above uses an IP literal, so deleting that arm keeps the whole suite
 	// green while the tools API becomes unreachable from the only client it
 	// exists for. Case folding is part of the same arm's contract
-	// (webhttp.CanonicalHost lowercases), and a bare Host with no port must
+	// (httpserver.CanonicalHost lowercases), and a bare Host with no port must
 	// pass too.
 	for _, host := range []string{"localhost:9848", "localhost", "LocalHost:9848"} {
 		req = httptest.NewRequest(http.MethodGet, "/api/tools", http.NoBody)
@@ -1314,7 +1312,7 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	// half alone; without this case, deleting the loopbackHost conjunct keeps the
 	// suite green while the tools API (which executes manual install strings as
 	// root) becomes reachable from a browser. The empty and malformed Hosts pin
-	// the fail-closed path through webhttp.CanonicalHost.
+	// the fail-closed path through httpserver.CanonicalHost.
 	for _, host := range []string{
 		"evil.example", "evil.example:9848", "kiro.lan", "", "127.0.0.1:garbage",
 		// Name-confusion shapes. Admission is exact-name equality, and every
@@ -1345,12 +1343,12 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 		}
 	}
 
-	// The provenance leg (webhttp.ProxiedRequest): a request that passes BOTH
+	// The provenance leg (httpserver.ProxiedRequest): a request that passes BOTH
 	// loopback legs but carries proxy or browser evidence is refused. The deny
-	// lives in the library since the webhttp.LoopbackOnly adoption (the app-local
+	// lives in the library since the httpserver.LoopbackOnly adoption (the app-local
 	// proxiedOrigin / proxyProvenanceHeaders copies are deleted), so these rows
 	// pin that loopbackOnly still COMPOSES that middleware: rewiring it around
-	// webhttp.LoopbackRequest alone -- the shape it had before the adoption's
+	// httpserver.LoopbackRequest alone -- the shape it had before the adoption's
 	// library existed -- keeps the rest of the suite green while a same-loopback
 	// proxy that rewrites Host to its upstream address readmits the API that runs
 	// `manual` install strings as root. Refuse-only by design: a header can never
@@ -1406,7 +1404,7 @@ func TestToolsAPI_LoopbackOnly_malformedPeerFailsClosed(t *testing.T) {
 }
 
 // TestToolsAPI_ErrorCarriesRequestID pins that a toolbelt error envelope correlates
-// with its access-log line through the real chain. webhttp's request-id context key
+// with its access-log line through the real chain. httpserver's request-id context key
 // is private to each major, so a toolbelt built against a different major than the
 // app's Logging writes request_id empty with every other test green.
 func TestToolsAPI_ErrorCarriesRequestID(t *testing.T) {
@@ -1424,9 +1422,9 @@ func TestToolsAPI_ErrorCarriesRequestID(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("POST %s with an undecodable body: status = %d, want 400 (body %s)", toolsPath, rec.Code, rec.Body.String())
 	}
-	var got webhttp.ErrorResponse
+	var got httpserver.ErrorResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("body %q is not the webhttp error envelope: %v", rec.Body.String(), err)
+		t.Fatalf("body %q is not the httpserver error envelope: %v", rec.Body.String(), err)
 	}
 	header := rec.Header().Get("X-Request-ID")
 	if got.RequestID == "" {
@@ -1475,9 +1473,9 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("create during sync: status = %d, want 503 (body %s)", rec.Code, rec.Body.String())
 	}
-	// The 503 speaks the standard webhttp error envelope with a machine-readable
+	// The 503 speaks the standard httpserver error envelope with a machine-readable
 	// code, the same dialect as the app's 403 gates — not a hand-rolled body.
-	var env webhttp.ErrorResponse
+	var env httpserver.ErrorResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("create during sync: body %q is not the standard envelope: %v", rec.Body.String(), err)
 	}
@@ -1587,7 +1585,7 @@ func (f failOpenFS) Open(name string) (fs.File, error) {
 // TestBuildStaticSurface_failsLoudOnUnreadableStaticTree pins the static-handler
 // leg of buildStaticSurface's fail-loud contract, which
 // TestBuildStaticSurface_failsLoudOnMalformedStatic (the CSP leg) does not reach:
-// webhttp.StaticHandler walks and hashes every file at construction, so a
+// httpserver.StaticHandler walks and hashes every file at construction, so a
 // static tree with an unreadable file (a malformed build) must abort startup
 // with an error rather than serve a partial site. index.html
 // itself stays readable so the CSP build succeeds and the failure is
@@ -1637,7 +1635,7 @@ func TestComposeGate_syncingRefusalPreservesCreateBudget(t *testing.T) {
 	var syncing atomic.Bool
 	syncing.Store(true)
 	creates := 0
-	gated := composeGate(webhttp.SessionCreateRateLimit(terminal.SessionsPath),
+	gated := composeGate(sessionCreateGate(),
 		func() (bool, string) { return syncing.Load(), "tools installing" })(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			creates++

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 // TestMain lets a test run this package's test binary as the launcher, the way

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
 )
 
 // TestBuildHandlerGzipsJSON pins the compression layer of the production
@@ -28,7 +28,7 @@ func TestBuildHandlerGzipsJSON(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
-		webhttp.WriteJSON(w, payload)
+		httpserver.WriteJSON(w, payload)
 	})
 	h := buildHandler(mux, nil, "default-src 'self'", nil)
 

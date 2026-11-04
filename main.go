@@ -28,13 +28,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/envx/v2"
+	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/slogx"
 	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/pinstall/v3/kirocli"
-	"github.com/cplieger/slogx"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // staticFS holds the served asset tree. It embeds the DIRECTORY rather than a file
@@ -58,7 +58,7 @@ func parseTrustedProxies() []netip.Prefix {
 	if v == "" {
 		return nil
 	}
-	prefixes, invalid := webhttp.ParseCIDRs(strings.Split(v, ","))
+	prefixes, invalid := httpserver.ParseCIDRs(strings.Split(v, ","))
 	if len(invalid) > 0 {
 		// Count-only: a compose expansion mistake could put a credential in an
 		// entry, so the rejected raw values never reach the log.
@@ -83,17 +83,17 @@ func parseTrustedProxies() []netip.Prefix {
 }
 
 // parseAllowedHosts reads the comma-separated ALLOWED_HOSTS list of exact hostnames
-// / IPs this server answers for into a webhttp.HostPolicy. It closes the DNS-rebinding
+// / IPs this server answers for into a httpserver.HostPolicy. It closes the DNS-rebinding
 // hole a same-origin check alone leaves open: rebinding makes Origin and Host AGREE, so
 // CrossOriginProtection admits it (CWE-346). Unset yields an INACTIVE policy, the
 // backward-compatible default main warns about; entries that are ALL malformed yield an
 // active EMPTY policy — deny-all but the loopback carve-out, warned by name since every
 // request would otherwise 403 unexplained.
-func parseAllowedHosts() *webhttp.HostPolicy {
+func parseAllowedHosts() *httpserver.HostPolicy {
 	const key = "ALLOWED_HOSTS"
-	policy, invalid := webhttp.ParseHostList(strings.Split(envx.String(key), ","),
-		webhttp.WithLoopbackExempt(true),
-		webhttp.WithHostAllowlistError("host_not_allowed",
+	policy, invalid := httpserver.ParseHostList(strings.Split(envx.String(key), ","),
+		httpserver.WithLoopbackExempt(true),
+		httpserver.WithHostAllowlistError("host_not_allowed",
 			"host not allowed. Add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		// Count-only, like parseTrustedProxies.
@@ -344,7 +344,7 @@ func run() error {
 	// Warn for any bind reachable beyond loopback: a client that can reach this
 	// port gets an UNAUTHENTICATED kiro-cli PTY. Only a definite exposure warns; an
 	// unparseable addr will fail at Listen with its own error.
-	if webhttp.ClassifyBind(addr) == webhttp.BindExposed {
+	if httpserver.ClassifyBind(addr) == httpserver.BindExposed {
 		slog.Warn("serving an UNAUTHENTICATED kiro-cli shell on a non-loopback address; front it with an authenticating reverse proxy",
 			"addr", addr,
 			"hint", "any client that can reach this port gets a kiro-cli PTY with filesystem access to /workspace and the /config home (auth tokens, ssh keys, gitconfig)")
@@ -421,7 +421,7 @@ func run() error {
 	tuning := newEngineTuning(parseHighThroughput(), envx.String(nodeValidatedKey), kiroDataHome(), kiro.engineBinary)
 
 	mux := http.NewServeMux()
-	var ready webhttp.Ready
+	var ready httpserver.Ready
 
 	// The saved tab set, read before anything can save over it.
 	store := newTabStore(configMountDir)
@@ -500,14 +500,14 @@ func run() error {
 		return atStage(stageListen, fmt.Errorf("listen on %s: %w", addr, err))
 	}
 
-	// webhttp.NewServer supplies the streaming-safe timeout defaults the hijacked /ws
+	// httpserver.New supplies the streaming-safe timeout defaults the hijacked /ws
 	// stream needs. WithSlogErrorLog keeps net/http's OWN diagnostics inside the slog
 	// stream this app documents as its only observability channel; a nil ErrorLog routes
 	// them through the legacy log package instead, in a shape Loki cannot query alongside
 	// the access log. Warn, not Error: net/http's accept path retries itself.
-	srv := webhttp.NewServer(
+	srv := httpserver.New(
 		buildHandler(mux, trustedProxies, cspPolicy, hostPolicy),
-		webhttp.WithSlogErrorLog(slog.LevelWarn),
+		httpserver.WithSlogErrorLog(slog.LevelWarn),
 	)
 	// BaseContext hands every request a context the WithPreDrain hook below
 	// cancels on shutdown; see that hook for why cancelling baseCtx rather than
@@ -541,14 +541,14 @@ func run() error {
 	ready.Set(true)
 
 	// The pre-drain hook flips readiness false and cancels in-flight request
-	// contexts before webhttp.Run drains, so /api/health reports 503 during the
+	// contexts before httpserver.Run drains, so /api/health reports 503 during the
 	// drain window. cancelBase unblocks the always-open /api/sessions/events SSE
 	// handler (it returns only on r.Context().Done(); srv.Shutdown does not
 	// interrupt an active stream, so without this the drain blocks the full
 	// grace window whenever a tab is open).
-	if err := webhttp.Run(ctx, srv, ln, shutdownSessions,
-		webhttp.WithShutdownGrace(shutdownGrace),
-		webhttp.WithPreDrain(func(context.Context) {
+	if err := httpserver.Run(ctx, srv, ln, shutdownSessions,
+		httpserver.WithShutdownGrace(shutdownGrace),
+		httpserver.WithPreDrain(func(context.Context) {
 			ready.Set(false)
 			cancelBase()
 			slog.Info("shutting down", "cause", context.Cause(ctx))
@@ -558,7 +558,7 @@ func run() error {
 		// cancellation from a spontaneous early child failure, so this fatal path
 		// must clear it too or a teardown emits a false broken-install alert.
 		ready.Set(false)
-		// This path gets its own budget: webhttp builds a teardown context only
+		// This path gets its own budget: httpserver builds a teardown context only
 		// on the graceful path, and it returns before the pre-drain hook here.
 		tctx, cancelTeardown := context.WithTimeout(context.Background(), shutdownGrace)
 		shutdownSessions(tctx)
@@ -1469,12 +1469,12 @@ func canonicalPathGuardedRoute(p string) bool {
 // ServeMux matches patterns on unescaped segments: "/api/%74ools" is served 200.
 func canonicalPathGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		clean, canonical := webhttp.CanonicalRequestPath(r.URL.Path)
+		clean, canonical := httpserver.CanonicalRequestPath(r.URL.Path)
 		if canonical || !canonicalPathGuardedRoute(clean) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		webhttp.WriteError(w, r, http.StatusBadRequest, "non_canonical_path", canonicalPathRefusal)
+		httpserver.WriteError(w, r, http.StatusBadRequest, "non_canonical_path", canonicalPathRefusal)
 	})
 }
 
@@ -1486,10 +1486,10 @@ func canonicalPathGuard(next http.Handler) http.Handler {
 // outside the host gate so a rejected Host still leaves a record; SecurityHeaders
 // outside the origin gate so a rejected request still carries the headers; the host
 // allowlist BEFORE the origin gate, since rebinding makes Origin and Host agree.
-func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, hostPolicy *webhttp.HostPolicy) http.Handler {
-	return webhttp.Chain(mux,
-		webhttp.Logging(
-			webhttp.WithLogger(slog.Default()),
+func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, hostPolicy *httpserver.HostPolicy) http.Handler {
+	return httpserver.Chain(mux,
+		httpserver.Logging(
+			httpserver.WithLogger(slog.Default()),
 			// The /ws skip decides on an OUTCOME rather than a prediction: it
 			// suppresses the record only for a response that actually switched
 			// protocols, which is the state that makes the line a lie — the exchange
@@ -1498,7 +1498,7 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 			// Every refusal therefore keeps its line by construction, including the
 			// 426 for missing upgrade headers (the classic reverse-proxy
 			// misconfiguration).
-			webhttp.WithSkipUpgrades(true),
+			httpserver.WithSkipUpgrades(true),
 			// SSE needs its own path-shaped skip because it never switches protocols: it
 			// is a plain 200 that does not return until the client disconnects, so
 			// WithSkipUpgrades cannot see it and its record would START being emitted.
@@ -1507,30 +1507,30 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 			// BEFORE the chain, so a bare path skip would also swallow the 403s
 			// hostPolicy.Middleware and CrossOriginProtection write — WriteError logs
 			// neither — leaving an attack on this unauthenticated PTY unrecorded (CWE-778).
-			webhttp.WithSkipFunc(func(r *http.Request) bool {
+			httpserver.WithSkipFunc(func(r *http.Request) bool {
 				return r.Method == http.MethodGet &&
 					r.URL.Path == terminal.SessionEventsPath && hostPolicy.Allows(r)
 			}),
 			// /api/health is probed every 30s. ProbeLogLevel keeps healthy probes at
 			// Debug while a FAILING probe surfaces at Warn/Error with its status and
 			// request id.
-			webhttp.ProbeLogLevel(healthPath),
+			httpserver.ProbeLogLevel(healthPath),
 			// The session-id-bearing subtree logs the route template the mux actually
 			// matched instead of the raw path, so a live capability token never reaches the
 			// access log. The prefix comes from the engine — the package that DECLARES those
 			// routes — and the template from r.Pattern, so a route the engine adds in a
 			// future version logs correctly with no change here.
-			webhttp.WithTemplatePathsUnder(terminal.SessionsSubtreePath),
-			webhttp.WithClientIP(trustedProxies...),
+			httpserver.WithTemplatePathsUnder(terminal.SessionsSubtreePath),
+			httpserver.WithClientIP(trustedProxies...),
 		),
-		webhttp.Recoverer(webhttp.WithRecoverLogger(slog.Default())),
+		httpserver.Recoverer(httpserver.WithRecoverLogger(slog.Default())),
 		// The default JSON-only type list keeps the SSE stream (text/event-stream)
 		// unbuffered and identity; a /ws 101 is never a compression candidate and its
 		// hijack passes through; StaticHandler's assets arrive already gzipped.
-		webhttp.Gzip(),
+		httpserver.Gzip(),
 		wsAttachLog(trustedProxies),
-		webhttp.SecurityHeaders(
-			webhttp.WithCSP(csp),
+		httpserver.SecurityHeaders(
+			httpserver.WithCSP(csp),
 			// COOP severs window.opener for any cross-origin page a session opens. The
 			// terminal renders clickable OSC 8 hyperlinks straight out of untrusted child
 			// output, so a session can be induced to open an attacker page; the vendored UI
@@ -1538,9 +1538,9 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 			// Referrer-Policy make that guarantee independent of the Renovate-bumped UI pin.
 			// COOP and the Permissions-Policy features are secure-context-gated, so inert on
 			// a plain-HTTP LAN bind; Referrer-Policy is not, which is why it is useful there.
-			webhttp.WithCOOP("same-origin"),
-			webhttp.WithReferrerPolicy("same-origin"),
-			webhttp.WithPermissionsPolicy("camera=(), microphone=(), geolocation=()"),
+			httpserver.WithCOOP("same-origin"),
+			httpserver.WithReferrerPolicy("same-origin"),
+			httpserver.WithPermissionsPolicy("camera=(), microphone=(), geolocation=()"),
 		),
 		hostPolicy.Middleware(),
 		http.NewCrossOriginProtection().Handler,
@@ -1565,8 +1565,8 @@ func wsAttachLog(trustedProxies []netip.Prefix) func(http.Handler) http.Handler 
 			if r.URL.Path == terminal.WSPath && isWebSocketUpgrade(r) {
 				slog.Info(wsAttachMsg,
 					"session", terminal.LogID(terminal.SessionID(r.URL.Query().Get("session"))),
-					"client_ip", webhttp.ClientIP(r, trustedProxies...),
-					"request_id", webhttp.RequestIDFromContext(r.Context()))
+					"client_ip", httpserver.ClientIP(r, trustedProxies...),
+					"request_id", httpserver.RequestIDFromContext(r.Context()))
 			}
 			next.ServeHTTP(w, r)
 		})
