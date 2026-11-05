@@ -22,8 +22,8 @@ github.com/cplieger/go/ssrf v1.0.0-dev.1 h1:2wxKGOKp5sFwwJneaxOEOvFqlA7077nOWmaK
 github.com/cplieger/go/ssrf v1.0.0-dev.1/go.mod h1:/YuSCNO/nE8JB4PAw6FEA/A3AsqHLzcZckpLgQCMGnA=
 github.com/cplieger/go/textsafe v1.0.0-dev.1 h1:NqiLs9uk4eOoXXkTQo0O8lMtYddo3XZuCuyx/ruB66w=
 github.com/cplieger/go/textsafe v1.0.0-dev.1/go.mod h1:5IH0ZWTC+U864nzWGtcwGkp+PtA5hrlcfY2zLY/TexM=
-github.com/cplieger/pinstall/v3 v3.3.0-dev.1 h1:mM6dje3ZSH+G7A59znzHZ4+VKwM1Sgs9kdRiIgxxY5U=
-github.com/cplieger/pinstall/v3 v3.3.0-dev.1/go.mod h1:L1FaHl218KQKGHBrhh7sMB91ABD0YoeAMmY4yhQJkj4=
+github.com/cplieger/pinstall/v3 v3.3.0-dev.2 h1:Vi0nfbO4gp5hKNYRMjLH3w2Iy+/uFmSfWIUENsu4WlE=
+github.com/cplieger/pinstall/v3 v3.3.0-dev.2/go.mod h1:L1FaHl218KQKGHBrhh7sMB91ABD0YoeAMmY4yhQJkj4=
 github.com/cplieger/toolbelt/v3 v3.15.0-dev.5 h1:nZXmlY3ev0ZyhZGPRJfJ8xfkKNm6kg3KWDxYZeQIDaE=
 github.com/cplieger/toolbelt/v3 v3.15.0-dev.5/go.mod h1:Ak1FxqWno7Q+eLUOLB/hdrwh1RLlyUYJZmCFly+aGeA=
 github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.4 h1:hxoqFfA+tbltlbQLJ5HM47eRjbaZ/CpADJJLEy3KQZI=
