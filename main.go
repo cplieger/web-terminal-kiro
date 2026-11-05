@@ -362,6 +362,8 @@ func run() error {
 	kiroToolsDir := envx.String("KIRO_CLI_TOOLS_DIR")
 	ghToken, ghTokenEnv := githubToken()
 
+	// ONE parse for both custody checks, the tools engine's (baseTools below) and the
+	// kiro-cli install's (baseKiro): each must receive this same slice.
 	trustedInstallUIDs := parseTrustedInstallUIDs()
 	tools := startTools(baseCtx, &baseTools{
 		configDir:   configMountDir,
@@ -829,7 +831,8 @@ func kiroSetting(key, value string) pin.Assertion {
 //
 // Larger than marotte's on purpose (this installer promoted in place, so it wrote a
 // journal, `.prev` backups and three markers), so do not copy it there. The dispatchers
-// are named exactly, which is what makes the sweep safe in a directory toolbelt co-owns: a `kiro-cli*` prefix sweep deleted a live symlink.
+// are named exactly, which is what makes the sweep safe in a directory toolbelt
+// co-owns: a `kiro-cli*` prefix sweep deleted a live symlink.
 func kiroLegacyPurge() *pin.Purge {
 	return &pin.Purge{
 		Artifacts: []string{
@@ -1216,7 +1219,8 @@ func toolsConfig(cfg *baseTools, toolsRoot string, onJob func(*toolbelt.Job)) *t
 		TrustedUIDs:  cfg.trustedUIDs,
 		GitHubToken:  githubTokenSource(cfg.githubToken),
 		// Refuse to construct an engine over a managed root that is a symlink, is not a
-		// directory, is group/other-writable, or resolves outside the tree. The tree is an
+		// directory, resolves outside the tree, or can be written (owner, group, other or
+		// ACL) by anyone but root, this process or TrustedUIDs. The tree is an
 		// operator-controlled persistent volume, this process runs as root, and toolbelt's
 		// install probe EXECUTES what it finds in <ToolsDir>/bin with that dir first on PATH.
 		// ADDITIVE to entrypoint.sh: only the entrypoint can chmod and re-stat to prove a

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2919,6 +2920,30 @@ func TestToolsConfigCarriesTheTrustedInstallUIDs(t *testing.T) {
 	cfg := toolsConfig(&baseTools{trustedUIDs: []int{1000, 1001}}, t.TempDir(), nil)
 	if !slices.Equal(cfg.TrustedUIDs, []int{1000, 1001}) {
 		t.Errorf("toolsConfig().TrustedUIDs = %v, want [1000 1001]", cfg.TrustedUIDs)
+	}
+}
+
+// TestKiroInstallConfigCarriesTheReleaseShape pins the published kiro-cli release's
+// facts: a wrong host, archive name, arch token or archive directory breaks every
+// fresh install, and nothing else in the suite downloads one.
+func TestKiroInstallConfigCarriesTheReleaseShape(t *testing.T) {
+	cfg := kiroInstallConfig(&baseKiro{version: "2.0.0"})
+	wantTokens := map[string]string{"amd64": "x86_64-linux", "arm64": "aarch64-linux"}
+	switch {
+	case cfg.Name != "kiro-cli":
+		t.Errorf("Name = %q, want kiro-cli", cfg.Name)
+	case cfg.URLTemplate != "https://desktop-release.q.us-east-1.amazonaws.com/{version}/kirocli-{arch}.zip":
+		t.Errorf("URLTemplate = %q, want the desktop-release kirocli-{arch}.zip archive", cfg.URLTemplate)
+	case !maps.Equal(cfg.ArchTokens, wantTokens):
+		t.Errorf("ArchTokens = %v, want %v", cfg.ArchTokens, wantTokens)
+	case cfg.ArtifactDir != "kirocli/bin":
+		t.Errorf("ArtifactDir = %q, want kirocli/bin", cfg.ArtifactDir)
+	case !slices.Equal(cfg.ProbeArgs, []string{"--version"}):
+		t.Errorf("ProbeArgs = %q, want [--version]", cfg.ProbeArgs)
+	case !strings.Contains(cfg.Notice, "https://kiro.dev/license/"):
+		t.Errorf("Notice = %q, want the licence link", cfg.Notice)
+	case cfg.Purge == nil || !slices.Equal(cfg.Purge.Names, []string{"kiro-cli", "kiro-cli-chat", "kiro-cli-term"}):
+		t.Errorf("Purge = %+v, want the three shell-era dispatcher names", cfg.Purge)
 	}
 }
 

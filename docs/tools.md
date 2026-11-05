@@ -90,7 +90,7 @@ The tools engine does not start over a tools folder it cannot trust: a folder it
 
 `/api/health` reports two tool fields, and neither changes the container's healthy or unhealthy state:
 
-- `tools` is `"syncing"` during the start pass, then `"ok"` or `"degraded"` after each install. A repair you make inside the container turns it back to `"ok"` without a restart.
+- `tools` is `"syncing"` during the start pass, then `"ok"` or `"degraded"` after each install. A repair of a failed install, made inside the container, turns it back to `"ok"` without a restart; an engine refused at start needs one, as above.
 - `tools_missing` counts enabled entries that are not installed yet. Disabled templates never count, and an entry still installing does. The key is absent when the count is unknown, so `0` always means everything is installed.
 
 kiro-cli's own readiness is the separate `status` and `reason` keys.
