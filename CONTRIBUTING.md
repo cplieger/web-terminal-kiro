@@ -4,7 +4,7 @@ The [shared rules](https://github.com/cplieger/.github/blob/main/CONTRIBUTING.md
 
 ## Scope
 
-This repo owns the server, its kiro-cli install settings and the page setup in `static-src/app.ts`. A change to how kiro-cli is downloaded, verified, selected or activated belongs in [pinstall](https://github.com/cplieger/pinstall).
+This repo owns the server, its kiro-cli install settings and the page setup in `static-src/app.ts`. A change to how kiro-cli is downloaded, verified, selected or activated belongs in the `pin` package of [toolbelt](https://github.com/cplieger/toolbelt).
 
 A change to how the terminal draws, takes input, scrolls or reconnects belongs in [web-terminal-ui](https://github.com/cplieger/web-terminal-ui).
 

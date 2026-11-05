@@ -24,7 +24,7 @@ Settings are environment variables on the container, under `environment:` in `co
 | `BUNDLED_TOOLS_PATH` | The file in the image naming the four language servers no registry carries, merged over every loaded catalog. | `/app/bundled-tools.json` |
 | `GH_TOKEN` | A GitHub token for tool version checks, which raises GitHub's limit of 60 requests an hour. Every tab sees it. Takes precedence over `GITHUB_TOKEN`. | _(unset)_ |
 | `GITHUB_TOKEN` | Read in place of `GH_TOKEN` when that one is unset or empty. | _(unset)_ |
-| `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the kiro-cli install folder. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
+| `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the tools folder that holds kiro-cli and your installed tools. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
 | `KIRO_CLI_SANDBOX` | Check at start that kiro-cli's command sandbox can run, and give it bubblewrap when it can. Needs the profiles in [Command sandbox](sandbox.md). | `false` |
 
 ## ALLOWED_HOSTS
@@ -77,7 +77,7 @@ Every tab inherits the server's environment, so `gh` and other programs in a ter
 
 ## TRUSTED_INSTALL_UIDS
 
-Before installing kiro-cli, the server checks who can write each folder on the way to the install under `/config/tools`. It refuses when another account can, because what lands there later runs as root. Leave this unset, which makes no exception, for almost every setup. Set it only when the check refuses a volume you know is safe.
+Before installing kiro-cli, and before the tools engine starts, the server checks who can write each folder on the way to `/config/tools`. It refuses when another account can, because what lands there later runs as root. The same list applies to both checks. Leave this unset, which makes no exception, for almost every setup. Set it only when the check refuses a volume you know is safe.
 
 Each user ID you list states that the account is already as privileged as this server. Listing an account that is not hands it a way to run code as root. An entry that is not a whole number above `0` is skipped with a warning that names the variable and how many entries were dropped.
 

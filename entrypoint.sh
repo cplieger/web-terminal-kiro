@@ -4,7 +4,7 @@
 # hook, prepares per-session containment, exports the Renovate-pinned
 # kiro-cli version and digests, and execs the Go web server.
 #
-# Does NOT install kiro-cli: the server owns that (cplieger/pinstall,
+# Does NOT install kiro-cli: the server owns that (cplieger/toolbelt's pin,
 # wired in main.go), after the listener binds, so a slow first-boot
 # download answers 503 instead of refusing connections. Fetched at
 # runtime rather than baked into the image because we do not redistribute
@@ -495,7 +495,7 @@ warn_legacy_tool_metadata() {
 # are the per-arch sha256 of the headless zip, both enforced at install; the
 # kiro-cli packageRule in cplieger/.github groups all three literals into one
 # Renovate PR so neither arch's gate can land stale.
-# Exported below and consumed by the server's install manager (cplieger/pinstall,
+# Exported below and consumed by the server's install manager (cplieger/toolbelt's pin,
 # wired by main.go's kiroInstallConfig). They stay shell literals here because
 # that is where Renovate's custom datasource finds them.
 # COUPLING (re-verify on every bump): the per-tab status dots come from

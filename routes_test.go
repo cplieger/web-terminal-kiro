@@ -1671,10 +1671,10 @@ func TestComposeGate_syncingRefusalPreservesCreateBudget(t *testing.T) {
 // TestKiroRescan_reportsUnreadyOnlyWhenAVerdictWasReached pins the two non-ok
 // outcomes, neither of which any other test reaches, and the property that
 // separates them: BOTH answer 503, and only the one that reached a verdict speaks
-// about the install. pinstall's ORDINARY refusal is (false, nil) -- no candidate
+// about the install. pin's ORDINARY refusal is (false, nil) -- no candidate
 // selected, and recording that verdict succeeded -- which answers the manager's
 // own reason. A context error means the request was ABANDONED before any verdict
-// (the caller's own cancellation while queued for pinstall's operation slot, or
+// (the caller's own cancellation while queued for pin's operation slot, or
 // this server's shutdown pre-drain cancelling the BaseContext every request is
 // built on; an ADMITTED rescan detaches with context.WithoutCancel, and a probe or
 // assertion that times out surfaces as *exec.ExitError, not as a context error),
@@ -1730,7 +1730,7 @@ func TestKiroRescan_reportsUnreadyOnlyWhenAVerdictWasReached(t *testing.T) {
 	}
 }
 
-// The cancellable-wait and detached-rescan behaviors are pinstall's own
+// The cancellable-wait and detached-rescan behaviors are pin's own
 // (pinned there by TestRescanQueuedCallerCanAbandon and
 // TestAdmittedRescanIgnoresCallerCancellation). What is still this app's to get
 // wrong is the one line below: the handler must hand the REQUEST context to the
@@ -1759,11 +1759,11 @@ func TestKiroRescan_PassesTheRequestContextThrough(t *testing.T) {
 	}
 
 	// Cancelling the REQUEST must be visible to the manager: that is what lets
-	// pinstall drop a caller still queued for its operation slot.
+	// pin drop a caller still queued for its operation slot.
 	cancel()
 	select {
 	case <-got.Done():
 	default:
-		t.Error("cancelling the request did not reach the context handed to pinstall; the handler is detaching it itself, which defeats the library's cancellable wait and restores the unbounded-queue hazard")
+		t.Error("cancelling the request did not reach the context handed to pin; the handler is detaching it itself, which defeats the library's cancellable wait and restores the unbounded-queue hazard")
 	}
 }

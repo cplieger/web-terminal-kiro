@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,8 +22,8 @@ import (
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/slogx/capture"
-	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/toolbelt/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
@@ -208,7 +209,7 @@ func writeToolsManifest(t *testing.T, configDir, manifest string) {
 	// and, on a filesystem carrying an inheritable group-write ACL, the
 	// directory is born group-writable whatever was asked for (measured on a
 	// ZFS nfs4acl dataset: 0770 from a 0o700 MkdirAll -- the same condition
-	// this app's own docs record for pinstall's install root, where
+	// this app's own docs record for pin's install root, where
 	// "os.MkdirAll with dirMode = 0o755 cannot beat a ZFS inheritable ACL").
 	// toolbelt's VerifyRootIntegrity then refuses to construct the engine over
 	// a group-writable managed root, so every test below reaches the
@@ -499,7 +500,7 @@ func TestStartTools_rootIntegrityRefusalDegrades(t *testing.T) {
 					t.Fatalf("loosen tools root: %v", err)
 				}
 			},
-			wantReason: "is group- or other-writable",
+			wantReason: "can be modified by",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1477,12 +1478,12 @@ func TestToolsStatus_callbackAndHealthReadAreRaceClean(t *testing.T) {
 // tail. A deliberate rewording updates both sides; anything else is the
 // regression these pins exist to fail.
 const (
-	trustedUIDsBadMsg  = "dropping unusable TRUSTED_INSTALL_UIDS entries; the kiro-cli install keeps enforcing custody against those identities"
+	trustedUIDsBadMsg  = "dropping unusable TRUSTED_INSTALL_UIDS entries; the kiro-cli install and the tools engine keep enforcing custody against those identities"
 	trustedUIDsBadHint = "each entry is a single numeric uid greater than 0 (e.g. 1000,1001); root is trusted already, and every identity listed must be at least as privileged as this server"
 )
 
 // TestParseTrustedInstallUIDs pins the whole TRUSTED_INSTALL_UIDS contract:
-// the EMPTY default (no trust grant, so pinstall's custody check applies in
+// the EMPTY default (no trust grant, so pin's custody check applies in
 // full), the drop-the-unusable-keep-the-rest posture, the two numeric shapes that
 // are rejected as well as non-numeric text (0 is root, which the library trusts
 // anyway; a negative is not an identity), deduplication, first-seen order, and
@@ -2892,6 +2893,60 @@ func TestSetupLoggingInstallsTheParsedLevelAndWarnsByNameOnly(t *testing.T) {
 	}
 }
 
+// TestKiroSettingsRequiresOnlyTheAutoUpdateGate pins the integrity gate this app now
+// writes itself: app.disableAutoupdates set to true, once, and the only Required
+// assertion, so a kiro-cli that could replace its verified binary withholds readiness
+// while a failing best-effort setting only warns.
+func TestKiroSettingsRequiresOnlyTheAutoUpdateGate(t *testing.T) {
+	var required []pin.Assertion
+	gates := 0
+	for _, a := range kiroSettings() {
+		if a.Required {
+			required = append(required, a)
+		}
+		if a.Name == "app.disableAutoupdates" {
+			gates++
+		}
+	}
+	want := []string{"settings", "app.disableAutoupdates", "true"}
+	if gates != 1 || len(required) != 1 || required[0].Name != "app.disableAutoupdates" || !slices.Equal(required[0].Args, want) {
+		t.Errorf("Required assertions = %+v with %d auto-update entries, want exactly one Required %q", required, gates, want)
+	}
+}
+
+// TestToolsConfigCarriesTheTrustedInstallUIDs pins that TRUSTED_INSTALL_UIDS reaches the
+// tools engine's integrity check as well as the kiro-cli install.
+func TestToolsConfigCarriesTheTrustedInstallUIDs(t *testing.T) {
+	cfg := toolsConfig(&baseTools{trustedUIDs: []int{1000, 1001}}, t.TempDir(), nil)
+	if !slices.Equal(cfg.TrustedUIDs, []int{1000, 1001}) {
+		t.Errorf("toolsConfig().TrustedUIDs = %v, want [1000 1001]", cfg.TrustedUIDs)
+	}
+}
+
+// TestKiroInstallConfigCarriesTheReleaseShape pins the published kiro-cli release's
+// facts: a wrong host, archive name, arch token or archive directory breaks every
+// fresh install, and nothing else in the suite downloads one.
+func TestKiroInstallConfigCarriesTheReleaseShape(t *testing.T) {
+	cfg := kiroInstallConfig(&baseKiro{version: "2.0.0"})
+	wantTokens := map[string]string{"amd64": "x86_64-linux", "arm64": "aarch64-linux"}
+	switch {
+	case cfg.Name != "kiro-cli":
+		t.Errorf("Name = %q, want kiro-cli", cfg.Name)
+	case cfg.URLTemplate != "https://desktop-release.q.us-east-1.amazonaws.com/{version}/kirocli-{arch}.zip":
+		t.Errorf("URLTemplate = %q, want the desktop-release kirocli-{arch}.zip archive", cfg.URLTemplate)
+	case !maps.Equal(cfg.ArchTokens, wantTokens):
+		t.Errorf("ArchTokens = %v, want %v", cfg.ArchTokens, wantTokens)
+	case cfg.ArtifactDir != "kirocli/bin":
+		t.Errorf("ArtifactDir = %q, want kirocli/bin", cfg.ArtifactDir)
+	case !slices.Equal(cfg.ProbeArgs, []string{"--version"}):
+		t.Errorf("ProbeArgs = %q, want [--version]", cfg.ProbeArgs)
+	case !strings.Contains(cfg.Notice, "https://kiro.dev/license/"):
+		t.Errorf("Notice = %q, want the licence link", cfg.Notice)
+	case cfg.Purge == nil || !slices.Equal(cfg.Purge.Names, []string{"kiro-cli", "kiro-cli-chat", "kiro-cli-term"}):
+		t.Errorf("Purge = %+v, want the three shell-era dispatcher names", cfg.Purge)
+	}
+}
+
 func TestKiroSettingsTurnsSettingsOff(t *testing.T) {
 	for _, key := range []string{
 		"chat.fullscreenCopyOnSelect",
@@ -2900,7 +2955,7 @@ func TestKiroSettingsTurnsSettingsOff(t *testing.T) {
 		t.Run(key, func(t *testing.T) {
 			want := []string{"settings", key, "false"}
 			settings := kiroSettings()
-			i := slices.IndexFunc(settings, func(a pinstall.Assertion) bool { return a.Name == key })
+			i := slices.IndexFunc(settings, func(a pin.Assertion) bool { return a.Name == key })
 			if i < 0 {
 				t.Fatalf("kiroSettings() has no %q assertion", key)
 			}
