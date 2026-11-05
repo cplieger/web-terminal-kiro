@@ -29,7 +29,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/go/pathinside"
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 // The pin these tests install, and the toolbelt tool name that collides with it.
@@ -58,7 +58,7 @@ func newNSEnv(t *testing.T) *nsEnv {
 }
 
 // config is this app's real install configuration for this volume.
-func (e *nsEnv) config() *pinstall.Config {
+func (e *nsEnv) config() *pin.Config {
 	return kiroInstallConfig(&baseKiro{
 		version: nsVersion,
 		// Any well-formed digest: a volume that already holds the complete pin
@@ -70,11 +70,11 @@ func (e *nsEnv) config() *pinstall.Config {
 }
 
 // manager builds a manager from that configuration, as startKiroCLI does.
-func (e *nsEnv) manager() *pinstall.Manager {
+func (e *nsEnv) manager() *pin.Manager {
 	e.t.Helper()
-	mgr, err := pinstall.New(e.config())
+	mgr, err := pin.New(e.config())
 	if err != nil {
-		e.t.Fatalf("pinstall.New from the app's own config: %v", err)
+		e.t.Fatalf("pin.New from the app's own config: %v", err)
 	}
 	return mgr
 }
@@ -522,8 +522,8 @@ func TestKiroInstallConfig_activatesTheSingleBinary(t *testing.T) {
 	if !ok || err != nil {
 		t.Fatalf("Rescan of a version directory holding only %s = (%v, %v), want (true, nil)", nsTool, ok, err)
 	}
-	if ready, why := mgr.Ready(); !ready || why != pinstall.ReasonReady {
-		t.Errorf("Ready() = (%v, %v), want (true, %v)", ready, why, pinstall.ReasonReady)
+	if ready, why := mgr.Ready(); !ready || why != pin.ReasonReady {
+		t.Errorf("Ready() = (%v, %v), want (true, %v)", ready, why, pin.ReasonReady)
 	}
 	if got, want := mgr.Path(), filepath.Join(dir, nsTool); got != want {
 		t.Errorf("Path() = %q, want %q", got, want)

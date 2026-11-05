@@ -458,17 +458,16 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Baked-in dependencies. kiro-cli itself is NOT one of them: it is
 # proprietary and cannot be redistributed in the image, so the Go server's
-# pinstall manager downloads and verifies it after the listener binds.
+# install manager (toolbelt's pin) downloads and verifies it after the
+# listener binds.
 # Everything else here is stable utility surface web-terminal-kiro or the
 # interactive user needs:
 #   - bash: the entrypoint interpreter (entrypoint.sh is a bash
 #     script; Debian's /bin/sh is dash)
 #   - ca-certificates + curl: HTTPS trust, the baked HEALTHCHECK probe, and the
 #     archive/catalog fetches the server and the toolbelt engine make
-#   - unzip: `.zip` extraction for tools the toolbelt engine installs at runtime
-#     (toolbelt extract.go shells out to it), the same reason xz-utils is here.
-#     NOT the kiro-cli install -- the pinstall library unpacks that archive with
-#     Go's archive/zip, so this package looks droppable and is not.
+#   - unzip: `.zip` extraction from inside the terminal. Neither the toolbelt
+#     engine nor its pin package needs it: both unpack zip archives in Go.
 #   - git: source control from inside the terminal (gh is NOT baked; it
 #     is opt-in via /config/tools/tools.json)
 #   - openssh-client: git over ssh (and gh over ssh once gh is enabled)

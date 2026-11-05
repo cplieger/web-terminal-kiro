@@ -31,9 +31,8 @@ import (
 	"github.com/cplieger/go/envx"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/slogx"
-	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/pinstall/v3/kirocli"
 	"github.com/cplieger/toolbelt/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
@@ -166,17 +165,17 @@ func parseCatalogRefresh(raw string) time.Duration {
 }
 
 // parseTrustedInstallUIDs decodes TRUSTED_INSTALL_UIDS, a comma-separated list of
-// numeric uids, into the identities pinstall may find with write access to the kiro-cli
-// installation tree without treating custody as broken. EMPTY BY DEFAULT, and the
+// numeric uids, into the identities the kiro-cli install and the tools engine may find
+// with write access to the tools tree without treating custody as broken. EMPTY BY DEFAULT, and the
 // default is the point: setting it asserts what the library's field doc requires — every
 // uid listed is already at least as privileged as this server — because one that is NOT
 // can escalate through a binary this app installs and then executes. A malformed entry
 // is DROPPED, which is fail-closed: a uid that never lands keeps the check enforcing.
 func parseTrustedInstallUIDs() []int {
 	const key = "TRUSTED_INSTALL_UIDS"
-	uids, rejected := pinstall.ParseIdentities(envx.String(key))
+	uids, rejected := pin.ParseIdentities(envx.String(key))
 	if rejected > 0 {
-		slog.Warn("dropping unusable "+key+" entries; the kiro-cli install keeps enforcing custody against those identities",
+		slog.Warn("dropping unusable "+key+" entries; the kiro-cli install and the tools engine keep enforcing custody against those identities",
 			"invalid_count", rejected,
 			"hint", "each entry is a single numeric uid greater than 0 (e.g. 1000,1001); root is trusted already, and every identity listed must be at least as privileged as this server")
 	}
@@ -363,6 +362,7 @@ func run() error {
 	kiroToolsDir := envx.String("KIRO_CLI_TOOLS_DIR")
 	ghToken, ghTokenEnv := githubToken()
 
+	trustedInstallUIDs := parseTrustedInstallUIDs()
 	tools := startTools(baseCtx, &baseTools{
 		configDir:   configMountDir,
 		toolsDir:    kiroToolsDir,
@@ -378,6 +378,7 @@ func run() error {
 		refreshInterval: parseCatalogRefresh(envx.String(catalogRefreshKey)),
 		githubToken:     ghToken,
 		githubTokenEnv:  ghTokenEnv,
+		trustedUIDs:     trustedInstallUIDs,
 	})
 
 	trustedProxies := parseTrustedProxies()
@@ -415,7 +416,7 @@ func run() error {
 		toolsDir:           kiroToolsDir,
 		tainted:            tainted,
 		chatArgs:           chatArgs,
-		trustedInstallUIDs: parseTrustedInstallUIDs(),
+		trustedInstallUIDs: trustedInstallUIDs,
 	})
 	sandbox := startSandbox(baseCtx, parseSandboxOptIn(), workDir, envx.String("HOME"))
 	tuning := newEngineTuning(parseHighThroughput(), envx.String(nodeValidatedKey), kiroDataHome(), kiro.engineBinary)
@@ -636,12 +637,12 @@ type kiroRuntime struct {
 // readiness policy is total and permissive. In the image entrypoint.sh always
 // exports the pins, so this shape is unreachable there.
 func unmanagedKiroRuntime(chatArgs []string) kiroRuntime {
-	argv := sessionCommand(kirocli.Name, chatArgs...)
+	argv := sessionCommand(kiroName, chatArgs...)
 	return kiroRuntime{
 		cmd: func() []string { return argv },
 		env: func() []string { return nil },
 		engineBinary: func() string {
-			p, _ := exec.LookPath(kirocli.Name)
+			p, _ := exec.LookPath(kiroName)
 			return p
 		},
 		ready: func() (bool, string) { return true, "" },
@@ -657,7 +658,7 @@ func unmanagedKiroRuntime(chatArgs []string) kiroRuntime {
 // repair path stay alive, per this app's failure posture.
 func unavailableKiroRuntime() kiroRuntime {
 	return kiroRuntime{
-		cmd:          func() []string { return sessionCommand(kirocli.Name) },
+		cmd:          func() []string { return sessionCommand(kiroName) },
 		env:          func() []string { return nil },
 		engineBinary: func() string { return "" },
 		ready:        func() (bool, string) { return false, reasonUnavailable },
@@ -679,8 +680,8 @@ const (
 	// and for a reason a future library version adds: a state we cannot name still
 	// blocks sessions.
 	reasonUnavailable = "kiro-cli unavailable"
-	// reasonSettings is pinstall.ReasonAssertion in this app's terms. The only
-	// REQUIRED assertion here is the profile's mandatory app.disableAutoupdates, so
+	// reasonSettings is pin.ReasonAssertion in this app's terms. The only
+	// REQUIRED assertion here is app.disableAutoupdates, so
 	// a withheld verdict means exactly that the binary may replace itself and
 	// invalidate the verified digest.
 	reasonSettings = "kiro-cli required settings not enforced"
@@ -689,17 +690,17 @@ const (
 // kiroReasonText renders the install manager's typed reason as the reason
 // /api/health, the session-create gate and the repair hook serve. ReasonReady maps
 // to "", which every one of those surfaces omits.
-func kiroReasonText(why pinstall.Reason) string {
+func kiroReasonText(why pin.Reason) string {
 	switch why {
-	case pinstall.ReasonReady:
+	case pin.ReasonReady:
 		return ""
-	case pinstall.ReasonInstalling:
+	case pin.ReasonInstalling:
 		return reasonInstalling
-	case pinstall.ReasonRetrying:
+	case pin.ReasonRetrying:
 		return reasonRetrying
-	case pinstall.ReasonUnavailable:
+	case pin.ReasonUnavailable:
 		return reasonUnavailable
-	case pinstall.ReasonAssertion:
+	case pin.ReasonAssertion:
 		return reasonSettings
 	}
 	return reasonUnavailable
@@ -717,7 +718,7 @@ func startKiroCLI(cfg *baseKiro) kiroRuntime {
 			"hint", "expected outside the container (bare `go run`); in the image entrypoint.sh exports KIRO_CLI_VERSION, both digests and KIRO_CLI_TOOLS_DIR")
 		return unmanagedKiroRuntime(cfg.chatArgs)
 	}
-	mgr, err := pinstall.New(kiroInstallConfig(cfg))
+	mgr, err := pin.New(kiroInstallConfig(cfg))
 	if err != nil {
 		slog.Error("kiro-cli install manager could not be built from the exported pins; no version can be installed, so sessions stay gated",
 			"error", err,
@@ -747,32 +748,41 @@ func startKiroCLI(cfg *baseKiro) kiroRuntime {
 	}
 }
 
-// kiroInstallConfig is this app's deployment of the kiro-cli release: the pins, the
-// tools tree, the taint observation and the local policy. The release PROFILE — URL,
-// arch tokens, in-archive installer, probe argv, licence notice and the mandatory
-// auto-update assertion — is kirocli.Release()'s, shared with every other consumer.
+// The kiro-cli release profile: what is true of the package whatever deploys it.
+const (
+	kiroName        = "kiro-cli"
+	kiroURLTemplate = "https://desktop-release.q.us-east-1.amazonaws.com/{version}/kirocli-{arch}.zip"
+	kiroNotice      = "kiro-cli is proprietary AWS Content; by installing it you accept the AWS Customer Agreement at https://kiro.dev/license/"
+)
+
+// kiroInstallConfig is this app's install of the kiro-cli release: the profile, the
+// pins, the tools tree, the taint observation and the local policy.
 //
 // A function rather than an inline literal so the namespace test can build a manager
 // from the EXACT configuration production runs: the collision it guards is a property
 // of these values, not of a copy of them.
-func kiroInstallConfig(cfg *baseKiro) *pinstall.Config {
-	return &pinstall.Config{
-		Release: kirocli.Release(),
-		Version: cfg.version,
+func kiroInstallConfig(cfg *baseKiro) *pin.Config {
+	return &pin.Config{
+		Name:        kiroName,
+		URLTemplate: kiroURLTemplate,
+		ArchTokens: map[string]string{
+			"amd64": "x86_64-linux",
+			"arm64": "aarch64-linux",
+		},
+		ArtifactDir: "kirocli/bin",
+		ProbeArgs:   []string{"--version"},
+		Notice:      kiroNotice,
+		Version:     cfg.version,
 		// Both pins travel, whatever this container runs on; the library validates
 		// the digest for the resolved GOARCH and ignores the other.
 		Digests: map[string]string{
 			"amd64": cfg.sha256,
 			"arm64": cfg.sha256ARM64,
 		},
-		Root:    cfg.toolsDir,
-		LinkDir: kiroLinkDir,
-		// No Require or Optional set: since 3.0.0 the archive ships kiro-cli alone, which
-		// embeds the chat UI, the agent engine and its Node.js, and the library always
-		// requires the release's primary artifact. marotte's set differs, and neither
-		// should be copied across without a caller that needs it.
-		Assert: kiroSettings(),
-		Purge:  kiroLegacyPurge(),
+		Root:       cfg.toolsDir,
+		LinkDir:    kiroLinkDir,
+		Assertions: kiroSettings(),
+		Purge:      kiroLegacyPurge(),
 		// With the taint set, no pre-existing version directory may be activated at
 		// all: a forgeable sentinel is worthless evidence on a tree another host
 		// user could write. marotte deliberately leaves this UNSET — it has no
@@ -784,29 +794,33 @@ func kiroInstallConfig(cfg *baseKiro) *pinstall.Config {
 	}
 }
 
-// kiroSettings is this app's kiro-cli settings set, re-asserted against the active
-// binary on every boot. Every one is best-effort: a failure warns and readiness is
-// unaffected.
-//
-// app.disableAutoupdates is deliberately NOT here: kirocli.Release() declares it
-// Mandatory, so the library forces it Required whatever a deployment passes and the
-// integrity gate cannot be weakened from this list. The two notification settings feed
-// browser notifications and classifyNotification.
-func kiroSettings() []pinstall.Assertion {
-	return []pinstall.Assertion{
-		kirocli.Setting("telemetry.enabled", false),
-		kirocli.Setting("chat.enableNotifications", true),
-		// Raw because the value is not a boolean.
-		kirocli.SettingRaw("chat.notificationMethod", "osc9"),
-		kirocli.Setting("chat.terminalTitle", false),
+// kiroSettings is this app's kiro-cli settings set, asserted against the active
+// binary on every boot. app.disableAutoupdates is the one Required entry: kiro-cli
+// updating itself would replace the binary whose digest was verified, so a failure
+// withholds readiness. Every other one is best-effort and only warns. The two
+// notification settings feed browser notifications and classifyNotification.
+func kiroSettings() []pin.Assertion {
+	gate := kiroSetting("app.disableAutoupdates", "true")
+	gate.Required = true
+	return []pin.Assertion{
+		gate,
+		kiroSetting("telemetry.enabled", "false"),
+		kiroSetting("chat.enableNotifications", "true"),
+		kiroSetting("chat.notificationMethod", "osc9"),
+		kiroSetting("chat.terminalTitle", "false"),
 		// On, a full-screen drag reports "Copied" while copying nothing: the drag copy needs a
 		// clipboard tool the image lacks and skips OSC 52 (kirodotdev/Kiro#12210). Shift+drag
 		// stays the browser's own selection.
-		kirocli.Setting("chat.fullscreenCopyOnSelect", false),
+		kiroSetting("chat.fullscreenCopyOnSelect", "false"),
 		// The image runs every tab as root by design (docs/hardening.md), so kiro-cli's
 		// warning at each chat start that it is running as root is noise here.
-		kirocli.Setting("app.warnOnElevatedPrivileges", false),
+		kiroSetting("app.warnOnElevatedPrivileges", "false"),
 	}
+}
+
+// kiroSetting is the assertion `kiro-cli settings <key> <value>`, named after its key.
+func kiroSetting(key, value string) pin.Assertion {
+	return pin.Assertion{Name: key, Args: []string{"settings", key, value}}
 }
 
 // kiroLegacyPurge describes the layout THIS APP's shell installer left on the tools
@@ -814,11 +828,10 @@ func kiroSettings() []pinstall.Assertion {
 // than about the release. Nothing in the list is read by anything any more.
 //
 // Larger than marotte's on purpose (this installer promoted in place, so it wrote a
-// journal, `.prev` backups and three markers), so do not copy it there. The dispatcher
-// NAMES come from the library profile, which is what makes the sweep safe in a
-// directory toolbelt co-owns: a `kiro-cli*` prefix sweep deleted a live symlink.
-func kiroLegacyPurge() *pinstall.Purge {
-	return &pinstall.Purge{
+// journal, `.prev` backups and three markers), so do not copy it there. The dispatchers
+// are named exactly, which is what makes the sweep safe in a directory toolbelt co-owns: a `kiro-cli*` prefix sweep deleted a live symlink.
+func kiroLegacyPurge() *pin.Purge {
+	return &pin.Purge{
 		Artifacts: []string{
 			".kiro-cli-update-in-progress",
 			".kiro-cli-installed",
@@ -831,7 +844,8 @@ func kiroLegacyPurge() *pinstall.Purge {
 			kiroLinkDir + "/.kiro-cli-term.prev",
 			kiroLinkDir + "/.kiro-cli-term.prev.absent",
 		},
-		Names:       kirocli.ShellEraDispatchers(),
+		// The dispatchers the shell installer linked, kiro-cli 2.x's sidecars included.
+		Names:       []string{kiroName, kiroName + "-chat", kiroName + "-term"},
 		StagePrefix: legacyStagePrefix,
 		Marker:      legacyPurgeMarker,
 	}
@@ -866,6 +880,9 @@ type baseTools struct {
 	// them anonymously. githubTokenEnv names the variable it came from.
 	githubToken    string
 	githubTokenEnv envx.Key
+	// trustedUIDs are TRUSTED_INSTALL_UIDS, the users whose write access to the
+	// tools tree does not fail the engine's integrity check.
+	trustedUIDs []int
 	// bundledToolsPaths are this app's own bundled-tools files, applied by the
 	// engine over every catalog it loads. A missing file is a hard engine
 	// failure by design: the four language servers the seed names live only
@@ -1196,6 +1213,7 @@ func toolsConfig(cfg *baseTools, toolsRoot string, onJob func(*toolbelt.Job)) *t
 		System:       []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash", "socat"},
 		Logger:       slog.Default(),
 		OnJobChanged: onJob,
+		TrustedUIDs:  cfg.trustedUIDs,
 		GitHubToken:  githubTokenSource(cfg.githubToken),
 		// Refuse to construct an engine over a managed root that is a symlink, is not a
 		// directory, is group/other-writable, or resolves outside the tree. The tree is an

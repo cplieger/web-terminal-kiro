@@ -122,7 +122,7 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 | `TOOL_CATALOG_REFRESH` | How often the tool catalog is refreshed, as a duration such as `24h`. `off` or `0` stops the schedule. | `24h` |
 | `GH_TOKEN` | A GitHub token for tool version checks, which raises GitHub's limit of 60 requests an hour. Every tab sees it. Takes precedence over `GITHUB_TOKEN`. | _(unset)_ |
 | `GITHUB_TOKEN` | Read in place of `GH_TOKEN` when that one is unset or empty. | _(unset)_ |
-| `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the kiro-cli install folder. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
+| `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the tools folder that holds kiro-cli and your installed tools. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
 
 [Configuration](docs/configuration.md) lists four more settings and the details of each one.
 
@@ -171,7 +171,7 @@ The healthcheck asks `/api/health` every 30 seconds whether kiro-cli is ready, a
 
 ## Credits
 
-Web Terminal for Kiro runs the [Kiro CLI](https://kiro.dev/cli/), and all credit for the agent goes to its makers at Kiro. Its terminal is [web-terminal-engine](https://github.com/cplieger/web-terminal-engine) and [web-terminal-ui](https://github.com/cplieger/web-terminal-ui), and [pinstall](https://github.com/cplieger/pinstall) downloads and checks kiro-cli. All three are by the same author.
+Web Terminal for Kiro runs the [Kiro CLI](https://kiro.dev/cli/), and all credit for the agent goes to its makers at Kiro. Its terminal is [web-terminal-engine](https://github.com/cplieger/web-terminal-engine) and [web-terminal-ui](https://github.com/cplieger/web-terminal-ui), and [toolbelt](https://github.com/cplieger/toolbelt) downloads and checks kiro-cli. All three are by the same author.
 
 ## Contributing
 

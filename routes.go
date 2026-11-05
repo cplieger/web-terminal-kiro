@@ -221,7 +221,7 @@ type kiroRescanBody struct {
 }
 
 // reasonRescanAbandoned is the repair hook's 503 reason when the request was abandoned
-// before pinstall reached any verdict. Deliberately NOT one of main.go's kiroReasonText
+// before pin reached any verdict. Deliberately NOT one of main.go's kiroReasonText
 // strings: those name the install manager's readiness state, and this reaches no verdict
 // about the install at all.
 const reasonRescanAbandoned = "kiro-cli rescan not performed: request abandoned before any verdict"
@@ -232,7 +232,7 @@ const reasonRescanAbandoned = "kiro-cli rescan not performed: request abandoned 
 func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		// pinstall owns both halves this handler used to hand-roll: WAITING for its
+		// pin owns both halves this handler used to hand-roll: WAITING for its
 		// operation slot honours this context, while an ADMITTED rescan runs detached, so
 		// a Ctrl-C or --max-time cannot make every candidate probe fail and have the
 		// manager record "no usable version".
@@ -241,7 +241,7 @@ func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 			httpserver.WriteJSON(w, kiroRescanBody{Status: "ok"})
 			return
 		}
-		// A context error means the request was ABANDONED before pinstall reached any
+		// A context error means the request was ABANDONED before pin reached any
 		// verdict (the caller's own cancellation, or this server's shutdown). Reporting
 		// that as "no usable version" would be a false broken-install record, and
 		// "unready" is wrong too — a rescan queued behind another can abandon on a
@@ -259,7 +259,7 @@ func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 		if _, why := deps.kiroReady(); why != "" {
 			reason = why
 		}
-		// pinstall.Rescan's ordinary failure is (false, nil); a nil error attribute would
+		// pin's Rescan's ordinary failure is (false, nil); a nil error attribute would
 		// put "error":null there, indistinguishable from a state-write failure.
 		attrs := []any{"reason", reason}
 		if err != nil {

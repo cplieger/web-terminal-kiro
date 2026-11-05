@@ -80,7 +80,7 @@ The image runs as root so `git`, `gh` and SSH work, and it finds your `~/.ssh` u
 | Monaspace Neon NF | The terminal's web font, fetched at build time and checked against a digest per face. |
 | `web-terminal-glyphs` | The overlay font for box drawing, blocks, shades, braille and mosaics, digest-checked at build time. Its cell sizes gate the build against the served CSS. |
 | `toolbelt`, `tool-catalog` | The tools engine and the catalog it installs from. |
-| `pinstall` | The installer that downloads, verifies and activates the pinned kiro-cli. |
+| `toolbelt/pin` | The installer that downloads, verifies and activates the pinned kiro-cli. |
 | `httpserver`, `envx`, `slogx`, `filesafe` | HTTP handling, settings, logging and safe file writes. |
 | `bubblewrap` | kiro-cli's command sandbox, kept off `PATH` until the server's startup check has run a sandboxed command. See [Command sandbox](sandbox.md). |
 | `socat` | The local network proxy kiro-cli runs inside the sandbox in its "common dependencies" mode. |

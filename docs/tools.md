@@ -86,6 +86,8 @@ When GitHub refuses a request for its limit, the install or update that needed i
 
 New tabs wait for the first install pass at start, so the first tab sees every enabled tool on `PATH`. The web page and the health check stay reachable while it runs. If the pass fails, tabs open anyway, the failure is logged, and `/api/health` reports `"tools": "degraded"`.
 
+The tools engine does not start over a tools folder it cannot trust: a folder it manages is a symlink, is not a folder, or can be changed by another account through its owner, its mode or an access-control list. The container's start script tightens modes, but it changes no owner and removes no access-control list. Fix those by hand inside the container, with `chown root:root <folder>` or `setfacl -b <folder>`, or list the account in `TRUSTED_INSTALL_UIDS`, then restart the container. Until then the engine stays off, tabs still open, and `/api/health` reports `"tools": "degraded"`.
+
 `/api/health` reports two tool fields, and neither changes the container's healthy or unhealthy state:
 
 - `tools` is `"syncing"` during the start pass, then `"ok"` or `"degraded"` after each install. A repair you make inside the container turns it back to `"ok"` without a restart.

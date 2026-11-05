@@ -58,4 +58,4 @@ Base log searches and alert rules on `stage`, not on the message text. The stage
 
 - [web-terminal-engine](https://github.com/cplieger/web-terminal-engine) is the terminal engine behind this app, a Go server half and a TypeScript drawing half.
 - [web-terminal-ui](https://github.com/cplieger/web-terminal-ui) is the touch-first browser page this app is built on.
-- [pinstall](https://github.com/cplieger/pinstall) is the installer this app uses to download, verify and activate kiro-cli at runtime.
+- [toolbelt](https://github.com/cplieger/toolbelt) is the tools engine this app runs, and its `pin` package downloads, verifies and activates kiro-cli at runtime.
