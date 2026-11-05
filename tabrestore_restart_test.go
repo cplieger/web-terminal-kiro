@@ -47,7 +47,7 @@ func boot(t *testing.T, configDir, home, argvDir string) *bootFixture {
 	deps.restoring = f.pending.Load
 	deps.sessionTitleEnv = f.pollers.sessionEnv
 	deps.cmd = staticCmd("/bin/sh", "-c",
-		`printf '%s\n' "$@" >"`+argvDir+`/$WT_TITLE_HANDLE-$$"; exec cat`, "sh", "--v3")
+		`printf '%s\n' "$@" >"`+argvDir+`/$WT_TITLE_HANDLE-$$"; exec cat`, "sh", "--tui")
 	f.build = newSessionBuilder(deps)
 	mux := http.NewServeMux()
 	f.mgr = registerRoutes(mux, deps, f.build(""))
@@ -182,9 +182,9 @@ func TestTabRestore_survivesARestart(t *testing.T) {
 			t.Fatalf("restored tab %d has no title handle", i)
 		}
 		argv := awaitArgv(t, argvDir, h)
-		want := []string{"--v3"}
+		want := []string{"--tui"}
 		if info.Alias == resumeA {
-			want = []string{"--v3", "--resume-id", resumeA}
+			want = []string{"--tui", "--resume-id", resumeA}
 		}
 		if !slices.Equal(argv, want) {
 			t.Errorf("restored tab %d (%s) argv = %v, want %v", i, info.Alias, argv, want)

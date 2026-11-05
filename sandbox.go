@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/envx/v2"
+	"github.com/cplieger/go/envx"
 )
 
 const (
@@ -67,7 +67,7 @@ const (
 )
 
 // parseSandboxOptIn reads KIRO_CLI_SANDBOX (default false). A malformed value
-// leaves the check off and warns by name only, like LOG_OSC_TEXT.
+// leaves the check off and warns by name only.
 func parseSandboxOptIn() bool {
 	on, _, err := envx.BoolStrict(sandboxOptInKey)
 	if err != nil {

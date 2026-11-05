@@ -28,8 +28,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/go/pathinside"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 // The pin these tests install, and the toolbelt tool name that collides with it.
@@ -58,7 +58,7 @@ func newNSEnv(t *testing.T) *nsEnv {
 }
 
 // config is this app's real install configuration for this volume.
-func (e *nsEnv) config() *pinstall.Config {
+func (e *nsEnv) config() *pin.Config {
 	return kiroInstallConfig(&baseKiro{
 		version: nsVersion,
 		// Any well-formed digest: a volume that already holds the complete pin
@@ -70,11 +70,11 @@ func (e *nsEnv) config() *pinstall.Config {
 }
 
 // manager builds a manager from that configuration, as startKiroCLI does.
-func (e *nsEnv) manager() *pinstall.Manager {
+func (e *nsEnv) manager() *pin.Manager {
 	e.t.Helper()
-	mgr, err := pinstall.New(e.config())
+	mgr, err := pin.New(e.config())
 	if err != nil {
-		e.t.Fatalf("pinstall.New from the app's own config: %v", err)
+		e.t.Fatalf("pin.New from the app's own config: %v", err)
 	}
 	return mgr
 }
@@ -132,20 +132,17 @@ func (e *nsEnv) plantToolbeltKiroCLI(linked ...string) (survivors []string, tree
 // ordinary restart path, and the only way to drive this wiring with no
 // download.
 //
-// It writes BOTH dispatchers because this app's REQUIRED set is
-// {kiro-cli, kiro-cli-chat}, so a directory holding only the main binary
-// would not count as complete against production's configuration.
+// It writes kiro-cli alone, the whole of this app's required set since
+// kiro-cli 3.0.0 ships one binary.
 func (e *nsEnv) plantOwnVersion() string {
 	e.t.Helper()
 	dir := filepath.Join(e.tools, nsTool+"-versions", nsVersion)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		e.t.Fatalf("MkdirAll(%s): %v", dir, err)
 	}
-	for _, name := range []string{nsTool, nsTool + "-chat"} {
-		// Answers --version with the directory's own name (what selection probes)
-		// and exits 0 for every settings assertion.
-		e.writeScript(filepath.Join(dir, name), "case \"$1\" in --version) printf 'kiro-cli "+nsVersion+"\\n' ;; esac\n")
-	}
+	// Answers --version with the directory's own name (what selection probes)
+	// and exits 0 for every settings assertion.
+	e.writeScript(filepath.Join(dir, nsTool), "case \"$1\" in --version) printf 'kiro-cli "+nsVersion+"\\n' ;; esac\n")
 	// Written LAST, exactly as the install order requires: it is the sentinel that
 	// makes the directory a selection candidate at all.
 	if err := os.WriteFile(filepath.Join(dir, ".complete"), []byte(nsVersion+"\n"), 0o600); err != nil {
@@ -507,47 +504,26 @@ func nsShellQuote(s string) string {
 	return "'" + s + "'"
 }
 
-// TestKiroInstallConfig_requiresTheChatSidecar pins the half of this app's
-// install configuration its own product depends on: kiro-cli-chat is
-// REQUIRED, so a version directory holding only the main dispatcher is not
-// a candidate at all.
-//
-// Nothing else can see it. The main dispatcher answers --version correctly,
-// so the selection probe accepts a chat-less directory, the sentinel is
-// present, and every assertion passes -- the volume looks healthy and every
-// tab dies the moment `chat` runs.
+// TestKiroInstallConfig_activatesTheSingleBinary pins that this app's install
+// configuration requires nothing beyond kiro-cli itself: since 3.0.0 the
+// archive ships no kiro-cli-chat or kiro-cli-term, so a configuration still
+// requiring a sidecar would leave every 3.x version unready, with sessions
+// gated and /api/health failing.
 //
 // It uses Rescan rather than Ensure deliberately: Ensure would answer a
 // rejected directory by fetching the pinned archive over the network,
 // while Rescan re-derives the verdict from what the volume already holds.
-func TestKiroInstallConfig_requiresTheChatSidecar(t *testing.T) {
+func TestKiroInstallConfig_activatesTheSingleBinary(t *testing.T) {
 	env := newNSEnv(t)
-	dir := filepath.Join(env.tools, nsTool+"-versions", nsVersion)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		t.Fatalf("MkdirAll(%s): %v", dir, err)
-	}
-	env.writeScript(filepath.Join(dir, nsTool), "case \"$1\" in --version) printf 'kiro-cli "+nsVersion+"\\n' ;; esac\n")
-	if err := os.WriteFile(filepath.Join(dir, ".complete"), []byte(nsVersion+"\n"), 0o600); err != nil {
-		t.Fatalf("write sentinel: %v", err)
-	}
+	dir := env.plantOwnVersion()
 	mgr := env.manager()
 
-	if ok, _ := mgr.Rescan(t.Context()); ok {
-		t.Fatalf("a version directory holding only %s was activated: it answers --version correctly and then kills every terminal at chat", nsTool)
-	}
-	if ready, why := mgr.Ready(); ready || why != pinstall.ReasonUnavailable {
-		t.Errorf("Ready() = (%v, %v), want (false, %v)", ready, why, pinstall.ReasonUnavailable)
-	}
-	if got := mgr.Path(); got != "" {
-		t.Errorf("Path() = %q, want empty: no version may be active", got)
-	}
-
-	// The positive control, so the refusal above cannot be passing because
-	// the fixture is unusable for an unrelated reason.
-	env.writeScript(filepath.Join(dir, nsTool+"-chat"), "exit 0\n")
 	ok, err := mgr.Rescan(t.Context())
 	if !ok || err != nil {
-		t.Fatalf("Rescan with the sidecar present = (%v, %v), want (true, nil)", ok, err)
+		t.Fatalf("Rescan of a version directory holding only %s = (%v, %v), want (true, nil)", nsTool, ok, err)
+	}
+	if ready, why := mgr.Ready(); !ready || why != pin.ReasonReady {
+		t.Errorf("Ready() = (%v, %v), want (true, %v)", ready, why, pin.ReasonReady)
 	}
 	if got, want := mgr.Path(), filepath.Join(dir, nsTool); got != want {
 		t.Errorf("Path() = %q, want %q", got, want)

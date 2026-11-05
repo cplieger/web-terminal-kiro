@@ -4,7 +4,7 @@
 # hook, prepares per-session containment, exports the Renovate-pinned
 # kiro-cli version and digests, and execs the Go web server.
 #
-# Does NOT install kiro-cli: the server owns that (cplieger/pinstall,
+# Does NOT install kiro-cli: the server owns that (cplieger/toolbelt's pin,
 # wired in main.go), after the listener binds, so a slow first-boot
 # download answers 503 instead of refusing connections. Fetched at
 # runtime rather than baked into the image because we do not redistribute
@@ -222,7 +222,7 @@ secure_tools_dir() {
   # `owned` decides what an UNRECOVERABLE state costs. This is a dev-box
   # container the operator reshapes, so a broken state must heal itself or be
   # fixable from inside it.
-  #   owned=1  the NINE dirs make_config_dir creates outside $HOME: a symlink or
+  #   owned=1  the THIRTEEN dirs make_config_dir creates outside $HOME: a symlink or
   #            plain file there is anomalous and a reinstall repairs it. Fatal.
   #   owned=0  $TOOLS/go and $TOOLS/go/bin (GOPATH/bin): on PATH but never
   #            created or repaired here, no integrity-gated binary. Warn, skip.
@@ -335,6 +335,14 @@ sweep_legacy_dispatchers() {
   local dir=${1:-}
   # Never expand to /kiro-cli* on an unset/empty argument.
   [ -n "$dir" ] || return 0
+  # The glob expands THROUGH a symlinked $dir, so this root rm -rf would delete
+  # the target's kiro-cli* entries. make_config_dir's check of $dir ran while its
+  # parent could still be loose; the call site runs after harden_config_dir made
+  # the parent 0700, so no group or other writer can swap $dir after this check.
+  if [ -L "$dir" ] || [ ! -d "$dir" ]; then
+    printf 'level=warn msg="legacy kiro-cli residue dir is a symlink or not a directory; refusing to sweep through it" dir="%s" component=entrypoint\n' "$(logfmt_value "$dir")" >&2
+    return 0
+  fi
   if ! rm -rf "$dir/kiro-cli"*; then
     printf 'level=warn msg="failed to remove legacy kiro-cli residue" dir="%s" component=entrypoint\n' "$dir" >&2
   fi
@@ -487,26 +495,31 @@ warn_legacy_tool_metadata() {
 # are the per-arch sha256 of the headless zip, both enforced at install; the
 # kiro-cli packageRule in cplieger/.github groups all three literals into one
 # Renovate PR so neither arch's gate can land stale.
-# Exported below and consumed by the server's install manager (cplieger/pinstall,
+# Exported below and consumed by the server's install manager (cplieger/toolbelt's pin,
 # wired by main.go's kiroInstallConfig). They stay shell literals here because
 # that is where Renovate's custom datasource finds them.
-# COUPLING (re-verify on every bump): routes.go's status classifier matches
-# kiro-cli's EXACT OSC 9 notification strings "Response complete", "Permission
-# required" and "Input required" (verified against this version) -- a bump
-# that rewords any of them silently stops the per-tab status dots from
-# latching. Also re-verify `kiro-cli settings app.disableAutoupdates true`
+# COUPLING (re-verify on every bump): the per-tab status dots come from
+# kiro-cli's OSC 7501 reports, and routes.go's classifyNotification matches its
+# EXACT OSC 9 strings "Permission required" and "Input required" -- a bump that
+# drops the reports or rewords either string silently changes the dots. Also
+# re-verify `kiro-cli settings app.disableAutoupdates true`
 # still succeeds: it gates publication of a staged install AND readiness on a
 # boot that installs nothing, so a renamed key or subcommand makes every
 # container report kiro-cli unavailable.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.37.1"
-KIRO_CLI_SHA256="b4049000d5a7b684947306eb9f9a480cab3a3ab2ff42584c293d05bde4d314a1"
+KIRO_CLI_VERSION="3.0.0"
+KIRO_CLI_SHA256="83dd96e00a75937958096da0436703562bc8c841bef66bde00a4caa5494d8be8"
 # The `# kiro-cli <version>` trailer is Renovate's version anchor for this
 # arch's digest lookup — do not hand-edit or drop it.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="e589bd8d8b845bb193b9f36f2ee263fe8aef7dbb19aff03ce44c5076ce6ab0c1" # kiro-cli 2.37.1
+KIRO_CLI_SHA256_ARM64="e7965abd104a432ebdf2acdb24659c96d70397695699156186915eb333142df6" # kiro-cli 3.0.0
+# The Node.js bundled with the pinned kiro-cli that KIRO_CLI_HIGH_THROUGHPUT's
+# flags were measured on. The image smoke test fails when the pin bundles another
+# one: re-measure the flags on it, then update this literal. At runtime a tab whose
+# Node.js differs starts without the flags (enginetuning.go).
+KIRO_CLI_NODE_VALIDATED="22.23.4"
 
-export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
+export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64 KIRO_CLI_NODE_VALIDATED
 KIRO_CLI_TOOLS_DIR="$TOOLS"
 export KIRO_CLI_TOOLS_DIR
 
@@ -547,12 +560,17 @@ make_config_dir "$TOOLS/bin"
 # named `kiro-cli` there could delete the active install and its retained
 # predecessor.
 make_config_dir "$TOOLS/opt"
-# The toolbelt engine's two package-manager roots; their bin dirs hold npm -g
-# / uv tool launchers that $TOOLS/bin symlinks into and root executes.
+# The toolbelt engine's two package-manager roots and every directory beneath
+# them its root-integrity check judges: the bin dirs hold the npm -g / uv tool
+# launchers $TOOLS/bin symlinks into, and the others hold what they run.
 make_config_dir "$TOOLS/npm"
 make_config_dir "$TOOLS/npm/bin"
+make_config_dir "$TOOLS/npm/lib"
+make_config_dir "$TOOLS/npm/lib/node_modules"
 make_config_dir "$TOOLS/python"
 make_config_dir "$TOOLS/python/bin"
+make_config_dir "$TOOLS/python/tools"
+make_config_dir "$TOOLS/python/interpreters"
 make_config_dir "$TOOLS/kiro-cli-versions"
 make_config_dir "$HOME/.local"
 make_config_dir "$HOME/.local/bin"
@@ -573,18 +591,12 @@ if ! probe=$(mktemp "$TOOLS/.write-probe.XXXXXX") || ! rm -f "$probe"; then
   fatal '/config/tools is not writable (read-only bind mount?)'
 fi
 
-# Tighten the /config-resident dirs created above (see harden_config_dir for
-# why, and for the symlink guard).
-harden_config_dir "$HOME/.ssh"
-harden_config_dir "$HOME/.kiro/settings"
-harden_config_dir "$HOME/.kiro"
-harden_config_dir "$HOME/.local"
-harden_config_dir "$HOME"
-
-# Same argument one level out, for the tree holding the first-on-PATH binary
-# rather than credentials. /config is checked too: a writable parent lets an
-# attacker replace $TOOLS wholesale. Runs BEFORE the exec, so the taint flag
-# exported below is final by the time the manager reads it.
+# Tightens the tree holding the first-on-PATH binary. /config is checked too: a
+# writable parent lets an attacker replace $TOOLS wholesale. Runs BEFORE the
+# exec, so the taint flag exported below is final by the time the manager reads it.
+# Parents first, here and in the harden_config_dir pass below: each check and
+# chmod acts on a path, which only holds once root alone can write its parent
+# (tools_dir_hardening_test.sh pins the order).
 secure_tools_dir /config
 secure_tools_dir "$TOOLS"
 secure_tools_dir "$TOOLS/bin"
@@ -594,8 +606,20 @@ secure_tools_dir "$TOOLS/kiro-cli-versions"
 # to distrust a version directory and re-download.
 secure_tools_dir "$TOOLS/npm" 0 1
 secure_tools_dir "$TOOLS/npm/bin" 0 1
+secure_tools_dir "$TOOLS/npm/lib" 0 1
+secure_tools_dir "$TOOLS/npm/lib/node_modules" 0 1
 secure_tools_dir "$TOOLS/python" 0 1
 secure_tools_dir "$TOOLS/python/bin" 0 1
+secure_tools_dir "$TOOLS/python/tools" 0 1
+secure_tools_dir "$TOOLS/python/interpreters" 0 1
+
+# The credential-bearing dirs created above (see harden_config_dir for why, and
+# for the symlink guard).
+harden_config_dir "$HOME"
+harden_config_dir "$HOME/.local"
+harden_config_dir "$HOME/.kiro"
+harden_config_dir "$HOME/.kiro/settings"
+harden_config_dir "$HOME/.ssh"
 
 # Writable is not executable, and the install needs both (see the function). Placed
 # below the tightening pass on purpose: the probe is exec'd as root, so it must not

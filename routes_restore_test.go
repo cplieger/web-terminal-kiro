@@ -59,7 +59,7 @@ func TestSessionBuilder_resumeArgv(t *testing.T) {
 	logs := capturedLog(t)
 	// The shape sessionCommand returns: four fixed items plus one chat arg, so len 5
 	// and cap 8, with spare capacity an append would write into across tabs.
-	argv := append([]string{"/bin/sh", "-c", `printf '<%s>' "$@"; printf '|\n'; exec cat`, "sh"}, "--v3")
+	argv := append([]string{"/bin/sh", "-c", `printf '<%s>' "$@"; printf '|\n'; exec cat`, "sh"}, "--tui")
 	if len(argv) != 5 || cap(argv) != 8 {
 		t.Fatalf("fixture argv len %d cap %d, want 5 and 8", len(argv), cap(argv))
 	}
@@ -77,8 +77,8 @@ func TestSessionBuilder_resumeArgv(t *testing.T) {
 			t.Fatalf("StartEager: %v", err)
 		}
 	}
-	awaitHandlerText(t, hA, "<--v3><--resume-id><"+idA+">|")
-	awaitHandlerText(t, hB, "<--v3><--resume-id><"+idB+">|")
+	awaitHandlerText(t, hA, "<--tui><--resume-id><"+idA+">|")
+	awaitHandlerText(t, hB, "<--tui><--resume-id><"+idB+">|")
 
 	const refusal = "session: refusing a malformed resume id; starting a fresh chat"
 	for _, bad := range []string{
@@ -93,7 +93,7 @@ func TestSessionBuilder_resumeArgv(t *testing.T) {
 			if err := h.StartEager(); err != nil {
 				t.Fatalf("StartEager: %v", err)
 			}
-			if got := awaitHandlerText(t, h, "<--v3>|"); strings.Contains(got, "--resume-id") {
+			if got := awaitHandlerText(t, h, "<--tui>|"); strings.Contains(got, "--resume-id") {
 				t.Errorf("argv for %q carries --resume-id: %q", bad, got)
 			}
 			if n := strings.Count(logs.String(), refusal) - before; n != 1 {

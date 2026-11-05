@@ -46,7 +46,7 @@ func cspDirective(csp, name string) string {
 // TestCSPStyleHashMatchesEmbeddedInlineStyle is the anti-drift guard for the
 // style-src hardening, the mirror of TestCSPScriptHashesMatchEmbeddedInlineScripts:
 // it independently re-extracts the REAL embedded index.html's inline <style>
-// content with a regexp (a different implementation from webhttp.InlineStyleHashes'
+// content with a regexp (a different implementation from httpserver.InlineStyleHashes'
 // byte scanner, so agreement is a genuine cross-check) and asserts the sha256 of that
 // content is exactly what style-src pins in the assembled CSP. The hash is
 // computed from the embed, never hardcoded, so the test tracks index.html

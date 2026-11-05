@@ -5,41 +5,32 @@ import (
 	"context"
 	"log/slog"
 	"maps"
-	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/cplieger/slogx"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/slogx"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
-// trustedContains reports whether ip is inside any of the parsed trusted nets.
-func trustedContains(nets []*net.IPNet, ip string) bool {
-	parsed := net.ParseIP(ip)
-	for _, n := range nets {
-		if n.Contains(parsed) {
+// trustedContains reports whether ip is inside any of the parsed trusted prefixes.
+func trustedContains(prefixes []netip.Prefix, ip string) bool {
+	parsed := netip.MustParseAddr(ip)
+	for _, p := range prefixes {
+		if p.Contains(parsed) {
 			return true
 		}
 	}
 	return false
 }
 
-// mustCIDR parses a CIDR for test setup, failing the test on a bad literal.
-func mustCIDR(t *testing.T, s string) *net.IPNet {
-	t.Helper()
-	_, n, err := net.ParseCIDR(s)
-	if err != nil {
-		t.Fatalf("net.ParseCIDR(%q): %v", s, err)
-	}
-	return n
-}
-
 // TestParseTrustedProxies pins the TRUSTED_PROXIES parsing that feeds
-// webhttp.WithClientIP via webhttp.ParseCIDRs. Four contracts: unset/blank
+// httpserver.WithClientIP via httpserver.ParseCIDRs. Four contracts: unset/blank
 // yields nil (ClientIP ignores X-Forwarded-For and logs the spoof-proof
 // socket peer); a valid CIDR + bare-IP mix parses into containment-correct
 // nets; a malformed entry is warned count-only and skipped while the valid
@@ -144,9 +135,9 @@ func TestParseTrustedProxies(t *testing.T) {
 	})
 
 	// A default route is syntactically perfect and semantically impossible:
-	// it makes every X-Forwarded-For hop of its own family "our own hop"
+	// it makes every X-Forwarded-For hop it covers "our own hop"
 	// (ClientIP exhausts the walk and falls back to logging the PROXY),
-	// while an entry of the OTHER family is never skipped and is returned
+	// while 0.0.0.0/0 never skips an IPv6 entry, which is returned
 	// as the client -- an unauthenticated caller picks the client_ip
 	// recorded for its own request. The warning is the only signal an
 	// operator gets. Lenient by design: this asserts the warning and the
@@ -171,6 +162,13 @@ func TestParseTrustedProxies(t *testing.T) {
 		for _, r := range records.Records() {
 			if r.Level == slog.LevelWarn && strings.Contains(r.Message, "default route") {
 				warns++
+				// ::/0 covers IPv4, so only 0.0.0.0/0 lets a forged family choose client_ip.
+				if !strings.Contains(r.Message, "under 0.0.0.0/0") || !strings.Contains(r.Message, "forged IPv6") {
+					t.Errorf("default-route Warn = %q, want it to name the IPv6 forgery under 0.0.0.0/0", r.Message)
+				}
+				if strings.Contains(r.Message, "other address family") {
+					t.Errorf("default-route Warn = %q, must not claim the other address family can choose client_ip", r.Message)
+				}
 			}
 		}
 		if warns != 1 {
@@ -201,6 +199,35 @@ func TestParseTrustedProxies(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestDefaultRouteClientIP pins the two facts the default-route warning states,
+// through the real parser and resolver for an IPv4 peer: ::/0 covers IPv4 through
+// the mapped form, so client_ip stays the peer, while 0.0.0.0/0 never covers an
+// IPv6 entry, so a forged one becomes the client. Serial: the parser's Warn goes
+// to the swapped default logger.
+func TestDefaultRouteClientIP(t *testing.T) {
+	const peerIP = "192.0.2.1" // httptest.NewRequest default RemoteAddr host
+	cases := []struct {
+		name, proxies, xff, want string
+	}{
+		{name: "IPv6 default route with an IPv4 X-Forwarded-For logs the peer", proxies: "::/0", xff: "203.0.113.7", want: peerIP},
+		{name: "IPv4 default route with an IPv6 X-Forwarded-For logs the forged entry", proxies: "0.0.0.0/0", xff: "2001:db8::7", want: "2001:db8::7"},
+		{name: "IPv4 default route with an IPv4 X-Forwarded-For logs the peer", proxies: "0.0.0.0/0", xff: "203.0.113.7", want: peerIP},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			capture.Default(t)
+			t.Setenv("TRUSTED_PROXIES", tc.proxies)
+			trusted := parseTrustedProxies()
+
+			req := httptest.NewRequest(http.MethodGet, "/probe", http.NoBody)
+			req.Header.Set("X-Forwarded-For", tc.xff)
+			if got := httpserver.ClientIP(req, trusted...); got != tc.want {
+				t.Errorf("ClientIP with TRUSTED_PROXIES=%s and X-Forwarded-For %s = %q, want %q", tc.proxies, tc.xff, got, tc.want)
+			}
+		})
+	}
 }
 
 // logContains reports whether s appears in any captured record's message or
@@ -267,14 +294,6 @@ func wantInt(want int) attrCheck {
 	return func(v slog.Value) bool { return v.Kind() == slog.KindInt64 && v.Int64() == int64(want) }
 }
 
-// isNotifyFingerprint requires exactly notifyFingerprintHexDigits lowercase
-// hex digits -- the shape TestNotifyFingerprint pins, checked here because
-// the production key is unreachable so the exact value is not computable.
-func isNotifyFingerprint(v slog.Value) bool {
-	s := v.String()
-	return len(s) == notifyFingerprintHexDigits && strings.Trim(s, "0123456789abcdef") == ""
-}
-
 // assertAttrSchema pins the EXACT attribute set of the records at level
 // whose message contains msgSub: every attr must be in the schema (an
 // unexpected key fails), every attr's value must pass its check (a
@@ -284,7 +303,7 @@ func isNotifyFingerprint(v slog.Value) bool {
 // them and pass on their union). A needle sweep only catches content the
 // test already knows; this catches content under any name, of any length,
 // in any shape. Shared by the package's two credential boundaries (a
-// rejected TRUSTED_PROXIES entry and a classifier notification).
+// rejected TRUSTED_PROXIES entry and a rejected TRUSTED_INSTALL_UIDS entry).
 func assertAttrSchema(t *testing.T, records *capture.Recorder, level slog.Level, msgSub string, schema map[string]attrCheck) {
 	t.Helper()
 	expected := slices.Sorted(maps.Keys(schema))
@@ -372,7 +391,7 @@ func captureTextLog(t *testing.T) *bytes.Buffer {
 }
 
 // TestBuildHandlerClientIPThreading proves the trusted-proxy set is
-// threaded into webhttp.WithClientIP and drives the access log's
+// threaded into httpserver.WithClientIP and drives the access log's
 // client_ip field through the production middleware chain (buildHandler).
 // Two contracts: with NO trusted proxies the logged client_ip is the
 // unspoofable socket peer and a client-supplied X-Forwarded-For is ignored
@@ -387,7 +406,7 @@ func TestBuildHandlerClientIPThreading(t *testing.T) {
 	)
 	cases := []struct {
 		name       string
-		trusted    []*net.IPNet
+		trusted    []netip.Prefix
 		wantIP     string
 		mustNotLog string // a value no record may carry, in any attr
 	}{
@@ -399,7 +418,7 @@ func TestBuildHandlerClientIPThreading(t *testing.T) {
 		},
 		{
 			name:    "trusted peer resolves the real client from X-Forwarded-For",
-			trusted: []*net.IPNet{mustCIDR(t, "192.0.2.0/24")},
+			trusted: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
 			wantIP:  xffIP,
 		},
 	}
@@ -512,7 +531,7 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 			httptest.NewRequestWithContext(ctx, req.method, req.path, http.NoBody))
 	}
 	// A COMPLETE upgrade attempt cannot be exercised here: the skip is
-	// webhttp.WithSkipUpgrades, decided from the RESPONSE, and this mux has
+	// httpserver.WithSkipUpgrades, decided from the RESPONSE, and this mux has
 	// no /ws route to upgrade with -- a 404 is not a stream, so it is
 	// correctly logged. The admitted-upgrade case is
 	// TestAccessLogSkipsOnlyCompletedUpgrades, which drives a real

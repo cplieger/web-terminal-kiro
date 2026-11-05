@@ -20,9 +20,9 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v3"
 )
 
 // TestDebugRoutesNotExposed pins the route surface of registerRoutes: the
@@ -115,8 +115,8 @@ func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
 // accepts it, mirroring the real page.
 const testIndexHTML = `<!doctype html><style>body{margin:0}</style><script type="importmap">{}</script>`
 
-// TestKiroCacheControl pins the cache POLICY handed to webhttp.StaticHandler (the ETag/gzip
-// mechanism now lives in webhttp and is tested there): a font whose name carries a
+// TestKiroCacheControl pins the cache POLICY handed to httpserver.StaticHandler (the ETag/gzip
+// mechanism now lives in httpserver and is tested there): a font whose name carries a
 // build-stamped content hash is immutable for a year, and everything else revalidates so a
 // deploy takes effect at once. Paths arrive normalized (no leading slash; "index.html" for
 // "/"), and the fonts prefix's trailing slash is load-bearing -- "vendor/fonts-list.json" must
@@ -154,7 +154,7 @@ func TestKiroCacheControl(t *testing.T) {
 // TestStaticETagRevalidation pins the embedded-bundle revalidation contract:
 // embed.FS reports a zero ModTime, so a bare http.FileServer emits no
 // validator and every full load would re-download the body.
-// webhttp.StaticHandler precomputes a content-hash ETag (served on the
+// httpserver.StaticHandler precomputes a content-hash ETag (served on the
 // default, non-font cache branch), so GET / returns a quoted ETag and a
 // conditional GET with a matching If-None-Match answers 304 with an
 // empty body instead of re-sending the bundle. Mirrors the sibling
@@ -189,17 +189,11 @@ func TestStaticETagRevalidation(t *testing.T) {
 	}
 }
 
-// TestSSEStreamsThroughLoggingMiddleware is the regression guard for the tab
-// status stream behind web-terminal-kiro's own middleware. webhttp.Logging wraps most
-// requests in a webhttp.StatusRecorder; if the SSE path were wrapped by
-// something opaque to streaming the engine's flush probe would fail and the
-// stream would 500. It is instead in Logging's WithSkipPaths set (like /ws), so
-// it flows through the streaming-transparent primitives. This drives
-// /api/sessions/events through the full production middleware stack
-// (buildHandler: Logging + Recoverer + SecurityHeaders + CrossOriginProtection)
-// and asserts the stream opens (200 + text/event-stream) and flushes an event
-// -- also proving the SecurityHeaders/Recoverer layers stay transparent to the
-// SSE stream.
+// TestSSEStreamsThroughLoggingMiddleware drives /api/sessions/events through
+// buildHandler with a gzip-offering client: a layer opaque to streaming would
+// fail the engine's flush probe and answer 500, and a compressing one would
+// buffer the stream. It asserts the stream opens as uncompressed
+// text/event-stream and flushes an event.
 func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	mux, _, csp, id := mustStartSession(t, newTestDeps(true))
 
@@ -209,6 +203,8 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/sessions/events", http.NoBody)
+	// Set by hand, so the transport leaves any Content-Encoding visible.
+	req.Header.Set("Accept-Encoding", "gzip")
 	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET /api/sessions/events: %v", err)
@@ -220,6 +216,9 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
 		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
 	}
+	if ce := resp.Header.Get("Content-Encoding"); ce != "" {
+		t.Fatalf("Content-Encoding = %q, want none (a compressed event stream is buffered, not streamed)", ce)
+	}
 	sc := bufio.NewScanner(resp.Body)
 	for sc.Scan() {
 		if line := sc.Text(); strings.HasPrefix(line, "data:") && strings.Contains(line, string(id)) {
@@ -229,10 +228,8 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	t.Fatalf("SSE stream delivered no data through the logging middleware (scan err: %v)", sc.Err())
 }
 
-// sessionCreateBurst pins the burst of webhttp.SessionCreateRateLimit as THIS
-// app's documented contract (six creates, then 429). A deliberate tuning
-// change in the shared preset fails this test loudly so the app's docs and
-// expectations are updated consciously rather than drifting silently.
+// sessionCreateBurst pins sessionCreateGate's burst as this app's documented
+// contract (six creates, then 429), so a tuning change has to update the docs.
 const sessionCreateBurst = 6
 
 // TestCreateRateLimit pins the create throttle as registerRoutes actually
@@ -271,7 +268,7 @@ func TestCreateRateLimit(t *testing.T) {
 }
 
 // TestSecurityHeaders_presentOnNormalResponse pins the baseline headers
-// buildHandler sends through webhttp.SecurityHeaders: nosniff, X-Frame-Options
+// buildHandler sends through httpserver.SecurityHeaders: nosniff, X-Frame-Options
 // DENY (the UI is never framed), Referrer-Policy tightened to same-origin so a UI
 // bump that drops the vendored rel="noreferrer" cannot leak this server's
 // hostname to an OSC 8 link target, and the hash-pinned CSP buildCSPPolicy
@@ -299,7 +296,7 @@ func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 		}
 	}
 	// The CSP is hash-pinned from the embedded index.html (buildCSPPolicy via
-	// webhttp.InlineScriptHashes + inlineStyleHash): script-src carries 'self'
+	// httpserver.InlineScriptHashes + inlineStyleHash): script-src carries 'self'
 	// plus at least one sha256 token and never 'unsafe-inline'; style-src is
 	// likewise hash-pinned to the page's single loading-overlay <style>, so an
 	// injected style block or style attribute cannot obscure or spoof the
@@ -432,7 +429,7 @@ func TestAPICachePolicy_EveryAPIPathSetsNoStore(t *testing.T) {
 		// path nothing downstream decorates (GET without an Upgrade header is
 		// the engine's 426) — must carry nothing at all. Without this second
 		// row the scoping is unobservable: /index.html is a KNOWN asset whose
-		// Cache-Control webhttp.StaticHandler overwrites on its way out.
+		// Cache-Control httpserver.StaticHandler overwrites on its way out.
 		{"static asset", http.MethodGet, "/index.html", "", "no-cache, must-revalidate", "kiroCacheControl"},
 		{"websocket upgrade path", http.MethodGet, terminal.WSPath, "", "", "nobody (deliberately)"},
 	} {
@@ -562,7 +559,7 @@ func TestAPICachePolicy_UnmatchedAPIPathCarriesNoDirective(t *testing.T) {
 // TestCSPScriptHashesMatchEmbeddedInlineScripts is the anti-drift guard for
 // the script-src hardening, ported from web-terminal-server: it independently
 // re-extracts every inline <script> in the REAL embedded index.html with a
-// regexp (a different implementation from webhttp's byte scanner, so agreement
+// regexp (a different implementation from httpserver's byte scanner, so agreement
 // is a genuine cross-check) and asserts the sha256 hash of each appears in the
 // CSP buildCSPPolicy assembles. Hashes are computed from the embed, never
 // hardcoded, so the test tracks index.html automatically.
@@ -734,7 +731,7 @@ func TestWSAcceptsSameOrigin(t *testing.T) {
 // with no failing test anywhere. Asserting it THROUGH registerRoutes is the only
 // place that catches a dropped option.
 func TestSessionFactoryRequestsTheTitleEnv(t *testing.T) {
-	var ready webhttp.Ready
+	var ready httpserver.Ready
 	ready.Set(true)
 
 	var gotIDs []terminal.SessionID
@@ -772,6 +769,17 @@ func TestChildEnvComposesBothOverlays(t *testing.T) {
 			t.Errorf("childEnv = %v, want %v", got, want)
 		}
 	})
+	t.Run("the engine overlay rides between them", func(t *testing.T) {
+		d := &routeDeps{
+			sessionEnv:      func() []string { return []string{"PATH=/pinned"} },
+			engineEnv:       func() []string { return []string{kasNodePathKey + "=" + kasNodeLauncher} },
+			sessionTitleEnv: func(id terminal.SessionID) []string { return []string{"WT_TITLE_HANDLE=" + string(id)} },
+		}
+		want := []string{"PATH=/pinned", kasNodePathKey + "=" + kasNodeLauncher, "WT_TITLE_HANDLE=tab7"}
+		if got := d.childEnv("tab7"); !slices.Equal(got, want) {
+			t.Errorf("childEnv = %v, want %v", got, want)
+		}
+	})
 	t.Run("nil title env is harmless", func(t *testing.T) {
 		d := &routeDeps{sessionEnv: func() []string { return []string{"PATH=/pinned"} }}
 		if got := d.childEnv("tab7"); !slices.Equal(got, []string{"PATH=/pinned"}) {
@@ -798,30 +806,28 @@ func TestChildEnvComposesBothOverlays(t *testing.T) {
 	})
 }
 
-// TestClassifyStatus pins the kiro-cli OSC 9 -> latched-status mapping that
-// drives the tab activity dots. It was an inline closure with no test, so a
-// typo or an upstream wording drift in the magic strings would silently break
-// the dots. The switch is case-sensitive, so a case mismatch must NOT latch.
-func TestClassifyStatus(t *testing.T) {
+// TestClassifyNotification pins kiro-cli's two OSC 9 ask wordings, exact and
+// case-sensitive, as the only text that classifies. "Response complete" must stay unclassified: it also follows a
+// turn OSC 7501 reports as error, and a done latch would mask that error.
+func TestClassifyNotification(t *testing.T) {
 	cases := []struct {
 		name      string
 		msg       string
 		want      string
 		wantLatch bool
 	}{
-		{name: "response complete latches done", msg: "Response complete", want: terminal.StatusDone, wantLatch: true},
 		{name: "permission required latches input", msg: "Permission required", want: terminal.StatusInput, wantLatch: true},
 		{name: "input required latches input", msg: "Input required", want: terminal.StatusInput, wantLatch: true},
+		{name: "response complete is ignored", msg: "Response complete", want: "", wantLatch: false},
 		{name: "unknown message is ignored", msg: "Working on it", want: "", wantLatch: false},
 		{name: "empty message is ignored", msg: "", want: "", wantLatch: false},
-		{name: "case mismatch is ignored", msg: "response complete", want: "", wantLatch: false},
+		{name: "case mismatch is ignored", msg: "permission required", want: "", wantLatch: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			classify := newStatusClassifier(false)
-			got, latch := classify(tc.msg)
+			got, latch := classifyNotification(tc.msg)
 			if got != tc.want || latch != tc.wantLatch {
-				t.Errorf("newStatusClassifier()(%q) = (%q, %v), want (%q, %v)", tc.msg, got, latch, tc.want, tc.wantLatch)
+				t.Errorf("classifyNotification(%q) = (%q, %v), want (%q, %v)", tc.msg, got, latch, tc.want, tc.wantLatch)
 			}
 		})
 	}
@@ -885,7 +891,7 @@ func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
 }
 
 // TestHealthEndpoint_envelopeMatchesTheLibrary pins the wire shape this app
-// shares with webhttp.ReadinessHandler. The verdict is composite, so the handler
+// shares with httpserver.ReadinessHandler. The verdict is composite, so the handler
 // cannot reuse the library's and keeps its key order ("status" before "reason")
 // by hand. It sets no-store itself, because a cached "ok" keeps traffic arriving
 // at an instance that has begun draining (RFC 9111 heuristic freshness), so this
@@ -945,12 +951,12 @@ func TestHealthEndpoint_envelopeMatchesTheLibrary(t *testing.T) {
 			switch tc.name {
 			case "ready":
 				if libBody, libCC := libraryEnvelope(t, true); got != libBody || rec.Header().Get("Cache-Control") != libCC {
-					t.Errorf("ready envelope = %q/%q, webhttp.ReadinessHandler emits %q/%q; the two must agree byte-for-byte",
+					t.Errorf("ready envelope = %q/%q, httpserver.ReadinessHandler emits %q/%q; the two must agree byte-for-byte",
 						got, rec.Header().Get("Cache-Control"), libBody, libCC)
 				}
 			case "unready":
 				if libBody, libCC := libraryEnvelope(t, false); got != libBody || rec.Header().Get("Cache-Control") != libCC {
-					t.Errorf("unready envelope = %q/%q, webhttp.ReadinessHandler emits %q/%q; the reason string and key order are the shared contract",
+					t.Errorf("unready envelope = %q/%q, httpserver.ReadinessHandler emits %q/%q; the reason string and key order are the shared contract",
 						got, rec.Header().Get("Cache-Control"), libBody, libCC)
 				}
 			}
@@ -958,21 +964,21 @@ func TestHealthEndpoint_envelopeMatchesTheLibrary(t *testing.T) {
 	}
 }
 
-// readyStub adapts a bool to webhttp.ReadinessChecker so the library's own
+// readyStub adapts a bool to httpserver.ReadinessChecker so the library's own
 // handler can be driven here.
 type readyStub bool
 
 func (r readyStub) Ready() bool { return bool(r) }
 
-// libraryEnvelope returns webhttp.ReadinessHandler's body and Cache-Control
+// libraryEnvelope returns httpserver.ReadinessHandler's body and Cache-Control
 // for the given readiness, so the assertions above compare this app's
 // hand-matched envelope against the REAL library output rather than against a
-// literal copied from it. A webhttp bump that reorders the keys, renames a
+// literal copied from it. A httpserver bump that reorders the keys, renames a
 // field, reworks the unready wording, or drops no-store fails HERE.
 func libraryEnvelope(t *testing.T, ready bool) (body, cacheControl string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	webhttp.ReadinessHandler(readyStub(ready)).ServeHTTP(
+	httpserver.ReadinessHandler(readyStub(ready)).ServeHTTP(
 		rec, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody),
 	)
 	return strings.TrimSpace(rec.Body.String()), rec.Header().Get("Cache-Control")
@@ -1018,7 +1024,7 @@ func testStaticSurface() (http.Handler, string) {
 // fixture, a ready flag, and a short-lived cat as the session command. Tests
 // tweak fields (cmd, kiroReady) before registering.
 func newTestDeps(ready bool) *routeDeps {
-	var r webhttp.Ready
+	var r httpserver.Ready
 	r.Set(ready)
 	staticSrv, _ := testStaticSurface()
 	return withDefaultPolicies(&routeDeps{
@@ -1116,10 +1122,8 @@ func quietTeardown(t *testing.T, deps *routeDeps) {
 
 // readMarkerWithin polls a marker file the session's child process writes and
 // returns its bytes once it holds at least minBytes, failing the test at the
-// deadline with what the child never did. The option pins that observe an engine
-// option THROUGH the child (working directory, DEC 1004 focus-out) both need this
-// wait, and neither should re-implement the deadline bookkeeping around its own
-// one-line assertion.
+// deadline with what the child never did, for the pins that observe an engine
+// option THROUGH the child.
 func readMarkerWithin(t *testing.T, path string, minBytes int, what string) []byte {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -1167,7 +1171,7 @@ func newToolsDeps(t *testing.T) *routeDeps {
 		t.Fatalf("toolbelt.New: %v", err)
 	}
 	t.Cleanup(eng.Close)
-	var ready webhttp.Ready
+	var ready httpserver.Ready
 	ready.Set(true)
 	staticSrv, _ := testStaticSurface()
 	return withDefaultPolicies(&routeDeps{
@@ -1232,13 +1236,13 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("remote peer: status = %d, want 403 (body %s)", rec.Code, rec.Body.String())
 	}
-	// The refusal must be the webhttp.WriteError envelope with code
+	// The refusal must be the httpserver.WriteError envelope with code
 	// loopback_only (CONTRIBUTING "Rules"). An http.Error body would still be
 	// a 403 and pass every other assertion here.
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Errorf("remote peer: Content-Type = %q, want application/json (webhttp.WriteError envelope)", ct)
+		t.Errorf("remote peer: Content-Type = %q, want application/json (httpserver.WriteError envelope)", ct)
 	}
-	var denied webhttp.ErrorResponse
+	var denied httpserver.ErrorResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &denied); err != nil {
 		t.Fatalf("remote peer: body %q is not the standard envelope: %v", rec.Body.String(), err)
 	}
@@ -1288,7 +1292,7 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	// above uses an IP literal, so deleting that arm keeps the whole suite
 	// green while the tools API becomes unreachable from the only client it
 	// exists for. Case folding is part of the same arm's contract
-	// (webhttp.CanonicalHost lowercases), and a bare Host with no port must
+	// (httpserver.CanonicalHost lowercases), and a bare Host with no port must
 	// pass too.
 	for _, host := range []string{"localhost:9848", "localhost", "LocalHost:9848"} {
 		req = httptest.NewRequest(http.MethodGet, "/api/tools", http.NoBody)
@@ -1308,7 +1312,7 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	// half alone; without this case, deleting the loopbackHost conjunct keeps the
 	// suite green while the tools API (which executes manual install strings as
 	// root) becomes reachable from a browser. The empty and malformed Hosts pin
-	// the fail-closed path through webhttp.CanonicalHost.
+	// the fail-closed path through httpserver.CanonicalHost.
 	for _, host := range []string{
 		"evil.example", "evil.example:9848", "kiro.lan", "", "127.0.0.1:garbage",
 		// Name-confusion shapes. Admission is exact-name equality, and every
@@ -1339,12 +1343,12 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 		}
 	}
 
-	// The provenance leg (webhttp.ProxiedRequest): a request that passes BOTH
+	// The provenance leg (httpserver.ProxiedRequest): a request that passes BOTH
 	// loopback legs but carries proxy or browser evidence is refused. The deny
-	// lives in the library since the webhttp.LoopbackOnly adoption (the app-local
+	// lives in the library since the httpserver.LoopbackOnly adoption (the app-local
 	// proxiedOrigin / proxyProvenanceHeaders copies are deleted), so these rows
 	// pin that loopbackOnly still COMPOSES that middleware: rewiring it around
-	// webhttp.LoopbackRequest alone -- the shape it had before the adoption's
+	// httpserver.LoopbackRequest alone -- the shape it had before the adoption's
 	// library existed -- keeps the rest of the suite green while a same-loopback
 	// proxy that rewrites Host to its upstream address readmits the API that runs
 	// `manual` install strings as root. Refuse-only by design: a header can never
@@ -1399,6 +1403,38 @@ func TestToolsAPI_LoopbackOnly_malformedPeerFailsClosed(t *testing.T) {
 	}
 }
 
+// TestToolsAPI_ErrorCarriesRequestID pins that a toolbelt error envelope correlates
+// with its access-log line through the real chain. httpserver's request-id context key
+// is private to each major, so a toolbelt built against a different major than the
+// app's Logging writes request_id empty with every other test green.
+func TestToolsAPI_ErrorCarriesRequestID(t *testing.T) {
+	deps := newToolsDeps(t)
+	mux, _, csp := mustRegisterRoutes(t, deps)
+	quietTeardown(t, deps)
+	h := buildHandler(mux, nil, csp, nil)
+
+	req := httptest.NewRequest(http.MethodPost, toolsPath, strings.NewReader("not json"))
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Host = "localhost:9848"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST %s with an undecodable body: status = %d, want 400 (body %s)", toolsPath, rec.Code, rec.Body.String())
+	}
+	var got httpserver.ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body %q is not the httpserver error envelope: %v", rec.Body.String(), err)
+	}
+	header := rec.Header().Get("X-Request-ID")
+	if got.RequestID == "" {
+		t.Errorf("envelope request_id is empty (X-Request-ID %q); a tools-API error must correlate with its access-log line", header)
+	}
+	if got.RequestID != header {
+		t.Errorf("envelope request_id = %q, want the X-Request-ID response header %q", got.RequestID, header)
+	}
+}
+
 // TestToolsAPI_AbsentWithoutEngine pins the no-engine shape (bare `go run`
 // / tests outside the container): /api/tools is simply not a registered
 // pattern, falling through to the static catch-all.
@@ -1437,9 +1473,9 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("create during sync: status = %d, want 503 (body %s)", rec.Code, rec.Body.String())
 	}
-	// The 503 speaks the standard webhttp error envelope with a machine-readable
+	// The 503 speaks the standard httpserver error envelope with a machine-readable
 	// code, the same dialect as the app's 403 gates — not a hand-rolled body.
-	var env webhttp.ErrorResponse
+	var env httpserver.ErrorResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("create during sync: body %q is not the standard envelope: %v", rec.Body.String(), err)
 	}
@@ -1549,7 +1585,7 @@ func (f failOpenFS) Open(name string) (fs.File, error) {
 // TestBuildStaticSurface_failsLoudOnUnreadableStaticTree pins the static-handler
 // leg of buildStaticSurface's fail-loud contract, which
 // TestBuildStaticSurface_failsLoudOnMalformedStatic (the CSP leg) does not reach:
-// webhttp.StaticHandler walks and hashes every file at construction, so a
+// httpserver.StaticHandler walks and hashes every file at construction, so a
 // static tree with an unreadable file (a malformed build) must abort startup
 // with an error rather than serve a partial site. index.html
 // itself stays readable so the CSP build succeeds and the failure is
@@ -1584,95 +1620,6 @@ func TestComposeGate_syncingResponseIncludesRetryAfter(t *testing.T) {
 	}
 }
 
-// TestNotifyFingerprint pins the log-hygiene substitution the classifier applies
-// to arbitrary child output before ANY of it reaches the log: the notification
-// text is replaced by a fixed-width, content-free HMAC-SHA-256 prefix, KEYED
-// with a per-classifier secret that never appears in the log stream. Four
-// properties carry the whole contract, and each has a distinct failure the
-// classifier's own tests cannot see:
-//
-//   - fixed width and hex-only, so no amount of child output can widen or
-//     shape the record (a fingerprint that leaked input length or characters
-//     would be a partial copy of the secret it exists to withhold);
-//   - stable for equal input under one key, which is what lets an operator
-//     correlate the Warn with its Debug twin and tell a repeat from a new
-//     wording;
-//   - distinct for different input, so two wordings are not conflated into
-//     "the same unrecognized notification";
-//   - KEY-DEPENDENT, which is the property an unkeyed digest lacked: the
-//     plaintext here is low-entropy by nature (a device code, a short token),
-//     so an unkeyed hash lets a log reader enumerate candidates offline and
-//     confirm one by comparing digests. Under a key the log does not carry,
-//     that oracle does not exist — and this assertion is what would fail if
-//     someone "simplified" the HMAC back to a plain SHA-256.
-//
-// The keys below are injected by the test rather than drawn: the production key
-// is generated per classifier and deliberately unreachable (see
-// notifyFingerprinter), so these properties are pinned against keys the test
-// owns.
-func TestNotifyFingerprint(t *testing.T) {
-	const secret = "verify at https://example.com/device?user_code=ABCD-EFGH"
-	fp := notifyFingerprinter{key: []byte("test-key-one-0123456789abcdef0123")}
-	otherKey := notifyFingerprinter{key: []byte("test-key-two-0123456789abcdef0123")}
-	inputs := map[string]string{
-		"empty":              "",
-		"short wording":      "Response complete",
-		"secret-shaped":      secret,
-		"multi-byte":         strings.Repeat("\u2192", 300),
-		"invalid utf-8":      "\xff\xfe not utf8",
-		"one rune different": "Response complet",
-	}
-	seen := make(map[string]string, len(inputs))
-	for name, msg := range inputs {
-		t.Run(name, func(t *testing.T) {
-			got := fp.fingerprint(msg)
-			if len(got) != notifyFingerprintHexDigits {
-				t.Errorf("fingerprint(%q) = %q (%d chars), want exactly %d; the record's width must not depend on child output", msg, got, len(got), notifyFingerprintHexDigits)
-			}
-			// Hex-only is the confidentiality assertion proper: no character of
-			// the notification (a token, a device code) can appear in the record.
-			if strings.Trim(got, "0123456789abcdef") != "" {
-				t.Errorf("fingerprint(%q) = %q, want lowercase hex only; anything else means child output reached the log verbatim", msg, got)
-			}
-			if again := fp.fingerprint(msg); again != got {
-				t.Errorf("fingerprint(%q) is unstable (%q then %q); an operator could not correlate the Warn with its Debug twin", msg, got, again)
-			}
-			// metadata is the integration point: it supplies the attrs routes.go
-			// logs, and only an EQUALITY against the keyed fingerprint pins that
-			// the emitted value IS this HMAC. Every shape assertion above (16
-			// lowercase hex digits, stable across the Warn/Debug pair) is equally
-			// satisfied by another hex-shaped transform of child output --
-			// hex.EncodeToString([]byte(msg))[:16] carries the plaintext and
-			// would keep this whole test green.
-			meta := fp.metadata(msg)
-			if len(meta) != 4 || meta[0] != "message_fingerprint" || meta[1] != got ||
-				meta[2] != "message_runes" || meta[3] != len([]rune(msg)) {
-				t.Errorf("metadata(%q) = %v, want [message_fingerprint %s message_runes %d]; the logged attribute must BE the keyed fingerprint, not another hex-shaped encoding of the notification", msg, meta, got, len([]rune(msg)))
-			}
-		})
-		got := fp.fingerprint(msg)
-		if other, dup := seen[got]; dup {
-			t.Errorf("fingerprint collides for %q and %q (both %q); two distinct wordings would read as one", msg, other, got)
-		}
-		seen[got] = msg
-	}
-
-	// The property the key exists for, stated on the input class that motivated
-	// it: a device code is short and drawn from a small alphabet, so an UNKEYED
-	// digest of it is recoverable by offline enumeration. Two keys must not
-	// agree on it — a plain hash would.
-	const deviceCode = "ABCD-EFGH"
-	underOneKey := fp.fingerprint(deviceCode)
-	underAnotherKey := otherKey.fingerprint(deviceCode)
-	if underOneKey == underAnotherKey {
-		t.Errorf("fingerprint(%q) = %q under two different keys; the identifier is unkeyed, so anyone reading the log can enumerate short candidates offline and confirm the notification's text", deviceCode, underOneKey)
-	}
-
-	if keyed := fp.metadata(deviceCode); len(keyed) != 4 || keyed[0] != "message_fingerprint" {
-		t.Errorf("keyed metadata(%q) = %v, want [message_fingerprint <hex> message_runes <n>]", deviceCode, keyed)
-	}
-}
-
 // TestComposeGate_syncingRefusalPreservesCreateBudget pins the composition
 // ORDER inside composeGate, which no existing test can see: the tools-syncing
 // refusal is checked OUTSIDE the create rate limit, so a client retrying
@@ -1688,7 +1635,7 @@ func TestComposeGate_syncingRefusalPreservesCreateBudget(t *testing.T) {
 	var syncing atomic.Bool
 	syncing.Store(true)
 	creates := 0
-	gated := composeGate(webhttp.SessionCreateRateLimit(terminal.SessionsPath),
+	gated := composeGate(sessionCreateGate(),
 		func() (bool, string) { return syncing.Load(), "tools installing" })(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			creates++
@@ -1724,10 +1671,10 @@ func TestComposeGate_syncingRefusalPreservesCreateBudget(t *testing.T) {
 // TestKiroRescan_reportsUnreadyOnlyWhenAVerdictWasReached pins the two non-ok
 // outcomes, neither of which any other test reaches, and the property that
 // separates them: BOTH answer 503, and only the one that reached a verdict speaks
-// about the install. pinstall's ORDINARY refusal is (false, nil) -- no candidate
+// about the install. pin's ORDINARY refusal is (false, nil) -- no candidate
 // selected, and recording that verdict succeeded -- which answers the manager's
 // own reason. A context error means the request was ABANDONED before any verdict
-// (the caller's own cancellation while queued for pinstall's operation slot, or
+// (the caller's own cancellation while queued for pin's operation slot, or
 // this server's shutdown pre-drain cancelling the BaseContext every request is
 // built on; an ADMITTED rescan detaches with context.WithoutCancel, and a probe or
 // assertion that times out surfaces as *exec.ExitError, not as a context error),
@@ -1783,7 +1730,7 @@ func TestKiroRescan_reportsUnreadyOnlyWhenAVerdictWasReached(t *testing.T) {
 	}
 }
 
-// The cancellable-wait and detached-rescan behaviors are pinstall's own
+// The cancellable-wait and detached-rescan behaviors are pin's own
 // (pinned there by TestRescanQueuedCallerCanAbandon and
 // TestAdmittedRescanIgnoresCallerCancellation). What is still this app's to get
 // wrong is the one line below: the handler must hand the REQUEST context to the
@@ -1812,11 +1759,11 @@ func TestKiroRescan_PassesTheRequestContextThrough(t *testing.T) {
 	}
 
 	// Cancelling the REQUEST must be visible to the manager: that is what lets
-	// pinstall drop a caller still queued for its operation slot.
+	// pin drop a caller still queued for its operation slot.
 	cancel()
 	select {
 	case <-got.Done():
 	default:
-		t.Error("cancelling the request did not reach the context handed to pinstall; the handler is detaching it itself, which defeats the library's cancellable wait and restores the unbounded-queue hazard")
+		t.Error("cancelling the request did not reach the context handed to pin; the handler is detaching it itself, which defeats the library's cancellable wait and restores the unbounded-queue hazard")
 	}
 }

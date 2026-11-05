@@ -2,9 +2,11 @@
 # secure_tools_dir(): tighten what we can, and never brick boot over a tree the
 # entrypoint does not own.
 #
-# The third argument encodes the app's failure posture. owned=1 is for the NINE directories the entrypoint
-# creates itself — /config, $TOOLS, $TOOLS/bin, $TOOLS/opt, $TOOLS/npm,
-# $TOOLS/npm/bin, $TOOLS/python, $TOOLS/python/bin and $TOOLS/kiro-cli-versions,
+# The third argument encodes the app's failure posture. owned=1 is for the THIRTEEN directories the entrypoint
+# creates itself — /config, $TOOLS, $TOOLS/bin, $TOOLS/opt, $TOOLS/kiro-cli-versions,
+# and the npm and python roots with every directory beneath them the toolbelt
+# engine's root-integrity check judges ($TOOLS/npm/bin, npm/lib,
+# npm/lib/node_modules, python/bin, python/tools, python/interpreters),
 # which is exactly the make_config_dir list outside $HOME. Two properties put a
 # directory in that set and both are needed: the entrypoint CREATES it, so a
 # symlink or a plain file there is unambiguously anomalous rather than the
@@ -16,6 +18,8 @@
 # $TOOLS/bin leads PATH and its entries are symlinks INTO opt/, npm/bin/ and
 # python/bin/, so root executes what those trees hold — and no leaf-file chmod
 # stops a foreign host user who can write the ROOT from replacing a launcher.
+# The lib, tools and interpreters dirs hold the code those launchers run, and the
+# engine refuses to start over any of them that is group- or other-writable.
 #
 # owned=0 is for $TOOLS/go and $TOOLS/go/bin, i.e. GOPATH/bin and its parent: on
 # PATH but never created and never repaired here, and holding no integrity-gated
@@ -153,9 +157,9 @@ attempt "$R/seg" 0
   || no "unowned quarantine" "armed a kiro-cli quarantine for a tree that holds none"
 
 # --- owned + arm=0: the package-manager roots' live shape -----------------------
-# All four npm/python roots are called `secure_tools_dir <dir> 0 1`, a COMBINATION
+# Every npm and python directory is called `secure_tools_dir <dir> 0 1`, a COMBINATION
 # neither block above states: fail-closed like an owned tree, but no kiro-cli
-# quarantine, because a launcher tree never holds the pinned CLI. So a
+# quarantine, because a package-manager tree never holds the pinned CLI. So a
 # group/other-writable one must be tightened, must NOT arm the taint (that would
 # re-download kiro-cli over an unrelated tree's mode), and must NOT abort — the
 # mode is fixable, and only an UNFIXABLE state earns a fatal.
@@ -237,22 +241,64 @@ fi
 # is about membership and never about the collation order of `$` versus `/`.
 OWNED_EXPECTED=$(printf '%s\n' \
   /config '$TOOLS' '$TOOLS/bin' '$TOOLS/opt' \
-  '$TOOLS/npm' '$TOOLS/npm/bin' '$TOOLS/python' '$TOOLS/python/bin' \
+  '$TOOLS/npm' '$TOOLS/npm/bin' '$TOOLS/npm/lib' '$TOOLS/npm/lib/node_modules' \
+  '$TOOLS/python' '$TOOLS/python/bin' '$TOOLS/python/tools' '$TOOLS/python/interpreters' \
   '$TOOLS/kiro-cli-versions' | LC_ALL=C sort)
 OWNED_ACTUAL=$(printf '%s\n' "$CALLS" | awk '$2 == 1 { print $1 }' | LC_ALL=C sort)
 if [ "$OWNED_ACTUAL" = "$OWNED_EXPECTED" ]; then
-  ok "the fail-closed (owned=1) set is exactly the nine directories the entrypoint creates"
+  ok "the fail-closed (owned=1) set is exactly the thirteen directories the entrypoint creates"
 else
   no "owned=1 set drifted" "expected [$(printf '%s' "$OWNED_EXPECTED" | tr '\n' ' ')] but the boot path has [$(printf '%s' "$OWNED_ACTUAL" | tr '\n' ' ')] -- if intended, update secure_tools_dir's doc comment in the same change"
 fi
 
-# Named individually as well as in the set above, because these four are the ones
+# Named individually as well as in the set above, because these are the ones
 # whose membership is not self-evident, and a per-root failure says WHY.
-for pm in '$TOOLS/npm' '$TOOLS/npm/bin' '$TOOLS/python' '$TOOLS/python/bin'; do
+for pm in '$TOOLS/npm' '$TOOLS/npm/bin' '$TOOLS/npm/lib' '$TOOLS/npm/lib/node_modules' \
+  '$TOOLS/python' '$TOOLS/python/bin' '$TOOLS/python/tools' '$TOOLS/python/interpreters'; do
   printf '%s\n' "$CALLS" | grep -qxF -- "$pm 1" \
     && ok "$pm is fail-closed (owned=1)" \
     || no "$pm owned argument" "not called with owned=1; \$TOOLS/bin symlinks into this tree and root executes what it finds there, so warn-only lets a foreign host user who can write this root replace a launcher"
+  grep -qxF -- "secure_tools_dir \"$pm\" 0 1" "$ENTRYPOINT" \
+    && ok "$pm does not arm the kiro-cli quarantine (arm=0)" \
+    || no "$pm arm argument" "not called as 'secure_tools_dir \"$pm\" 0 1'; a loose package-manager tree would re-download kiro-cli, which it never holds"
 done
+
+# --- the ORDER: every parent is tightened before its child ---------------------
+# Both functions check a path and then chmod it by name, so a writer of its parent
+# could swap it for a symlink in between; once the parent itself has been
+# tightened, only root can. /config's parent is the image's own root. $HOME and
+# $TOOLS are resolved to the image's values (Dockerfile ENV HOME, the script's
+# TOOLS literal); a top-level call on any other variable is a harness error,
+# because this check cannot place it.
+IMAGE_HOME=$(sed -n 's/^ENV HOME=//p' "$REPO_ROOT/Dockerfile")
+SCRIPT_TOOLS=$(sed -n 's/^TOOLS="\(.*\)"$/\1/p' "$ENTRYPOINT")
+if [ -z "$IMAGE_HOME" ] || [ -z "$SCRIPT_TOOLS" ]; then
+  printf 'harness error: HOME (%s) or TOOLS (%s) could not be read\n' "$IMAGE_HOME" "$SCRIPT_TOOLS" >&2
+  exit 1
+fi
+ORDER=$(grep -E '^(secure_tools_dir|harden_config_dir) ' "$ENTRYPOINT" \
+  | awk -v home="$IMAGE_HOME" -v tools="$SCRIPT_TOOLS" '{
+      p = $2; gsub(/"/, "", p)
+      if (index(p, "$HOME") == 1) p = home substr(p, 6)
+      else if (index(p, "$TOOLS") == 1) p = tools substr(p, 7)
+      print p
+    }')
+if [ "$(printf '%s\n' "$ORDER" | grep -c .)" -lt 18 ] || printf '%s\n' "$ORDER" | grep -qF '$'; then
+  printf 'harness error: expected at least 18 top-level tightening calls on $HOME, $TOOLS or a literal path, parsed:\n%s\n' "$ORDER" >&2
+  exit 1
+fi
+tightened='/'
+out_of_order=''
+while IFS= read -r path; do
+  parent=${path%/*}
+  [ -n "$parent" ] || parent=/
+  printf '%s\n' "$tightened" | grep -qxF -- "$parent" || out_of_order="$out_of_order $path"
+  tightened="$tightened
+$path"
+done <<<"$ORDER"
+[ -z "$out_of_order" ] \
+  && ok "every directory the boot tightens comes after the call that tightened its parent" \
+  || no "tightening order" "tightened before (or without) its parent:$out_of_order"
 
 # And the warn-only side, pinned in both directions: exactly one call site passes
 # owned=0, it is the loop variable, and the loop feeding it iterates exactly

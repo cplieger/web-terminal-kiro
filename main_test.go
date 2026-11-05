@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,11 +20,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/toolbelt/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v3"
 )
 
 // fakeCLI writes an executable shell stub standing in for kiro-cli. Its whoami
@@ -104,7 +105,7 @@ func TestSessionCommand_loginGuard(t *testing.T) {
 }
 
 // TestSessionCommand_extraChatArgs pins the KIRO_CLI_CHAT_ARGS contract: extra
-// launch flags (e.g. --v3) are appended to the chat invocation as separate,
+// launch flags (e.g. --tui) are appended to the chat invocation as separate,
 // LITERAL argv entries — an arg carrying shell metacharacters or spaces must
 // arrive verbatim (positional-param passing, not string splicing into the
 // script) — and they never leak into the login call. Without extra args, chat
@@ -115,7 +116,7 @@ func TestSessionCommand_extraChatArgs(t *testing.T) {
 		cliPath, loginMarker, chatMarker := fakeCLI(t, dir, 1) // logged out: login runs too
 
 		injection := `$(touch ` + filepath.Join(dir, "pwned") + `); two words`
-		argv := sessionCommand(cliPath, "--v3", "--effort", "high", injection)
+		argv := sessionCommand(cliPath, "--tui", "--effort", "high", injection)
 		out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput() // #nosec G204 -- test executes its own wrapper
 		if err != nil {
 			t.Fatalf("wrapper run: %v\noutput: %s", err, out)
@@ -125,7 +126,7 @@ func TestSessionCommand_extraChatArgs(t *testing.T) {
 		if readErr != nil {
 			t.Fatalf("chat was not invoked (marker missing): %v", readErr)
 		}
-		want := "--v3\n--effort\nhigh\n" + injection + "\n"
+		want := "--tui\n--effort\nhigh\n" + injection + "\n"
 		if string(got) != want {
 			t.Errorf("chat argv = %q, want %q (args must pass as literal positional params)", got, want)
 		}
@@ -208,7 +209,7 @@ func writeToolsManifest(t *testing.T, configDir, manifest string) {
 	// and, on a filesystem carrying an inheritable group-write ACL, the
 	// directory is born group-writable whatever was asked for (measured on a
 	// ZFS nfs4acl dataset: 0770 from a 0o700 MkdirAll -- the same condition
-	// this app's own docs record for pinstall's install root, where
+	// this app's own docs record for pin's install root, where
 	// "os.MkdirAll with dirMode = 0o755 cannot beat a ZFS inheritable ACL").
 	// toolbelt's VerifyRootIntegrity then refuses to construct the engine over
 	// a group-writable managed root, so every test below reaches the
@@ -499,7 +500,7 @@ func TestStartTools_rootIntegrityRefusalDegrades(t *testing.T) {
 					t.Fatalf("loosen tools root: %v", err)
 				}
 			},
-			wantReason: "is group- or other-writable",
+			wantReason: "can be modified by",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -730,7 +731,7 @@ func TestHostAllowlist_loopbackCarveOut(t *testing.T) {
 // TestHostAllowlist_blankConfigurationStaysPermissive drives a configured but
 // blank ALLOWED_HOSTS (only commas and whitespace) through the real
 // parseAllowedHosts into the middleware: blank entries never engage the gate
-// (webhttp.ParseHostList leaves the policy INACTIVE), so the documented
+// (httpserver.ParseHostList leaves the policy INACTIVE), so the documented
 // permissive state must hold. Accidentally treating a blank entry as
 // non-blank would turn a blank configuration into a deny-all outage.
 func TestHostAllowlist_blankConfigurationStaysPermissive(t *testing.T) {
@@ -907,12 +908,12 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 // URL-shaped entry (scheme/path/CIDR pasted where a bare hostname belongs)
 // must emit exactly one named Warn while being DROPPED per ParseHostList's
 // drop-and-report contract — the entry canonicalizes to a value no
-// browser-sent Host ever matches, so retaining it (the pre-webhttp behavior)
+// browser-sent Host ever matches, so retaining it (the behaviour before httpserver)
 // only created an unmatchable key an attacker-chosen Host like "http:9848"
 // could in principle collide with. The valid subset must keep working.
 // Serial: capture.Default mutates the process-global default logger.
 func TestParseAllowedHosts(t *testing.T) {
-	allows := func(t *testing.T, policy *webhttp.HostPolicy, host, remoteAddr string) bool {
+	allows := func(t *testing.T, policy *httpserver.HostPolicy, host, remoteAddr string) bool {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/probe", http.NoBody)
 		if remoteAddr != "" {
@@ -949,7 +950,7 @@ func TestParseAllowedHosts(t *testing.T) {
 		if !allows(t, policy, "localhost:9848", "192.168.1.50:44444") {
 			t.Error("valid entry localhost missing from the allowlist")
 		}
-		// The pre-webhttp parser RETAINED the malformed entry as the
+		// The parser before httpserver RETAINED the malformed entry as the
 		// unmatchable key "http"; the drop-and-report contract removes it, so
 		// a request whose Host canonicalizes to "http" must now be rejected.
 		if allows(t, policy, "http:9848", "192.168.1.50:44444") {
@@ -1469,108 +1470,6 @@ func TestToolsStatus_callbackAndHealthReadAreRaceClean(t *testing.T) {
 	wg.Wait()
 }
 
-// TestParseLogOSCText_warnsByNameOnly pins the PRODUCTION knob read, which is
-// where the confidentiality property lives — and it is the ONLY test of it,
-// deliberately: the read is envx.BoolStrict, which emits no records at all, so a
-// test that captured slog around the library call alone would satisfy the "no raw
-// value in the log" claim vacuously and would stay green if main went back to
-// envx.Bool. This drives parseLogOSCText, the function main calls, so the
-// assertions cover the real call path: envx.BoolStrict plus THIS function's
-// diagnostics, which are the only log sites the knob has.
-//
-// Four properties, each a distinct regression:
-//   - the accepted VOCABULARY is envx's (true/1/yes/on, false/0/no/off,
-//     case-insensitive, padding ignored). It is asserted here rather than against
-//     a local parser because there is no local parser any more: BoolStrict shares
-//     one parser with envx.Bool, and this table is what notices if the read is
-//     ever swapped for something with a different grammar (e.g. strconv.ParseBool,
-//     which accepts "t"/"f" — pinned below as malformed);
-//   - a malformed value fails CLOSED to false, so a typo cannot widen what
-//     content reaches the log store;
-//   - the malformed path emits exactly ONE Warn, naming the key and carrying no
-//     copy of the raw value in its message or in any attribute. The returned
-//     error is deliberately not logged either, so this holds however envx words
-//     it;
-//   - the ON path warns about the widened content, and the default path is
-//     silent.
-//
-// Serial: capture.Default mutates the process-global default logger.
-func TestParseLogOSCText_warnsByNameOnly(t *testing.T) {
-	const token = "s3cr3t-token-abc123"
-	const onMsg = "LOG_OSC_TEXT is on"
-	const badMsg = "unparseable LOG_OSC_TEXT"
-	cases := map[string]struct {
-		raw       string
-		wantValue bool
-		wantWarns int
-		wantMsg   string
-		// rawMustStayOut asks for the confidentiality assertion. It is set only
-		// for values distinctive enough that finding one in the log PROVES a
-		// leak: "on", "0" and "t" occur as substrings of ordinary words in
-		// these two warnings, so asserting their absence would fail on wording
-		// alone and say nothing about the value.
-		rawMustStayOut bool
-	}{
-		// The whole accepted vocabulary, both spellings of every truth value,
-		// plus the case and padding tolerance.
-		"true":                 {raw: "true", wantValue: true, wantWarns: 1, wantMsg: onMsg},
-		"1":                    {raw: "1", wantValue: true, wantWarns: 1, wantMsg: onMsg},
-		"yes":                  {raw: "yes", wantValue: true, wantWarns: 1, wantMsg: onMsg},
-		"on":                   {raw: "on", wantValue: true, wantWarns: 1, wantMsg: onMsg},
-		"TRUE uppercase":       {raw: "TRUE", wantValue: true, wantWarns: 1, wantMsg: onMsg},
-		"yes padded":           {raw: "  yes  ", wantValue: true, wantWarns: 1, wantMsg: onMsg},
-		"false":                {raw: "false", wantValue: false, wantWarns: 0},
-		"0":                    {raw: "0", wantValue: false, wantWarns: 0},
-		"no":                   {raw: "no", wantValue: false, wantWarns: 0},
-		"off":                  {raw: "off", wantValue: false, wantWarns: 0},
-		"OFF uppercase padded": {raw: " OFF ", wantValue: false, wantWarns: 0},
-
-		// Unset and blank are not parse failures: they are the silent default.
-		"unset is the silent default":       {raw: "", wantValue: false, wantWarns: 0},
-		"whitespace-only is the same thing": {raw: "   ", wantValue: false, wantWarns: 0},
-
-		// Malformed: fail closed, one Warn, no echo. The token case is the shape
-		// that motivates BoolStrict over Bool (a compose expansion mistake).
-		"token-shaped value fails closed and warns by name": {
-			raw: token, wantValue: false, wantWarns: 1, wantMsg: badMsg, rawMustStayOut: true,
-		},
-		"a typo of true is malformed, not false": {
-			raw: "ture", wantValue: false, wantWarns: 1, wantMsg: badMsg, rawMustStayOut: true,
-		},
-		"a word outside the vocabulary is malformed": {
-			raw: "enabled", wantValue: false, wantWarns: 1, wantMsg: badMsg, rawMustStayOut: true,
-		},
-		// strconv.ParseBool accepts "t"; envx's grammar does not. This is the
-		// case that fails if the read is swapped for the stdlib parser.
-		"t is not a spelling of true": {
-			raw: "t", wantValue: false, wantWarns: 1, wantMsg: badMsg,
-		},
-		"a number other than 0 or 1 is malformed": {
-			raw: "2", wantValue: false, wantWarns: 1, wantMsg: badMsg,
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			records := capture.Default(t)
-			t.Setenv("LOG_OSC_TEXT", tc.raw)
-
-			if got := parseLogOSCText(); got != tc.wantValue {
-				t.Errorf("parseLogOSCText() with %q = %v, want %v", tc.raw, got, tc.wantValue)
-			}
-			if got := records.CountLevel(slog.LevelWarn, ""); got != tc.wantWarns {
-				t.Errorf("log = %q, want exactly %d Warn (got %d)", records.Messages(), tc.wantWarns, got)
-			}
-			if tc.wantMsg != "" && records.CountLevel(slog.LevelWarn, tc.wantMsg) != 1 {
-				t.Errorf("log = %q, want a Warn containing %q", records.Messages(), tc.wantMsg)
-			}
-			if tc.rawMustStayOut && logContains(records, tc.raw) {
-				t.Errorf("log = %q carries the raw LOG_OSC_TEXT value; a compose expansion mistake can put a credential on this key, so the malformed path must warn by NAME only (this is why the read is envx.BoolStrict and not envx.Bool, whose malformed Warn carries the value)",
-					records.Messages())
-			}
-		})
-	}
-}
-
 // The TRUSTED_INSTALL_UIDS warning, duplicated verbatim from
 // parseTrustedInstallUIDs (main.go). Duplicating the prose is the point, as it is
 // for the TRUSTED_PROXIES hints: this record is the ONLY thing an operator sees
@@ -1579,12 +1478,12 @@ func TestParseLogOSCText_warnsByNameOnly(t *testing.T) {
 // tail. A deliberate rewording updates both sides; anything else is the
 // regression these pins exist to fail.
 const (
-	trustedUIDsBadMsg  = "dropping unusable TRUSTED_INSTALL_UIDS entries; the kiro-cli install keeps enforcing custody against those identities"
+	trustedUIDsBadMsg  = "dropping unusable TRUSTED_INSTALL_UIDS entries; the kiro-cli install and the tools engine keep enforcing custody against those identities"
 	trustedUIDsBadHint = "each entry is a single numeric uid greater than 0 (e.g. 1000,1001); root is trusted already, and every identity listed must be at least as privileged as this server"
 )
 
 // TestParseTrustedInstallUIDs pins the whole TRUSTED_INSTALL_UIDS contract:
-// the EMPTY default (no trust grant, so pinstall's custody check applies in
+// the EMPTY default (no trust grant, so pin's custody check applies in
 // full), the drop-the-unusable-keep-the-rest posture, the two numeric shapes that
 // are rejected as well as non-numeric text (0 is root, which the library trusts
 // anyway; a negative is not an identity), deduplication, first-seen order, and
@@ -1698,8 +1597,7 @@ func TestParseTrustedInstallUIDs(t *testing.T) {
 // ACCEPTS still gets toolbelt's answer. The wrapper exists only because
 // toolbelt's parser calls scheduler.ParseInterval WITHOUT
 // scheduler.WithRedactedValue, so its own fallback warning echoes the raw string
-// — the CWE-532 shape the LOG_OSC_TEXT remedy closed on a knob of exactly
-// this kind. Dropping the wrapper (calling toolbelt.ParseCatalogRefresh
+// — the CWE-532 shape. Dropping the wrapper (calling toolbelt.ParseCatalogRefresh
 // directly) leaves every other test green.
 // Serial: capture.Default mutates the process-global default logger.
 func TestParseCatalogRefresh_warnsByNameOnly(t *testing.T) {
@@ -1746,7 +1644,7 @@ func TestParseCatalogRefresh_warnsByNameOnly(t *testing.T) {
 // may arrive in a repeated field line or a comma list, matching is case- and
 // whitespace-insensitive, and a token SUBSTRING must not match. This is now the
 // app's ONLY upgrade-shaped predicate — the access log's skip is decided from
-// the response by webhttp.WithSkipUpgrades — and a divergence here is silent,
+// the response by httpserver.WithSkipUpgrades — and a divergence here is silent,
 // dropping the attach record for a request that presented a session capability
 // token.
 func TestIsWebSocketUpgrade_requiresBothListTokens(t *testing.T) {
@@ -1778,12 +1676,12 @@ func TestIsWebSocketUpgrade_requiresBothListTokens(t *testing.T) {
 	}
 }
 
-// accessLinesFor returns the webhttp access-log records captured for path, in
+// accessLinesFor returns the httpserver access-log records captured for path, in
 // order, as attribute maps. Pass "" to get every access line whatever its
 // recorded path — needed for requests under the /api/sessions/ subtree, whose
 // recorded path is the route template (or the "(unmatched)" marker) rather than
 // the raw one, because WithTemplatePathsUnder keeps session tokens out of the
-// log. The access line's message is webhttp's "http", so every other record the
+// log. The access line's message is httpserver's "http", so every other record the
 // server emits (the engine's session lines, wsAttachLog's attach record) is
 // filtered out. capture.Recorder is concurrency-safe, which is what makes it
 // usable while a real httptest server is serving.
@@ -1830,7 +1728,7 @@ func awaitAccessLines(t *testing.T, rec *capture.Recorder, path string, want int
 
 // TestAccessLogSkipsOnlyCompletedUpgrades is the payoff test for the access
 // log's move from a local willUpgrade predicate (a request-shaped PREDICTION of
-// what the engine's websocket.Accept would admit) to webhttp.WithSkipUpgrades (a
+// what the engine's websocket.Accept would admit) to httpserver.WithSkipUpgrades (a
 // response-shaped OUTCOME: a recorded 101 or a bare hijack). It drives a REAL
 // handshake against the engine over a real server, because that is the only way
 // the outcome exists at all: no fake mux can be skipped by this option, and a
@@ -1951,7 +1849,7 @@ func TestAccessLogSkipsOnlyCompletedUpgrades(t *testing.T) {
 
 // TestAccessLogKeepsStreamPathRefusals pins the half of the stream skip that the
 // SSE path skip could quietly break. The skip rules are evaluated BEFORE the
-// chain runs, so a BARE path skip (webhttp.WithSkipPaths) on the SSE route would
+// chain runs, so a BARE path skip (httpserver.WithSkipPaths) on the SSE route would
 // also swallow the 403 hostPolicy.Middleware writes — WriteError logs nothing
 // itself and the engine handler never runs — leaving a wrong-Host or DNS-rebound
 // attempt on this unauthenticated PTY with no record anywhere (CWE-778). That is
@@ -2177,7 +2075,7 @@ func TestWSAttachLog(t *testing.T) {
 // because those are the engine's OTHER refusal reasons and this predicate
 // deliberately does not model them. Nothing in this app models them any more:
 // the access log stopped predicting admission when it adopted
-// webhttp.WithSkipUpgrades, and TestAccessLogSkipsOnlyCompletedUpgrades covers
+// httpserver.WithSkipUpgrades, and TestAccessLogSkipsOnlyCompletedUpgrades covers
 // each of those refusals from the outcome side.
 func TestIsWebSocketUpgrade_agreesWithTheEngineHandshake(t *testing.T) {
 	mux, _, csp, id := mustStartSession(t, newTestDeps(true))
@@ -2995,6 +2893,60 @@ func TestSetupLoggingInstallsTheParsedLevelAndWarnsByNameOnly(t *testing.T) {
 	}
 }
 
+// TestKiroSettingsRequiresOnlyTheAutoUpdateGate pins the integrity gate this app now
+// writes itself: app.disableAutoupdates set to true, once, and the only Required
+// assertion, so a kiro-cli that could replace its verified binary withholds readiness
+// while a failing best-effort setting only warns.
+func TestKiroSettingsRequiresOnlyTheAutoUpdateGate(t *testing.T) {
+	var required []pin.Assertion
+	gates := 0
+	for _, a := range kiroSettings() {
+		if a.Required {
+			required = append(required, a)
+		}
+		if a.Name == "app.disableAutoupdates" {
+			gates++
+		}
+	}
+	want := []string{"settings", "app.disableAutoupdates", "true"}
+	if gates != 1 || len(required) != 1 || required[0].Name != "app.disableAutoupdates" || !slices.Equal(required[0].Args, want) {
+		t.Errorf("Required assertions = %+v with %d auto-update entries, want exactly one Required %q", required, gates, want)
+	}
+}
+
+// TestToolsConfigCarriesTheTrustedInstallUIDs pins that TRUSTED_INSTALL_UIDS reaches the
+// tools engine's integrity check as well as the kiro-cli install.
+func TestToolsConfigCarriesTheTrustedInstallUIDs(t *testing.T) {
+	cfg := toolsConfig(&baseTools{trustedUIDs: []int{1000, 1001}}, t.TempDir(), nil)
+	if !slices.Equal(cfg.TrustedUIDs, []int{1000, 1001}) {
+		t.Errorf("toolsConfig().TrustedUIDs = %v, want [1000 1001]", cfg.TrustedUIDs)
+	}
+}
+
+// TestKiroInstallConfigCarriesTheReleaseShape pins the published kiro-cli release's
+// facts: a wrong host, archive name, arch token or archive directory breaks every
+// fresh install, and nothing else in the suite downloads one.
+func TestKiroInstallConfigCarriesTheReleaseShape(t *testing.T) {
+	cfg := kiroInstallConfig(&baseKiro{version: "2.0.0"})
+	wantTokens := map[string]string{"amd64": "x86_64-linux", "arm64": "aarch64-linux"}
+	switch {
+	case cfg.Name != "kiro-cli":
+		t.Errorf("Name = %q, want kiro-cli", cfg.Name)
+	case cfg.URLTemplate != "https://desktop-release.q.us-east-1.amazonaws.com/{version}/kirocli-{arch}.zip":
+		t.Errorf("URLTemplate = %q, want the desktop-release kirocli-{arch}.zip archive", cfg.URLTemplate)
+	case !maps.Equal(cfg.ArchTokens, wantTokens):
+		t.Errorf("ArchTokens = %v, want %v", cfg.ArchTokens, wantTokens)
+	case cfg.ArtifactDir != "kirocli/bin":
+		t.Errorf("ArtifactDir = %q, want kirocli/bin", cfg.ArtifactDir)
+	case !slices.Equal(cfg.ProbeArgs, []string{"--version"}):
+		t.Errorf("ProbeArgs = %q, want [--version]", cfg.ProbeArgs)
+	case !strings.Contains(cfg.Notice, "https://kiro.dev/license/"):
+		t.Errorf("Notice = %q, want the licence link", cfg.Notice)
+	case cfg.Purge == nil || !slices.Equal(cfg.Purge.Names, []string{"kiro-cli", "kiro-cli-chat", "kiro-cli-term"}):
+		t.Errorf("Purge = %+v, want the three shell-era dispatcher names", cfg.Purge)
+	}
+}
+
 func TestKiroSettingsTurnsSettingsOff(t *testing.T) {
 	for _, key := range []string{
 		"chat.fullscreenCopyOnSelect",
@@ -3003,7 +2955,7 @@ func TestKiroSettingsTurnsSettingsOff(t *testing.T) {
 		t.Run(key, func(t *testing.T) {
 			want := []string{"settings", key, "false"}
 			settings := kiroSettings()
-			i := slices.IndexFunc(settings, func(a pinstall.Assertion) bool { return a.Name == key })
+			i := slices.IndexFunc(settings, func(a pin.Assertion) bool { return a.Name == key })
 			if i < 0 {
 				t.Fatalf("kiroSettings() has no %q assertion", key)
 			}

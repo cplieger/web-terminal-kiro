@@ -1,7 +1,7 @@
 # check=error=true
 
 # --- Builder stage: compile Go server + vendor the web-terminal engine/UI TS ---
-FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS builder
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Official Go tarballs currently set GOTOOLCHAIN=auto in $GOROOT/go.env; keep it
@@ -198,9 +198,9 @@ COPY required-tools.txt bundled-tools.json ./
 # daily; the pin means the baked fallback is a REVIEWED catalog, while
 # the runtime refresh keeps a running container current.
 # renovate: datasource=github-releases depName=cplieger/tool-catalog
-ARG TOOL_CATALOG_VERSION=v2026.11.02
+ARG TOOL_CATALOG_VERSION=v2026.11.05
 # repin: dep=cplieger/tool-catalog url=https://github.com/cplieger/tool-catalog/releases/download/{version}/tool-catalog.json
-ARG TOOL_CATALOG_SHA256=1e43eb5ea12f6f11b2902bc89de25f3f35cc5e8dcbd389a4e654859da1c559bb # tool-catalog v2026.07.24.1907
+ARG TOOL_CATALOG_SHA256=4ef6a7281b05df85e1ed50c714257c9b762a36a385f07ef55f7d367ff1aa40a7 # tool-catalog v2026.07.24.1907
 ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/download/${TOOL_CATALOG_VERSION}/tool-catalog.json
 # The build-time verifier is the SAME module go.mod requires (the runtime engine
 # that re-verifies required-tools.txt before every catalog swap), and that is now
@@ -282,9 +282,9 @@ ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.4.0
 # repin: dep=@cplieger/web-terminal-engine url=https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-{version}.tgz
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=549ef58cd29acfe05cc1c4aad6b16436ed75719fc217039ae4db4a10d457fe28
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.6.0
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.7.0-dev.1
 # repin: dep=@cplieger/web-terminal-ui url=https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=dcc4eebe1ad1edf08d0473f9fcd40b537221a687fcf4b90562241317c0d282a2
+ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=c9049fd911abe3153f94d5da32888cb536b6d8acf666259a53b5579651eddb69
 # The served bundle is built from the ARG pins while local dev compiles against
 # static-src/package.json, and nothing else fails when the two disagree. go.mod
 # is deliberately not compared: the engine's Go module and npm package version
@@ -451,24 +451,23 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
     sh scripts/collect-licenses.sh --name web-terminal-kiro .
 
 # --- Final stage: minimal runtime with kiro-cli + git ---
-FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Baked-in dependencies. kiro-cli itself is NOT one of them: it is
 # proprietary and cannot be redistributed in the image, so the Go server's
-# pinstall manager downloads and verifies it after the listener binds.
+# install manager (toolbelt's pin) downloads and verifies it after the
+# listener binds.
 # Everything else here is stable utility surface web-terminal-kiro or the
 # interactive user needs:
 #   - bash: the entrypoint interpreter (entrypoint.sh is a bash
 #     script; Debian's /bin/sh is dash)
 #   - ca-certificates + curl: HTTPS trust, the baked HEALTHCHECK probe, and the
 #     archive/catalog fetches the server and the toolbelt engine make
-#   - unzip: `.zip` extraction for tools the toolbelt engine installs at runtime
-#     (toolbelt extract.go shells out to it), the same reason xz-utils is here.
-#     NOT the kiro-cli install -- the pinstall library unpacks that archive with
-#     Go's archive/zip, so this package looks droppable and is not.
+#   - unzip: `.zip` extraction from inside the terminal. Neither the toolbelt
+#     engine nor its pin package needs it: both unpack zip archives in Go.
 #   - git: source control from inside the terminal (gh is NOT baked; it
 #     is opt-in via /config/tools/tools.json)
 #   - openssh-client: git over ssh (and gh over ssh once gh is enabled)
@@ -589,11 +588,13 @@ COPY --chmod=755 hooks/session-title.sh /opt/web-terminal-kiro/hooks/session-tit
 # bwrap kiro-cli resolves is the checked shim or one that refuses (sandbox.go).
 COPY --chmod=755 sandbox/bwrap.sh /opt/web-terminal-kiro/sandbox/bin/bwrap
 COPY --chmod=755 sandbox/bwrap-unavailable.sh /opt/web-terminal-kiro/sandbox/unavailable/bwrap
-
 # Where a pasted image lands (upload.go). Made at build time because the container
 # may run as a non-root user, and sticky world-writable like /tmp for the same reason.
 # A volume mounted here hides it and must be writable by that user.
-RUN mkdir -p /uploads && chmod 1777 /uploads
+# The kas-node link makes the server binary kiro-cli's agent-engine node launcher
+# when KIRO_CLI_HIGH_THROUGHPUT is on (enginetuning.go kasNodeLauncher).
+RUN mkdir -p /uploads /opt/web-terminal-kiro/engine && chmod 1777 /uploads && \
+    ln -s /app/web-terminal-kiro /opt/web-terminal-kiro/engine/kas-node
 
 WORKDIR /workspace
 EXPOSE 9848

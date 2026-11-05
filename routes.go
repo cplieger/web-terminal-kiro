@@ -2,10 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,14 +10,12 @@ import (
 	"path"
 	"slices"
 	"strings"
-	"sync"
 	"time"
-	"unicode/utf8"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v3"
 )
 
 // App-owned route paths. Every engine route comes from the engine's exported
@@ -49,7 +43,7 @@ type routeDeps struct {
 	// static is the embedded-static serving handler, built by the composition root
 	// together with the hash-pinned CSP the same tree produces.
 	static http.Handler
-	ready  *webhttp.Ready
+	ready  *httpserver.Ready
 	// listenHint is "localhost[:port]" for THIS deployment; loopback refusals quote
 	// it so the remedy works on a server that did not keep the default port.
 	listenHint string
@@ -83,6 +77,9 @@ type routeDeps struct {
 	// directory leading PATH). A nil result leaves the child with the server's own
 	// environment.
 	sessionEnv func() []string
+	// engineEnv returns the high-throughput overlay for kiro-cli's agent engine
+	// (engineTuning.env); nil, or a nil result, adds nothing.
+	engineEnv func() []string
 	// sessionTitleEnv returns the per-session variables a kiro-cli hook needs to
 	// report which kiro session this tab is running (the tab's TITLE HANDLE, not the
 	// session id — see sessiontitle.go). A nil function leaves tabs on the engine's
@@ -102,15 +99,11 @@ type routeDeps struct {
 	uploadDir string
 	// sandbox is the startup check's /api/health state; "" omits the field.
 	sandbox string
-	// logOSCText is the LOG_OSC_TEXT opt-in: when true, an unrecognized OSC 9
-	// notification's full text is logged at Debug. Default false — arbitrary child
-	// output that may carry a token or device code.
-	logOSCText bool
 }
 
 // buildStaticSurface assembles the embedded-static serving surface: the static handler
 // and the hash-pinned CSP policy built from the same tree, fail-loud on a malformed
-// embed. webhttp.StaticHandler supplies content-hash ETags (embed.FS reports a zero
+// embed. httpserver.StaticHandler supplies content-hash ETags (embed.FS reports a zero
 // ModTime, so a bare http.FileServer emits no validator) plus precomputed gzip; the
 // per-path cache POLICY stays this app's (kiroCacheControl).
 func buildStaticSurface(staticFS fs.FS) (http.Handler, string, error) {
@@ -122,11 +115,24 @@ func buildStaticSurface(staticFS fs.FS) (http.Handler, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	staticSrv, err := webhttp.StaticHandler(sub, webhttp.WithStaticCacheControl(kiroCacheControl))
+	staticSrv, err := httpserver.StaticHandler(sub, httpserver.WithStaticCacheControl(kiroCacheControl))
 	if err != nil {
 		return nil, "", err
 	}
 	return staticSrv, cspPolicy, nil
+}
+
+// sessionCreateGate throttles session creation in aggregate, because each
+// admitted POST forks a PTY: a burst of six absorbs a user opening several tabs
+// at once, and one token a second bounds sustained churn. Other methods on the
+// sessions path pass through without spending a token.
+func sessionCreateGate() httpserver.Middleware {
+	return httpserver.RateLimiter(6, time.Second,
+		httpserver.WithRateLimitWhen(func(r *http.Request) bool {
+			return r.Method == http.MethodPost && r.URL.Path == terminal.SessionsPath
+		}),
+		httpserver.WithRateLimitError("rate_limited", "session creation rate exceeded"),
+	)
 }
 
 // registerRoutes wires the full route table on mux and returns the session manager (for
@@ -137,7 +143,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 
 	mgrOpts := []terminal.ManagerOption{
 		terminal.WithManagerLogger(slog.Default()),
-		terminal.WithStatusClassifier(newStatusClassifier(deps.logOSCText)),
+		terminal.WithStatusClassifier(classifyNotification),
 	}
 	if deps.sessionActivity != nil {
 		mgrOpts = append(mgrOpts, terminal.WithSessionActivity(deps.sessionActivity))
@@ -157,7 +163,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 		ready, reason := deps.kiroReady()
 		return !ready, reason
 	}
-	createGate := webhttp.SessionCreateRateLimit(terminal.SessionsPath)
+	createGate := sessionCreateGate()
 	createGate = restorePendingGate(createGate, deps.restoring, kiroBlocked, toolsBlocked)
 	createGate = composeGate(createGate, toolsBlocked)
 	createGate = composeGate(createGate, kiroBlocked)
@@ -185,7 +191,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 		mux.Handle(kiroRescanPath, loopbackOnly("kiro-cli rescan hook", deps.listenHint,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Allow", http.MethodPost)
-				webhttp.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed",
+				httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed",
 					"kiro-cli rescan is POST-only. Call it with curl -X POST "+deps.listenHint+kiroRescanPath)
 			})))
 	}
@@ -197,7 +203,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 		// Same two-pattern shape as kiroRescanPath: the "/" mount would otherwise 404 a GET.
 		mux.HandleFunc(uploadsPath, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Allow", http.MethodPost)
-			webhttp.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "image upload is POST-only")
+			httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "image upload is POST-only")
 		})
 	}
 
@@ -215,7 +221,7 @@ type kiroRescanBody struct {
 }
 
 // reasonRescanAbandoned is the repair hook's 503 reason when the request was abandoned
-// before pinstall reached any verdict. Deliberately NOT one of main.go's kiroReasonText
+// before pin reached any verdict. Deliberately NOT one of main.go's kiroReasonText
 // strings: those name the install manager's readiness state, and this reaches no verdict
 // about the install at all.
 const reasonRescanAbandoned = "kiro-cli rescan not performed: request abandoned before any verdict"
@@ -226,16 +232,16 @@ const reasonRescanAbandoned = "kiro-cli rescan not performed: request abandoned 
 func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		// pinstall owns both halves this handler used to hand-roll: WAITING for its
+		// pin owns both halves this handler used to hand-roll: WAITING for its
 		// operation slot honours this context, while an ADMITTED rescan runs detached, so
 		// a Ctrl-C or --max-time cannot make every candidate probe fail and have the
 		// manager record "no usable version".
 		ok, err := deps.kiroRescan(r.Context())
 		if ok {
-			webhttp.WriteJSON(w, kiroRescanBody{Status: "ok"})
+			httpserver.WriteJSON(w, kiroRescanBody{Status: "ok"})
 			return
 		}
-		// A context error means the request was ABANDONED before pinstall reached any
+		// A context error means the request was ABANDONED before pin reached any
 		// verdict (the caller's own cancellation, or this server's shutdown). Reporting
 		// that as "no usable version" would be a false broken-install record, and
 		// "unready" is wrong too — a rescan queued behind another can abandon on a
@@ -243,7 +249,7 @@ func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			slog.Debug("kiro-cli rescan abandoned before a verdict was reached",
 				"error", err)
-			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+			httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 				kiroRescanBody{Status: "abandoned", Reason: reasonRescanAbandoned})
 			return
 		}
@@ -253,35 +259,35 @@ func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 		if _, why := deps.kiroReady(); why != "" {
 			reason = why
 		}
-		// pinstall.Rescan's ordinary failure is (false, nil); a nil error attribute would
+		// pin's Rescan's ordinary failure is (false, nil); a nil error attribute would
 		// put "error":null there, indistinguishable from a state-write failure.
 		attrs := []any{"reason", reason}
 		if err != nil {
 			attrs = append(attrs, "error", err)
 		}
 		slog.Warn("kiro-cli rescan found no usable version", attrs...)
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			kiroRescanBody{Status: "unready", Reason: reason})
 	}
 }
 
 // childEnv is the environment overlay for one tab's kiro-cli process: the active version's
-// PATH lead, plus the two variables a hook needs to report which kiro session this tab is
-// running. Built as a fresh slice rather than appending to sessionEnv's return, so one
-// session's overlay can never alias another's backing array.
+// PATH lead, the agent-engine overlay, and the two variables a hook needs to report which
+// kiro session this tab is running. Built as a fresh slice rather than appending to
+// sessionEnv's return, so one session's overlay can never alias another's backing array.
 func (d *routeDeps) childEnv(id terminal.SessionID) []string {
 	base := d.sessionEnv()
-	var extra []string
-	if d.sessionTitleEnv != nil {
-		extra = d.sessionTitleEnv(id)
+	var engine, title []string
+	if d.engineEnv != nil {
+		engine = d.engineEnv()
 	}
-	if len(extra) == 0 {
+	if d.sessionTitleEnv != nil {
+		title = d.sessionTitleEnv(id)
+	}
+	if len(engine) == 0 && len(title) == 0 {
 		return base
 	}
-	out := make([]string, 0, len(base)+len(extra))
-	out = append(out, base...)
-	out = append(out, extra...)
-	return out
+	return slices.Concat(base, engine, title)
 }
 
 // newSessionBuilder returns the per-session handler factory for one resume id ("" starts
@@ -301,9 +307,9 @@ func newSessionBuilder(deps *routeDeps) func(resumeID string) func(terminal.Sess
 }
 
 func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID) *terminal.Handler {
-	// WithKeepUnfocused pins the process to the DEC 1004 "unfocused" state so kiro-cli
-	// keeps emitting its focus-gated OSC 9 notifications even though no browser tab
-	// claims focus; web-terminal-server deliberately does not use this.
+	// The child gets the engine's real DEC 1004 focus, not WithKeepUnfocused: kiro-cli draws
+	// its home ghost in colour and animates it only while focused, and tab status rides OSC
+	// 7501, which focus does not gate.
 	//
 	// No TERM_PROGRAM override: the engine advertises iTerm.app, which puts kiro-cli in
 	// its OSC 9;4 progress allowlist and enables DEC 2026 synchronized output.
@@ -318,7 +324,6 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 		sessionLogger := slog.Default().With("session", safeID)
 		opts := []terminal.Option{
 			terminal.WithWorkDir(deps.workDir),
-			terminal.WithKeepUnfocused(true),
 			terminal.WithLogger(sessionLogger),
 			terminal.WithCommandLogValue("[redacted]"),
 			// The active kiro-cli version's own directory first on the child's PATH, plus
@@ -334,9 +339,8 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 			// are never touched.
 			terminal.WithMinimumContrast(4.5),
 			// Closing a tab must end the whole tree, and for this app it otherwise does
-			// not: `kiro-cli chat` runs kiro-cli -> kiro-cli-chat -> the TUI -> the agent
-			// server, and that last process calls setsid(), so no signal the engine can
-			// aim reaches it. A nil containment is a no-op.
+			// not: `kiro-cli chat` starts the agent server as a descendant, and that
+			// process calls setsid(), so no signal the engine can aim reaches it. A nil containment is a no-op.
 			terminal.WithContainment(deps.containment, id),
 			// A dev-box tab can live for days; containment reclaims only at teardown, so
 			// a tab whose agent connection died while its TUI stays alive keeps holding
@@ -374,7 +378,7 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 }
 
 // healthBody is /api/health's response envelope. A struct, not a map, because
-// encoding/json sorts map keys, and webhttp's own readiness handler (and therefore
+// encoding/json sorts map keys, and httpserver's own readiness handler (and therefore
 // web-terminal-server and subflux) emits {"status":…,"reason":…}. ToolsMissing is a
 // POINTER so it is absent rather than 0 when unknown, since zero means converged.
 // FIELD ORDER IS THE WIRE CONTRACT: never reorder for fieldalignment.
@@ -412,7 +416,7 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 		// instance that has begun draining.
 		w.Header().Set("Cache-Control", "no-store")
 		unready := func(reason string) {
-			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthResponse("unready", reason))
+			httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, healthResponse("unready", reason))
 		}
 		if !deps.ready.Ready() {
 			unready("starting up or shutting down")
@@ -429,7 +433,7 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 		// The tools field is INFORMATIONAL: kiro-cli is the only core dependency, so
 		// monitoring stays green during a long first-boot install while operators can
 		// still see it.
-		webhttp.WriteJSON(w, healthResponse("ok", ""))
+		httpserver.WriteJSON(w, healthResponse("ok", ""))
 	}
 }
 
@@ -437,175 +441,20 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 // quiet branch asserts an ABSENCE, which a reworded literal would satisfy vacuously.
 const sessionFastDeathMsg = "session process exited almost immediately after start; kiro-cli may be missing or broken"
 
-// unrecognizedNotifyMsg is the one wording both the bounded Warn and the per-occurrence
-// Debug emit, so the two records a log search correlates cannot drift apart.
-const unrecognizedNotifyMsg = "unrecognized kiro-cli OSC 9 notification; tab status dots will not latch (kiro-cli notification wording may have changed on a version bump)"
-
-// unrecognizedNotifyCapMsg is emitted once the distinct-message budget is exhausted, so a
-// silent stop is never mistaken for "nothing new appeared". Shares no substring with
-// unrecognizedNotifyMsg — the two log searches must not match each other.
-const unrecognizedNotifyCapMsg = "kiro-cli OSC 9 notification warn budget exhausted; further distinct wordings are Debug-only (set LOG_LEVEL=debug)"
-
-// recognizedNotifyMsg is the POSITIVE half of the classifier trace. Without it a debug
-// session that sees no classifier records cannot tell "kiro-cli emitted no notification"
-// from "notifications mapped fine, the dot is lost downstream". Logs only the matched
-// literal from the closed switch, never arbitrary child output.
-const recognizedNotifyMsg = "kiro-cli OSC 9 notification mapped to a tab status"
-
-// unrecognizedNotifyCap bounds how many DISTINCT unrecognized notifications are promoted
-// to Warn: log volume, and the seen-set below, whose key comes from child process output
-// and would otherwise grow without limit under a chatty or hostile session.
-const unrecognizedNotifyCap = 8
-
-// unrecognizedNotifyCapRearm is how long the budget-exhausted announcement stays silent
-// before firing again. The seen-set is keyed on CHILD output, so the budget can be spent
-// entirely on benign wordings; re-arming keeps a rewording that begins AFTER exhaustion
-// visible in the default log stream.
-const unrecognizedNotifyCapRearm = 6 * time.Hour
-
-// unrecognizedNotifyHint is the operator-facing next step both Warn arms carry.
-const unrecognizedNotifyHint = `re-verify the "Response complete" / "Permission required" / "Input required" strings in the pinned kiro-cli-chat binary and update newStatusClassifier; set LOG_OSC_TEXT=true with LOG_LEVEL=debug to log the notification text itself (it is arbitrary child output and may contain a token or device code)`
-
-// notifyFingerprintHexDigits bounds the fingerprint written in place of the notification
-// text. 64 bits of HMAC-SHA-256 is far more than enough to tell a handful of distinct
-// wordings apart while staying short enough to read in a log line.
-const notifyFingerprintHexDigits = 16
-
-// notifyFingerprintKeyBytes is the width of the per-classifier HMAC key, generated at
-// classifier construction and never logged.
-const notifyFingerprintKeyBytes = 32
-
-// notifyFingerprinter renders the stable, content-free identifier the log carries INSTEAD
-// of an unrecognized notification's text.
-//
-// A bounded EXCERPT does not redact — a short token or device code fits inside any excerpt
-// (CWE-532). An UNKEYED digest does not either: the plaintext is low-entropy, so a reader
-// holding SHA-256(msg) can enumerate candidates offline. Keying with a secret the log
-// never contains removes that oracle (CWE-760).
-type notifyFingerprinter struct {
-	key []byte
-}
-
-// newNotifyFingerprinter draws the per-classifier key. crypto/rand.Read never returns an
-// error — it crashes the program irrecoverably if the OS source fails — so there is no
-// keyless state to degrade into.
-func newNotifyFingerprinter() notifyFingerprinter {
-	key := make([]byte, notifyFingerprintKeyBytes)
-	_, _ = rand.Read(key) // documented never to fail; it crashes the process instead
-	return notifyFingerprinter{key: key}
-}
-
-// fingerprint returns the leading notifyFingerprintHexDigits hex digits of
-// HMAC-SHA-256(key, msg).
-func (f notifyFingerprinter) fingerprint(msg string) string {
-	mac := hmac.New(sha256.New, f.key)
-	// hash.Hash.Write is documented never to return an error.
-	_, _ = mac.Write([]byte(msg))
-	return hex.EncodeToString(mac.Sum(nil))[:notifyFingerprintHexDigits]
-}
-
-// metadata is the content-free description both the Warn arm and the default Debug arm
-// log: which distinct wording it was, and how long it was.
-func (f notifyFingerprinter) metadata(msg string) []any {
-	return []any{
-		"message_fingerprint", f.fingerprint(msg),
-		"message_runes", utf8.RuneCountInString(msg),
+// classifyNotification maps kiro-cli's two ask notifications to StatusInput and leaves
+// every other OSC 9 text unclassified, so done and error come from OSC 7501 alone. The
+// engine shows a classified notification newer than the last OSC 7501 change until the
+// next one, which covers kiro-cli reporting error over a pending ask
+// (https://github.com/kirodotdev/Kiro/issues/11987).
+func classifyNotification(msg string) (string, bool) {
+	switch msg {
+	case "Permission required", "Input required":
+		return terminal.StatusInput, true
 	}
+	return "", false
 }
 
-// notifyWarningState is newStatusClassifier's bounded warn budget for unrecognized OSC 9
-// notifications. One instance per classifier instance, never a package var, so a test
-// gets a fresh budget.
-type notifyWarningState struct {
-	warned map[string]struct{}
-	// lastCapWarn is when the budget-exhausted announcement last fired; the zero value
-	// means never, so the first one always fires.
-	lastCapWarn time.Time
-	// mu guards warned and lastCapWarn.
-	mu sync.Mutex
-}
-
-// observe records msg against the warn budget and reports which record the caller should
-// emit: warnFirst for the first occurrence of a DISTINCT message while budget remains,
-// warnCapped at most once per unrecognizedNotifyCapRearm window for a distinct message the
-// cap turns away. Both false means Debug-only. The engine shares one classifier across
-// every session and calls it from per-session goroutines, so state is mutex guarded and
-// the caller logs OUTSIDE the lock.
-func (s *notifyWarningState) observe(msg string) (warnFirst, warnCapped bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, seen := s.warned[msg]; seen {
-		return false, false
-	}
-	if len(s.warned) < unrecognizedNotifyCap {
-		s.warned[msg] = struct{}{}
-		return true, false
-	}
-	// Re-arms rather than firing once per process: the seen-set fills first-come from
-	// arbitrary child output, so a single announcement would leave a LATER rewording with
-	// no default-level record at all. time.Since saturates for the zero value, so the
-	// first turned-away message announces with no carve-out.
-	if time.Since(s.lastCapWarn) < unrecognizedNotifyCapRearm {
-		return false, false
-	}
-	s.lastCapWarn = time.Now()
-	return false, true
-}
-
-// newStatusClassifier returns the kiro-cli OSC 9 -> session-status mapping the composition
-// root injects into the engine, with a bounded warn latch on DISTINCT unrecognized
-// notifications. Per-DISTINCT rather than one-per-classifier: a single sync.Once was
-// consumed by the first unrecognized message of ANY kind, so a later bump rewording
-// "Response complete" warned NOTHING while every turn-end silently stopped latching.
-//
-// Those three strings live in the kiro-cli-chat SIDECAR binary, not the dispatcher, so
-// re-verify them there on every kiro-cli bump, in the same PR as the pin move.
-func newStatusClassifier(logText bool) func(string) (string, bool) {
-	warnings := notifyWarningState{warned: make(map[string]struct{}, unrecognizedNotifyCap)}
-	fingerprints := newNotifyFingerprinter()
-	return func(msg string) (string, bool) {
-		switch msg {
-		case "Response complete":
-			slog.Debug(recognizedNotifyMsg, "notification", msg, "status", terminal.StatusDone)
-			return terminal.StatusDone, true
-		case "Permission required", "Input required":
-			slog.Debug(recognizedNotifyMsg, "notification", msg, "status", terminal.StatusInput)
-			return terminal.StatusInput, true
-		default:
-			// Any OSC 9 text the pinned kiro-cli build does not emit for turn-end or
-			// tool-approval. If a bump reworded one of the three, every notification lands
-			// here and the per-tab status dots silently stop latching. The Warn never
-			// carries the TEXT: it is arbitrary child output, and sanitizeNotification
-			// guarantees the record cannot be FORGED but redacts NOTHING. Decide under the
-			// lock, log outside it — slog handlers can block on I/O.
-			warnFirst, warnCapped := warnings.observe(msg)
-
-			switch {
-			case warnFirst:
-				slog.Warn(unrecognizedNotifyMsg,
-					append(fingerprints.metadata(msg), "hint", unrecognizedNotifyHint)...)
-			case warnCapped:
-				// The fingerprint of the message that hit the full budget, so a re-armed
-				// announcement identifies WHICH wording drove it — otherwise two firings
-				// six hours apart are indistinguishable from the same wording twice.
-				slog.Warn(unrecognizedNotifyCapMsg,
-					append(fingerprints.metadata(msg),
-						"distinct_limit", unrecognizedNotifyCap,
-						"hint", unrecognizedNotifyHint)...)
-			}
-			// ONE Debug record either way; the opt-in only ADDS the text. The fingerprint
-			// rides along so this record pairs with whichever Warn sent the operator here.
-			attrs := fingerprints.metadata(msg)
-			if logText {
-				attrs = append(attrs, "message", msg)
-			}
-			slog.Debug(unrecognizedNotifyMsg, attrs...)
-			return "", false
-		}
-	}
-}
-
-// Cache-Control policies handed to webhttp.StaticHandler. Only a content-addressed asset may
+// Cache-Control policies handed to httpserver.StaticHandler. Only a content-addressed asset may
 // promise its bytes never change, so `immutable` is earned by the name.
 const (
 	fontAssetPrefix    = "vendor/fonts/"
@@ -669,11 +518,11 @@ func buildCSPPolicy(sub fs.FS) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("buildCSPPolicy: read index.html: %w", err)
 	}
-	hashes := webhttp.InlineScriptHashes(html)
+	hashes := httpserver.InlineScriptHashes(html)
 	if len(hashes) == 0 {
 		return "", errors.New("buildCSPPolicy: no inline <script> blocks in index.html")
 	}
-	styleHashes := webhttp.InlineStyleHashes(html)
+	styleHashes := httpserver.InlineStyleHashes(html)
 	if len(styleHashes) != 1 {
 		return "", fmt.Errorf(
 			"buildCSPPolicy: want exactly one inline <style> block in index.html, found %d",
@@ -702,7 +551,7 @@ func composeGate(inner func(http.Handler) http.Handler, blocked func() (bool, st
 				// hint: neither a tools convergence nor a kiro-cli download has a
 				// predictable remaining time, so a cheap re-poll beats a computed date.
 				w.Header().Set("Retry-After", "5")
-				webhttp.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
+				httpserver.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
 				return
 			}
 			gated.ServeHTTP(w, r)
@@ -732,14 +581,14 @@ func restorePendingGate(inner func(http.Handler) http.Handler, pending func() bo
 			if layoutRead {
 				if reason, block := firstBlocked(outer); block {
 					w.Header().Set("Retry-After", "5") // composeGate's hint for the same wait
-					webhttp.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
+					httpserver.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
 					return
 				}
 			}
 			// One second: the restore itself takes milliseconds once both outer gates
 			// open, and a longer hint would hold pages on the overlay after the tabs exist.
 			w.Header().Set("Retry-After", "1")
-			webhttp.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", terminal.RestoringMessage)
+			httpserver.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", terminal.RestoringMessage)
 		})
 	}
 }
@@ -755,15 +604,15 @@ func firstBlocked(checks []func() (bool, string)) (string, bool) {
 }
 
 // loopbackOnly admits only requests whose SOCKET PEER and Host header are both loopback
-// and which carry no proxy/browser provenance header (mechanism: webhttp.LoopbackOnly).
+// and which carry no proxy/browser provenance header (mechanism: httpserver.LoopbackOnly).
 // What stays here is the refusal wording, which names the guarded surface and the
 // deployment's own listen hint — the 403 is the whole of what a refused caller is told.
 func loopbackOnly(surface, hint string, next http.Handler) http.Handler {
 	refuse := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		webhttp.WriteError(w, r, http.StatusForbidden, "loopback_only",
+		httpserver.WriteError(w, r, http.StatusForbidden, "loopback_only",
 			surface+" is loopback-only. Call it from inside the container with curl "+hint)
 	})
-	return webhttp.LoopbackOnly(refuse)(next)
+	return httpserver.LoopbackOnly(refuse)(next)
 }
 
 // sessionCostInterval is how often a contained session logs what it is currently costing.
