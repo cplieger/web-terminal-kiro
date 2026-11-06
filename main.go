@@ -796,27 +796,21 @@ func kiroInstallConfig(cfg *baseKiro) *pin.Config {
 	}
 }
 
-// kiroSettings is this app's kiro-cli settings set, asserted against the active
-// binary on every boot. app.disableAutoupdates is the one Required entry: kiro-cli
-// updating itself would replace the binary whose digest was verified, so a failure
-// withholds readiness. Every other one is best-effort and only warns. The two
-// notification settings feed browser notifications and classifyNotification.
+// kiroSettings is the kiro-cli settings this app depends on, re-asserted against the
+// active binary on every boot so a user override cannot outlive a restart.
+// app.disableAutoupdates is the one Required entry: kiro-cli updating itself would
+// replace the binary whose digest was verified, so a failure withholds readiness.
+// The notification pair feeds classifyNotification, and the server owns tab titles.
+// Mere preferences live in kiro-cli-defaults.json instead (KIRO_DEFAULT_SETTINGS), so
+// a user's own value persists; no key may sit in both.
 func kiroSettings() []pin.Assertion {
 	gate := kiroSetting("app.disableAutoupdates", "true")
 	gate.Required = true
 	return []pin.Assertion{
 		gate,
-		kiroSetting("telemetry.enabled", "false"),
 		kiroSetting("chat.enableNotifications", "true"),
 		kiroSetting("chat.notificationMethod", "osc9"),
 		kiroSetting("chat.terminalTitle", "false"),
-		// On, a full-screen drag reports "Copied" while copying nothing: the drag copy needs a
-		// clipboard tool the image lacks and skips OSC 52 (kirodotdev/Kiro#12210). Shift+drag
-		// stays the browser's own selection.
-		kiroSetting("chat.fullscreenCopyOnSelect", "false"),
-		// The image runs every tab as root by design (docs/hardening.md), so kiro-cli's
-		// warning at each chat start that it is running as root is noise here.
-		kiroSetting("app.warnOnElevatedPrivileges", "false"),
 	}
 }
 
