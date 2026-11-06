@@ -578,6 +578,11 @@ COPY --from=builder /tmp/tool-catalog.json /app/tool-catalog.json
 # runtime catalog refresh. It is the same file the verify step above gates
 # against, so the build cannot ship a catalog its own required set fails.
 COPY bundled-tools.json /app/bundled-tools.json
+# kiro-cli layers KIRO_DEFAULT_SETTINGS under cli.json only for a root-owned file
+# no group or other can write; no --chmod, which would also make /etc/kiro-cli
+# 0644 and untraversable for a non-root container user (docker/docs#20660).
+COPY kiro-cli-defaults.json /etc/kiro-cli/default-settings.json
+ENV KIRO_DEFAULT_SETTINGS=/etc/kiro-cli/default-settings.json
 COPY --chmod=755 entrypoint.sh /opt/web-terminal-kiro/entrypoint.sh
 # The kiro-cli hook that reports which kiro session a tab is running. Executed by
 # kiro-cli (not by this image's entrypoint), which is why it ships as its own
@@ -641,7 +646,7 @@ EXPOSE 9848
 # off), local unzip and streaming SHA-256 (untimed, ~528MB), install.sh (120s),
 # one --version probe on the staged binary plus one per selection candidate (10s
 # each), and the settings calls (10s each: one required before publication, then
-# five against the active binary). The manager then retries a failed attempt up to
+# four against the active binary). The manager then retries a failed attempt up to
 # 4 times with 30s/60s/120s backoff, so a persistently failing install keeps the
 # server up for the container's lifetime and reports the reason on /api/health.
 #

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -2947,21 +2948,32 @@ func TestKiroInstallConfigCarriesTheReleaseShape(t *testing.T) {
 	}
 }
 
-func TestKiroSettingsTurnsSettingsOff(t *testing.T) {
-	for _, key := range []string{
-		"chat.fullscreenCopyOnSelect",
-		"app.warnOnElevatedPrivileges",
-	} {
-		t.Run(key, func(t *testing.T) {
-			want := []string{"settings", key, "false"}
-			settings := kiroSettings()
-			i := slices.IndexFunc(settings, func(a pin.Assertion) bool { return a.Name == key })
-			if i < 0 {
-				t.Fatalf("kiroSettings() has no %q assertion", key)
-			}
-			if got := settings[i].Args; !slices.Equal(got, want) {
-				t.Errorf("kiroSettings() assertion %q = %q, want %q", key, got, want)
-			}
-		})
+// TestKiroDefaultSettingsFile pins the image's kiro-cli preferences file: kiro-cli
+// ignores a KIRO_DEFAULT_SETTINGS file over 1 MiB or that is not a JSON object, and a
+// key also asserted by kiroSettings would be reset every boot, so its default is dead.
+func TestKiroDefaultSettingsFile(t *testing.T) {
+	raw, err := os.ReadFile("kiro-cli-defaults.json")
+	if err != nil {
+		t.Fatalf("read kiro-cli-defaults.json: %v", err)
+	}
+	if len(raw) > 1<<20 {
+		t.Errorf("kiro-cli-defaults.json is %d bytes; kiro-cli ignores a defaults file over 1 MiB", len(raw))
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("kiro-cli-defaults.json is not a JSON object: %v", err)
+	}
+	want := map[string]any{
+		"telemetry.enabled":            false,
+		"chat.fullscreenCopyOnSelect":  false,
+		"app.warnOnElevatedPrivileges": false,
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("kiro-cli-defaults.json = %v, want %v", got, want)
+	}
+	for _, a := range kiroSettings() {
+		if _, ok := got[a.Name]; ok {
+			t.Errorf("%q is both a default and a boot-time assertion; the assertion would overwrite every user change", a.Name)
+		}
 	}
 }

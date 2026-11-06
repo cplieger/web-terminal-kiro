@@ -6,6 +6,10 @@ This page lists every setting of Web Terminal for Kiro and what each one changes
 
 Settings are environment variables on the container, under `environment:` in `compose.yaml`. The server reads them once at start, so recreate the container after a change. No setting is required, and the image ships working defaults. A malformed value logs a warning that names the variable, never the value, and the server falls back to the default. `ALLOWED_HOSTS` is the exception, described below.
 
+The image also ships three kiro-cli defaults in `/etc/kiro-cli/default-settings.json`. They turn off telemetry and the warning that kiro-cli runs as root, since every tab runs as root by design. They also turn off copy-on-select in full-screen mode, which reports "Copied" in this image while copying nothing ([Kiro#12210](https://github.com/kirodotdev/Kiro/issues/12210)). Shift+drag still selects text in the browser.
+
+Run `kiro-cli settings <key> <value>` in a tab to change one of these defaults, and your value stays after a restart. Four other kiro-cli settings are reset at every start, because the app relies on them: `app.disableAutoupdates`, `chat.enableNotifications`, `chat.notificationMethod` and `chat.terminalTitle`.
+
 ## Every setting
 
 | Variable | Description | Default |
