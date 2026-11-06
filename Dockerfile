@@ -1,7 +1,7 @@
 # check=error=true
 
 # --- Builder stage: compile Go server + vendor the web-terminal engine/UI TS ---
-FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS builder
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Official Go tarballs currently set GOTOOLCHAIN=auto in $GOROOT/go.env; keep it
@@ -198,9 +198,9 @@ COPY required-tools.txt bundled-tools.json ./
 # daily; the pin means the baked fallback is a REVIEWED catalog, while
 # the runtime refresh keeps a running container current.
 # renovate: datasource=github-releases depName=cplieger/tool-catalog
-ARG TOOL_CATALOG_VERSION=v2026.11.02
+ARG TOOL_CATALOG_VERSION=v2026.11.06
 # repin: dep=cplieger/tool-catalog url=https://github.com/cplieger/tool-catalog/releases/download/{version}/tool-catalog.json
-ARG TOOL_CATALOG_SHA256=1e43eb5ea12f6f11b2902bc89de25f3f35cc5e8dcbd389a4e654859da1c559bb # tool-catalog v2026.07.24.1907
+ARG TOOL_CATALOG_SHA256=9a82830c6259c115fb61762ff21b091f53d5e867b07eebd8969f13cbd967b3bc # tool-catalog v2026.07.24.1907
 ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/download/${TOOL_CATALOG_VERSION}/tool-catalog.json
 # The build-time verifier is the SAME module go.mod requires (the runtime engine
 # that re-verifies required-tools.txt before every catalog swap), and that is now
@@ -451,7 +451,7 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
     sh scripts/collect-licenses.sh --name web-terminal-kiro .
 
 # --- Final stage: minimal runtime with kiro-cli + git ---
-FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
