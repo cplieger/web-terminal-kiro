@@ -14,7 +14,7 @@ This page says how to know that Web Terminal for Kiro is up and what its log rec
 
 The server and the container's start script both write logfmt lines to standard error. The start script's lines carry `component=entrypoint`. `LOG_LEVEL` sets the server's level, `info` by default.
 
-No alert rule reads the log. Search it by the `stage` key when the server does not start: its one `ERROR` line, `web-terminal-kiro exited with error`, carries `stage` and the remedy in `error`. [Startup failures](how-it-works.md#startup-failures) lists the stage values, which stay the same between releases. The `terminal attach attempt` line records each request that presents a session id, with the client address and request id.
+No alert rule reads the log. Search it by the `stage` key when the server does not start. Its one `ERROR` line, `web-terminal-kiro exited with error`, carries `stage` and the remedy in `error`. [Startup failures](how-it-works.md#startup-failures) lists the stage values, which stay the same between releases. The `terminal attach attempt` line records each request that presents a session id, with the client address and request id.
 
 A healthy probe of `/healthz` logs nothing at `info`. A probe that gets `503` logs one access line at `ERROR`, and one refused with a `4xx` code logs it at `WARN`.
 
@@ -38,4 +38,6 @@ A healthy probe of `/healthz` logs nothing at `info`. A probe that gets `503` lo
 
 A tab whose kiro-cli stops responding affects only that tab, with you in front of it. The server answers for every tab, so it stays healthy.
 
-**Probing from outside.** Check `GET http://<host>:9848/healthz` and pass on status 200 only. Do not match the body. Use a 5-second timeout, check every 60 seconds, alert after 3 failures, and wait 20 minutes after a first start. After an image update that moves kiro-cli to a new version, the terminal downloads it again and answers `503` meanwhile, so hold the alert for that long or expect it once. Address the terminal by a name in `ALLOWED_HOSTS`, or it refuses the request with `403`. A reverse proxy that asks for a login refuses a prober that does not send it, so probe the port directly on your network, or give the prober the login. A Kubernetes liveness probe that must ignore readiness uses a `tcpSocket` probe on the port.
+**Probing from outside.** Check `GET http://<host>:9848/healthz` and pass on status 200 only. Do not match the body. Use a 5-second timeout, check every 60 seconds, alert after 3 failures, and wait 20 minutes after a first start.
+
+After an image update that moves kiro-cli to a new version, the terminal can answer `503` while it downloads that version, so hold the alert for up to 20 minutes or expect it once. Address the terminal by a name in `ALLOWED_HOSTS`, or it refuses the request with `403`. A reverse proxy that asks for a login refuses a prober that does not send it, so probe the port directly on your network, or give the prober the login. A Kubernetes liveness probe that must ignore readiness uses a `tcpSocket` probe on the port.

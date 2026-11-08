@@ -1,6 +1,6 @@
 # How Web Terminal for Kiro works
 
-This page covers how the kiro-cli install, the health check and the startup log work, and which projects the app is built on, for readers running or debugging it.
+This page covers how the kiro-cli install and the startup log work, and which projects the app is built on, for readers running or debugging it.
 
 ## One process per tab
 
@@ -28,7 +28,7 @@ kiro-cli is pinned to one version, downloaded on first start and checked against
 
 A shell opened with `docker exec` finds the pinned kiro-cli through `/config/tools/kiro-cli-bin`, which comes before the tools folder `/config/tools/bin` on `PATH`. A tool in the tools list that is also named `kiro-cli` stays in `/config/tools/bin` and does not replace it.
 
-The download runs after the server starts listening, so the web page and `/api/health` answer at once. New tabs answer `503 {"error":"kiro-cli installing","code":"not_ready"}` until the install finishes, and the message names the stage when something goes wrong.
+The download runs after the server starts listening, so the web page and `/healthz` answer at once. New tabs answer `503 {"error":"kiro-cli installing","code":"not_ready"}` until the install finishes, and the message names the stage when something goes wrong.
 
 `/config` must be on a filesystem that allows running programs. kiro-cli and every tool the container installs live there and run from there, so a `noexec` mount makes the install fail. The startup log reports that in one line that names the folder.
 
@@ -40,7 +40,7 @@ The compose file sets `init: true`, and it is required. A kiro-cli session start
 
 ## Health
 
-The image checks `/healthz` on loopback every 30 seconds, after a 20-minute start period that covers the first kiro-cli download. It is a readiness check: it waits for kiro-cli, not only for the listener. Nothing restarts on an unhealthy state, so a broken install shows as `unhealthy` in `docker ps` without a restart loop. [Knowing the app is alive](monitoring.md#knowing-the-app-is-alive) gives the answers, the fields beside them and who is told.
+The image checks `/healthz` on loopback every 30 seconds, after a 20-minute start period that covers the first kiro-cli download. It is a readiness check, which waits for kiro-cli and not only for the listener. Nothing restarts on an unhealthy state, so a broken install shows as `unhealthy` in `docker ps` without a restart loop. [Knowing the app is alive](monitoring.md#knowing-the-app-is-alive) gives the answers, the fields beside them and who is told.
 
 ## Startup failures
 
@@ -54,7 +54,7 @@ A startup failure writes exactly one `ERROR` line, `web-terminal-kiro exited wit
 | `serve` | The web server stopped with an error. |
 | `unknown` | A failure no stage covers. |
 
-Base log searches and alert rules on `stage`, not on the message text. The stage values stay the same between releases, and the wording may change.
+Base log searches on `stage`, not on the message text. The stage values stay the same between releases, and the wording may change.
 
 ## Related projects
 

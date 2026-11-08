@@ -134,7 +134,7 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 
 | Port | Description |
 | --- | --- |
-| `9848` | The web page and its terminal connections |
+| `9848` | The web page, its terminal connections and `GET /healthz` for an uptime prober |
 
 ## Security
 
@@ -160,6 +160,10 @@ The healthcheck asks `/healthz` every 30 seconds whether kiro-cli is ready, afte
 
 [How it works](docs/how-it-works.md) explains startup failures and the install in more detail.
 
+## Monitoring
+
+Web Terminal for Kiro serves no metrics and ships no alert rules. The image has a Docker healthcheck, and [Knowing the app is alive](docs/monitoring.md#knowing-the-app-is-alive) says what it proves and who is told.
+
 ## Documentation
 
 - [Configuration](docs/configuration.md) lists every setting and what it changes.
@@ -167,7 +171,8 @@ The healthcheck asks `/healthz` every 30 seconds whether kiro-cli is ready, afte
 - [Security](docs/hardening.md) covers the reverse proxy, stored scrollback and what the image contains.
 - [Command sandbox](docs/sandbox.md) explains the profile rules and the startup check.
 - [Features](docs/features.md) lists what the terminal supports, on desktop and on touch.
-- [How it works](docs/how-it-works.md) covers the kiro-cli install, health, logs and the projects this is built on.
+- [Monitoring and alerts](docs/monitoring.md) says how to know the terminal is up.
+- [How it works](docs/how-it-works.md) covers the kiro-cli install, startup failures and the projects this is built on.
 
 ## Credits
 

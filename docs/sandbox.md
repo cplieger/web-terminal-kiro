@@ -63,7 +63,7 @@ The image keeps bubblewrap off `PATH`. With the setting on, the server puts a fo
 
 kiro-cli then says the system `bwrap` could not be loaded and suggests reinstalling it. In this image that message means the startup check failed, and the server log says why. This matters because kiro-cli reports its sandbox as on when its `bwrap` fails in most other ways, so a sandbox that cannot start would look on. That is [kirodotdev/Kiro#11941](https://github.com/kirodotdev/Kiro/issues/11941).
 
-`/api/health` carries the result in its `sandbox` field, on both 200 and 503 answers. It never decides whether the instance is healthy.
+`/healthz` carries the result in its `sandbox` field, on both 200 and 503 answers. It never decides whether the instance is healthy.
 
 | `sandbox` | Meaning |
 | --- | --- |
