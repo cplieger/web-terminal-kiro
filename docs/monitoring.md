@@ -8,6 +8,7 @@ This page says how to know that Web Terminal for Kiro is up and what its log rec
 | --- | --- | --- |
 | Prometheus, Mimir or VictoriaMetrics, with Alertmanager | An alert when `/healthz` stops answering `200`. This app ships no rules of its own | A probe of `/healthz` and the health page rule from the monitoring guide's [Knowing that an app is alive](https://github.com/cplieger/docs/blob/main/docs/monitoring.md#knowing-that-an-app-is-alive) |
 | Loki and Alertmanager, no metric store | No alerts. The log records each failure, and no rule reads it | An uptime prober on `/healthz` |
+| Grafana-managed alerting only | No rules to import. An alert when `/healthz` stops answering `200` | A probe of `/healthz` and an alert rule on it in Grafana |
 | Docker or Unraid only | Docker health, which notifies nobody | An uptime prober on `/healthz`, or something that watches Docker health |
 
 ## Logs
@@ -24,7 +25,7 @@ A healthy probe of `/healthz` logs nothing at `info`. A probe that gets `503` lo
 | --- | --- | --- | --- | --- |
 | `/healthz` | `GET`, `HEAD` | `LISTEN_ADDR`, `9848` by default | none. `ALLOWED_HOSTS` applies, loopback always admitted | `200 {"status":"ok"}`, or `503 {"status":"unhealthy","reasons":[...]}` |
 
-**What healthy means.** The server is listening, is not starting or shutting down, and has kiro-cli installed with its required settings applied. While kiro-cli downloads, retries its install or cannot be installed, `/healthz` answers `503`, and `reasons` names the state, such as `kiro-cli installing`. Any other method answers `405`. The answer also carries `tools`, `tools_missing` and `sandbox`, described in [Tools](tools.md#when-tabs-open) and [Command sandbox](sandbox.md#the-startup-check). Those fields never change the status code, so a failed tool install or an unreachable GitHub never makes the terminal unhealthy. It shows in `tools` and in the log.
+**What healthy means.** The server is listening, is not starting or shutting down, and has kiro-cli installed with its required settings applied. While kiro-cli downloads, retries its install or cannot be installed, `/healthz` answers `503`, and `reasons` names the state, such as `kiro-cli installing`. Any other method answers `405`. The answer may also carry `tools`, `tools_missing` and `sandbox`, described in [Tools](tools.md#when-tabs-open) and [Command sandbox](sandbox.md#the-startup-check). Those fields never change the status code, so a failed tool install or an unreachable GitHub never makes the terminal unhealthy. It shows in `tools` and in the log. `tools_missing` is absent until the count is known.
 
 **Docker health.** The image checks itself every 30 seconds with `curl`, which asks `/healthz` on `127.0.0.1` at the port in `LISTEN_ADDR` and gives up after 4 seconds. Docker marks the container unhealthy after 3 failures, and allows 20 minutes after a start, which covers the first kiro-cli download. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container.
 
@@ -40,4 +41,4 @@ A tab whose kiro-cli stops responding affects only that tab, with you in front o
 
 **Probing from outside.** Check `GET http://<host>:9848/healthz` and pass on status 200 only. Do not match the body. Use a 5-second timeout, check every 60 seconds, alert after 3 failures, and wait 20 minutes after a first start.
 
-After an image update that moves kiro-cli to a new version, the terminal can answer `503` while it downloads that version, so hold the alert for up to 20 minutes or expect it once. Address the terminal by a name in `ALLOWED_HOSTS`, or it refuses the request with `403`. A reverse proxy that asks for a login refuses a prober that does not send it, so probe the port directly on your network, or give the prober the login. A Kubernetes liveness probe that must ignore readiness uses a `tcpSocket` probe on the port.
+After an image update that moves kiro-cli to a new version, the terminal answers `503` with `kiro-cli installing` while it downloads that version, so hold the alert for up to 20 minutes after the update. When you set `ALLOWED_HOSTS`, address the terminal by a name in it, or it refuses the request with `403`. A reverse proxy that asks for a login refuses a prober that does not send it, so probe the port directly on your network, or give the prober the login. A Kubernetes liveness probe that must ignore readiness uses a `tcpSocket` probe on the port.
