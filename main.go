@@ -240,8 +240,8 @@ func main() {
 const shutdownGrace = 5 * time.Second
 
 // The startup stages a failure can be attributed to. Values, not messages: these
-// are the strings an operator's log query or alert rule matches, so changing one
-// is a breaking change to the log surface.
+// are the strings an operator's log search matches, so changing one is a breaking
+// change to the log surface.
 const (
 	stageWorkDir = "work_dir" // the /workspace mount is absent or not a directory
 	stageStatic  = "static"   // the embedded static tree is unusable
