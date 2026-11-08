@@ -40,7 +40,7 @@ The compose file sets `init: true`, and it is required. A kiro-cli session start
 
 ## Health
 
-The image checks `/api/health` on loopback every 30 seconds, after a 20-minute start period that covers the first kiro-cli download. The check reports whether kiro-cli is ready, not only whether the server is listening, and a 503 body names the state. It is a readiness check. Nothing restarts on an unhealthy state, so a broken install shows as `unhealthy` in `docker ps` without a restart loop. The tool fields in the same answer are described in [Tools](tools.md#when-tabs-open). The `sandbox` field reports the command sandbox check, described in [Command sandbox](sandbox.md#the-startup-check).
+The image checks `/healthz` on loopback every 30 seconds, after a 20-minute start period that covers the first kiro-cli download. It is a readiness check: it waits for kiro-cli, not only for the listener. Nothing restarts on an unhealthy state, so a broken install shows as `unhealthy` in `docker ps` without a restart loop. [Knowing the app is alive](monitoring.md#knowing-the-app-is-alive) gives the answers, the fields beside them and who is told.
 
 ## Startup failures
 

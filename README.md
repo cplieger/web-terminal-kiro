@@ -149,7 +149,7 @@ Web Terminal for Kiro has no login. Anyone who reaches the port gets a root shel
 
 ## Troubleshooting
 
-The healthcheck asks `/api/health` every 30 seconds whether kiro-cli is ready, after a 20-minute grace period for the first download. Unhealthy means kiro-cli is not ready, because it is still installing or its install or setup failed. Docker does not restart the container for it, so `docker ps` shows `unhealthy` while the container keeps running.
+The healthcheck asks `/healthz` every 30 seconds whether kiro-cli is ready, after a 20-minute grace period for the first download. Unhealthy means kiro-cli is not ready, because it is still installing or its install or setup failed. Docker does not restart the container for it, so `docker ps` shows `unhealthy` while the container keeps running. An unhealthy container notifies nobody. [Knowing the app is alive](docs/monitoring.md#knowing-the-app-is-alive) says what does.
 
 - A new tab keeps saying `kiro-cli installing`, or says `kiro-cli install retrying` or `kiro-cli unavailable`. The first download needs internet access. Fix the network, then restart the container to retry the download.
 - The log warns that the server runs as PID 1. Add `init: true` to the service.
