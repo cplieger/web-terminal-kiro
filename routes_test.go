@@ -14,12 +14,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	"github.com/cplieger/go/health"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
@@ -50,7 +52,7 @@ func TestDebugRoutesNotExposed(t *testing.T) {
 	}
 }
 
-// TestHealthEndpoint_reflectsReadiness pins the /api/health readiness gate:
+// TestHealthEndpoint_reflectsReadiness pins the /healthz readiness gate:
 // before ready is set the endpoint returns 503 (so a reverse proxy or
 // orchestrator holds traffic during startup and shutdown), and once ready it
 // returns 200. The atomic flag is the only thing that flips the branch.
@@ -60,7 +62,7 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 
 	get := func() *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
 		return rec
 	}
 
@@ -76,7 +78,7 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 
 // TestHealthEndpoint_reflectsKiroCliReadiness pins the kiro-cli readiness
 // gate: when the server owns the install (main.go hands it the manager's
-// Ready), /api/health returns 503 while no version is active and 200 once
+// Ready), /healthz returns 503 while no version is active and 200 once
 // one is -- reflecting readiness from in-memory state, never launching
 // kiro-cli. Out-of-container runs get the composition root's permissive
 // (true, "") default instead of a nil policy, so they keep pure-listener
@@ -90,7 +92,7 @@ func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
 	}
 	status := func(mux *http.ServeMux) int {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
 		return rec.Code
 	}
 
@@ -279,10 +281,10 @@ func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 	mux, _, csp := mustRegisterRoutes(t, newTestDeps(true))
 
 	rec := httptest.NewRecorder()
-	buildHandler(mux, nil, csp, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+	buildHandler(mux, nil, csp, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /api/health: status = %d, want %d", rec.Code, http.StatusOK)
+		t.Fatalf("GET /healthz: status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	for _, tc := range []struct{ header, want string }{
 		{"X-Content-Type-Options", "nosniff"},
@@ -833,101 +835,84 @@ func TestClassifyNotification(t *testing.T) {
 	}
 }
 
-// TestHealthEndpoint_reasonDistinguishesUnreadyCause pins the reason body of
-// every 503 path, which TestHealthEndpoint_reflectsReadiness and
-// TestHealthEndpoint_reflectsKiroCliReadiness leave unchecked: both assert only
-// the status code, so the startup 503 and the kiro-cli 503s are
-// indistinguishable in the suite. The reason is the operator-facing diagnostic
-// (documented as surfacing to docker ps / the monitoring probe), so a
-// regression that emitted the wrong reason on the wrong branch -- or the same
-// reason for every branch -- would lose the "wait for startup" vs "still
-// installing" vs "alert: kiro-cli broken" signal with no failing test.
-//
-// The kiro-cli reasons come from the install manager's own exported constants,
-// so this pins the pass-through, not a copy of the wording: a manager that
-// reworded a reason changes both sides at once, while a handler that dropped the
-// reason and hardcoded one fails here.
+// TestHealthEndpoint_reasonDistinguishesUnreadyCause pins the reasons of every
+// 503 path: the startup and kiro-cli faults must stay distinguishable, since an
+// operator reads them to tell "wait for startup" from "still installing" from
+// "kiro-cli broken". Every standing fault is listed, startup first.
 func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
-	newMux := func(ready bool, verdict func() (bool, string)) *http.ServeMux {
+	reasonsOf := func(ready bool, verdict func() (bool, string)) (int, []string) {
+		t.Helper()
 		deps := newTestDeps(ready)
 		deps.kiroReady = verdict
 		mux, _, _ := mustRegisterRoutes(t, deps)
-		return mux
-	}
-	body := func(mux *http.ServeMux) (int, string) {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
-		return rec.Code, rec.Body.String()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
+		var body struct {
+			Status  string   `json:"status"`
+			Reasons []string `json:"reasons"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("health body %q: %v", rec.Body.String(), err)
+		}
+		return rec.Code, body.Reasons
 	}
 	unready := func(reason string) func() (bool, string) {
 		return func() (bool, string) { return false, reason }
 	}
+	const starting = "starting up or shutting down"
 
-	// Not-ready (startup/shutdown): the ready gate short-circuits before the
-	// kiro-cli check, so 503 with the startup reason regardless of the verdict.
-	code, b := body(newMux(false, unready(reasonUnavailable)))
-	if code != http.StatusServiceUnavailable || !strings.Contains(b, "starting up or shutting down") {
-		t.Errorf("not-ready: (status %d, body %q), want 503 with reason %q", code, b, "starting up or shutting down")
+	t.Run("starting with kiro-cli ready", func(t *testing.T) {
+		code, reasons := reasonsOf(false, func() (bool, string) { return true, "" })
+		if code != http.StatusServiceUnavailable || !slices.Equal(reasons, []string{starting}) {
+			t.Errorf("(status %d, reasons %q), want 503 with [%q]", code, reasons, starting)
+		}
+	})
+	for _, reason := range []string{reasonInstalling, reasonRetrying, reasonUnavailable, reasonSettings} {
+		t.Run("ready, "+reason, func(t *testing.T) {
+			code, reasons := reasonsOf(true, unready(reason))
+			if code != http.StatusServiceUnavailable || !slices.Equal(reasons, []string{reason}) {
+				t.Errorf("(status %d, reasons %q), want 503 with [%q] and no startup reason", code, reasons, reason)
+			}
+		})
+		t.Run("starting, "+reason, func(t *testing.T) {
+			code, reasons := reasonsOf(false, unready(reason))
+			if code != http.StatusServiceUnavailable || !slices.Equal(reasons, []string{starting, reason}) {
+				t.Errorf("(status %d, reasons %q), want 503 with [%q %q]", code, reasons, starting, reason)
+			}
+		})
 	}
-
-	// Ready, but the manager has no usable version. Each state reports a
-	// DIFFERENT reason: a first-boot download in flight is not an alert, an
-	// exhausted retry budget is, and unenforced required settings point at a
-	// third remedy entirely.
-	for _, reason := range []string{
-		reasonInstalling,
-		reasonRetrying,
-		reasonUnavailable,
-		reasonSettings,
-	} {
-		code, b = body(newMux(true, unready(reason)))
-		if code != http.StatusServiceUnavailable || !strings.Contains(b, reason) {
-			t.Errorf("kiro-cli %q: (status %d, body %q), want 503 with that reason", reason, code, b)
-		}
-		if strings.Contains(b, "starting up or shutting down") {
-			t.Errorf("kiro-cli %q: body %q reports the startup reason, which hides the real cause", reason, b)
-		}
+	// A refusal this app cannot name still answers 503, never a 200 with no reason.
+	for _, reason := range []string{"", "a reason no release names"} {
+		t.Run("unnamed kiro-cli reason "+strconv.Quote(reason), func(t *testing.T) {
+			code, reasons := reasonsOf(true, unready(reason))
+			if code != http.StatusServiceUnavailable || !slices.Equal(reasons, []string{reasonUnavailable}) {
+				t.Errorf("(status %d, reasons %q), want 503 with [%q]", code, reasons, reasonUnavailable)
+			}
+		})
 	}
 }
 
-// TestHealthEndpoint_envelope pins the wire shape, key order ("status" before
-// "reason") included. The handler sets no-store itself, because a cached "ok" keeps
-// traffic arriving at an instance that has begun draining (RFC 9111 heuristic
-// freshness), so this asserts against the bare mux. The byte-exact bodies also pin
-// the ready document (an absent tools key means disabled, not degraded) and the
-// status codes, which are all the Docker HEALTHCHECK reads.
-func TestHealthEndpoint_envelope(t *testing.T) {
+// TestHealthEndpoint_body pins the /healthz answer byte for byte: the status and
+// reasons the health library writes, followed by this app's informational tools,
+// tools_missing and sandbox keys, which never change the code.
+func TestHealthEndpoint_body(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		deps       *routeDeps
 		wantStatus int
 		wantBody   string
 	}{
-		{"unready", newTestDeps(false), http.StatusServiceUnavailable, `{"status":"unready","reason":"starting up or shutting down"}`},
+		{"unready", newTestDeps(false), http.StatusServiceUnavailable, `{"status":"unhealthy","reasons":["starting up or shutting down"]}`},
 		{"ready", newTestDeps(true), http.StatusOK, `{"status":"ok"}`},
-		// The informational tools field rides on the 503 bodies too: tool
-		// convergence never GATES readiness, but an operator diagnosing an unready
-		// instance needs to see whether tools are still syncing -- and that is
-		// exactly the moment the field used to disappear, because both unready paths
-		// returned before it was attached. Without this row, reverting
-		// handleHealth's healthResponse to the pre-fix early-return shape leaves the
-		// whole suite green.
-		{"unready carries the informational tools state", unreadyDepsWithTools(), http.StatusServiceUnavailable, `{"status":"unready","reason":"starting up or shutting down","tools":"syncing"}`},
-		// The whole-tree convergence count is the SECOND tools question, and the
-		// disagreement is the point: the last repair succeeded (tools "ok") while
-		// one enabled tool is still missing. Before this field existed, "ok" was
-		// the only signal and read as whole-tree health.
+		{"unready carries the informational tools state", unreadyDepsWithTools(), http.StatusServiceUnavailable, `{"status":"unhealthy","reasons":["starting up or shutting down"],"tools":"syncing"}`},
+		// The last repair succeeded (tools "ok") while one enabled tool is still
+		// missing: the count is the second, whole-tree question.
 		{"a partial repair reports ok alongside an outstanding count", depsWithToolsMissing(true, 1), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":1}`},
-		// Zero MUST be emitted rather than dropped: it is the converged answer,
-		// and omitempty on a plain int would erase exactly the good news.
+		// Zero is the converged answer, so it is written, never dropped.
 		{"a converged tree reports zero rather than omitting it", depsWithToolsMissing(true, 0), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":0}`},
-		// Unknown is absent, so "not counted yet" can never be misread as
-		// converged.
 		{"an uncounted tree omits the field", depsWithToolsMissing(false, 0), http.StatusOK, `{"status":"ok","tools":"ok"}`},
-		// The sandbox state is informational and last, on 200 and 503 alike: an
-		// operator reads "unavailable" while the instance is still starting.
 		{"ready carries the sandbox state last", withSandbox(depsWithToolsMissing(true, 0), sandboxAvailable), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":0,"sandbox":"available"}`},
-		{"unready carries the sandbox state", withSandbox(newTestDeps(false), sandboxUnavailable), http.StatusServiceUnavailable, `{"status":"unready","reason":"starting up or shutting down","sandbox":"unavailable"}`},
+		{"unready carries the sandbox state", withSandbox(newTestDeps(false), sandboxUnavailable), http.StatusServiceUnavailable, `{"status":"unhealthy","reasons":["starting up or shutting down"],"sandbox":"unavailable"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mux, _, _ := mustRegisterRoutes(t, tc.deps)
@@ -937,14 +922,90 @@ func TestHealthEndpoint_envelope(t *testing.T) {
 			if rec.Code != tc.wantStatus {
 				t.Errorf("health status = %d, want %d", rec.Code, tc.wantStatus)
 			}
-			got := strings.TrimSpace(rec.Body.String())
-			if got != tc.wantBody {
-				t.Errorf("raw health body = %q, want %q (byte-exact: the key ORDER is the contract)", got, tc.wantBody)
+			if got := strings.TrimSpace(rec.Body.String()); got != tc.wantBody {
+				t.Errorf("health body = %q, want %q", got, tc.wantBody)
 			}
-			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
-				t.Errorf("Cache-Control = %q, want no-store: a cached readiness verdict defeats the gate", got)
+			for header, want := range map[string]string{
+				"Cache-Control":          "no-store",
+				"Content-Type":           "application/json",
+				"X-Content-Type-Options": "nosniff",
+			} {
+				if got := rec.Header().Get(header); got != want {
+					t.Errorf("%s = %q, want %q", header, got, want)
+				}
 			}
 		})
+	}
+}
+
+// TestHealthEndpoint_matchesTheLibrary compares the answer with no informational
+// key against health.CheckHandler's own output for the same check, so a library
+// change to the body, the code or a header shows here rather than in a probe.
+func TestHealthEndpoint_matchesTheLibrary(t *testing.T) {
+	for _, ready := range []bool{true, false} {
+		mux, _, _ := mustRegisterRoutes(t, newTestDeps(ready))
+		got := httptest.NewRecorder()
+		mux.ServeHTTP(got, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
+
+		want := httptest.NewRecorder()
+		health.CheckHandler(health.Check{Signal: fixedSignal(ready), Reason: "starting up or shutting down"}).
+			ServeHTTP(want, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
+
+		if got.Code != want.Code || got.Body.String() != want.Body.String() {
+			t.Errorf("ready=%v: app answers %d %q, the library %d %q", ready, got.Code, got.Body.String(), want.Code, want.Body.String())
+		}
+		for _, header := range []string{"Cache-Control", "Content-Type", "X-Content-Type-Options"} {
+			if got.Header().Get(header) != want.Header().Get(header) {
+				t.Errorf("ready=%v: %s = %q, the library sets %q", ready, header, got.Header().Get(header), want.Header().Get(header))
+			}
+		}
+	}
+}
+
+// fixedSignal is a health.Signal with a set answer.
+type fixedSignal bool
+
+func (s fixedSignal) Healthy() bool { return bool(s) }
+
+// TestHealthEndpoint_methods pins the route: GET and HEAD answer the verdict,
+// every other method 405 with no verdict, and the retired /api/health path is
+// no health route at all.
+func TestHealthEndpoint_methods(t *testing.T) {
+	for _, ready := range []bool{true, false} {
+		mux, _, csp := mustRegisterRoutes(t, newTestDeps(ready))
+		h := buildHandler(mux, nil, csp, nil)
+		wantCode := http.StatusOK
+		if !ready {
+			wantCode = http.StatusServiceUnavailable
+		}
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, loopbackRequest(method, healthPath, ""))
+			if rec.Code != wantCode {
+				t.Errorf("ready=%v %s %s: status %d, want %d", ready, method, healthPath, rec.Code, wantCode)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("ready=%v %s %s: Cache-Control = %q, want no-store", ready, method, healthPath, got)
+			}
+		}
+		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, loopbackRequest(method, healthPath, ""))
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Errorf("ready=%v %s %s: status %d, want 405", ready, method, healthPath, rec.Code)
+			}
+			if got := rec.Header().Get("Allow"); got != "GET, HEAD" {
+				t.Errorf("ready=%v %s %s: Allow = %q, want %q", ready, method, healthPath, got, "GET, HEAD")
+			}
+			if strings.Contains(rec.Body.String(), `"status"`) {
+				t.Errorf("ready=%v %s %s: body %q carries a verdict", ready, method, healthPath, rec.Body.String())
+			}
+		}
+	}
+
+	mux, _, _ := mustRegisterRoutes(t, newTestDeps(true))
+	if _, pat := mux.Handler(httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody)); pat != "/" {
+		t.Errorf("/api/health routed to pattern %q, want the static catch-all %q", pat, "/")
 	}
 }
 
@@ -1448,7 +1509,7 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 	}
 
 	// Health stays reachable and reports the informational tools state.
-	hreq := httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody)
+	hreq := httptest.NewRequest(http.MethodGet, healthPath, http.NoBody)
 	hrec := httptest.NewRecorder()
 	mux.ServeHTTP(hrec, hreq)
 	if hrec.Code != http.StatusOK || !strings.Contains(hrec.Body.String(), `"tools":"syncing"`) {
@@ -1513,7 +1574,7 @@ func TestComposeGate_narrowsToCreateOnly(t *testing.T) {
 		{name: "POST create is gated", method: http.MethodPost, path: terminal.SessionsPath, wantCode: http.StatusServiceUnavailable, wantNext: false},
 		{name: "GET list passes through", method: http.MethodGet, path: terminal.SessionsPath, wantCode: http.StatusCreated, wantNext: true},
 		{name: "DELETE close passes through", method: http.MethodDelete, path: terminal.SessionsPath + "/abc", wantCode: http.StatusCreated, wantNext: true},
-		{name: "POST to another path passes through", method: http.MethodPost, path: "/api/health", wantCode: http.StatusCreated, wantNext: true},
+		{name: "POST to another path passes through", method: http.MethodPost, path: healthPath, wantCode: http.StatusCreated, wantNext: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

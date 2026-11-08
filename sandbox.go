@@ -50,7 +50,7 @@ var appArmorAttrPaths = []string{"/proc/self/attr/apparmor/current", "/proc/self
 // a test can prove a hung bwrap cannot hold startup.
 var sandboxProbeTimeout = 5 * time.Second
 
-// The sandbox states /api/health serves; a published contract like the
+// The sandbox states /healthz serves; a published contract like the
 // readiness reasons.
 const (
 	sandboxOff         = "off"

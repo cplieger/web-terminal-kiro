@@ -88,7 +88,7 @@ func TestSessionCommand_pathReachesArgvOnlyAsDollarZero(t *testing.T) {
 // the mapping that produces them. The install manager reports a TYPED
 // reason (pin.Reason) because the wording a consumer shows its own
 // users is the consumer's; these strings are a published contract in three
-// directions: /api/health's reason field, the 503 body of POST
+// directions: /healthz's reasons list, the 503 body of POST
 // /api/sessions, and the repair hook's verdict -- all read by an operator
 // and by a monitoring probe.
 //
@@ -104,7 +104,7 @@ func TestKiroReasonTextIsTheClientContract(t *testing.T) {
 		want string
 	}{
 		// Only ready renders empty; every withheld verdict below must carry text,
-		// because /api/health and the create gate both key on a non-empty reason to
+		// because /healthz and the create gate both key on a non-empty reason to
 		// report the fault.
 		{pin.ReasonReady, ""},
 		{pin.ReasonInstalling, "kiro-cli installing"},
@@ -294,7 +294,7 @@ func TestKiroRescan_loopbackOnlyAndPostOnly(t *testing.T) {
 // TestKiroRescan_reportsVerdictNotErrorText pins the repair hook's two
 // outcomes: 200 when a version is active afterwards, and 503 carrying the
 // manager's own readiness reason when none is -- the same verdict
-// /api/health serves. The error text deliberately stays out of the body:
+// /healthz serves. The error text deliberately stays out of the body:
 // it can name a filesystem path, and this response is not the place to
 // widen what an unauthenticated-port caller learns about the volume.
 func TestKiroRescan_reportsVerdictNotErrorText(t *testing.T) {
@@ -456,7 +456,7 @@ func TestStartKiroCLI_managedWiringActivatesAnInstalledVersion(t *testing.T) {
 // step of the reason contract: the MANAGED runtime renders the library's
 // typed reason through kiroReasonText rather than serving pin's own
 // wording. Replacing the managed closure's kiroReasonText(why) with
-// why.String() changes what /api/health, the 503 body of POST
+// why.String() changes what /healthz, the 503 body of POST
 // /api/sessions, and the repair hook all serve, with the whole suite
 // green.
 //

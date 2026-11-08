@@ -255,7 +255,7 @@ done
 # half comes from go.work (the LOCAL engine) and the client half from the overlay
 # above, so a dev build of an unpublished engine is exactly where the two floors
 # can disagree. Without this the pairing fails at first connect (close 4002) with
-# /api/health green and no build-time diagnostic. Built and then invoked, never
+# /healthz green and no build-time diagnostic. Built and then invoked, never
 # `go run`, which collapses the gate's exit 2 ("the gate cannot read the client's
 # declaration, do NOT bump a pin") into a plain 1. The client half is read from
 # the engine's own manifest by the gate itself (encoding/json), so this script

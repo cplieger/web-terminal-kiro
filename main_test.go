@@ -264,7 +264,7 @@ func TestStartTools_configDirMissing(t *testing.T) {
 // of a production subsystem, not the deliberate out-of-container disable, so
 // they follow degraded-not-dead: the engine stays nil (no /api/tools mount) and
 // syncing reports false (sessions ungated) but state() reports "degraded" so
-// /api/health carries the informational tools field instead of omitting it and
+// /healthz carries the informational tools field instead of omitting it and
 // presenting a failed subsystem as intentionally off. Serial: mutates the global
 // default logger.
 func TestStartTools_configDirUnusable(t *testing.T) {
@@ -321,7 +321,7 @@ func TestStartTools_configDirUnusable(t *testing.T) {
 // instead of taking the server down. Unlike the missing-config-dir path (an
 // intentionally disabled subsystem: no engine, empty state, health omits the
 // tools field entirely), a FAILED production subsystem must stay visible: the
-// returned runtime carries state "degraded" so /api/health reports
+// returned runtime carries state "degraded" so /healthz reports
 // {"status":"ok","tools":"degraded"} per the documented
 // tools=syncing|ok|degraded contract, while the engine stays nil and syncing
 // reports false so sessions remain ungated.
@@ -372,7 +372,7 @@ func TestStartTools_engineStartFailure(t *testing.T) {
 	deps.toolsState = rt.state
 	mux, _, _ := mustRegisterRoutes(t, deps)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tools":"degraded"`) {
 		t.Errorf("health after failed engine start = %d %s, want 200 with tools:degraded", rec.Code, rec.Body.String())
 	}
@@ -526,7 +526,7 @@ func TestStartTools_rootIntegrityRefusalDegrades(t *testing.T) {
 				t.Error("syncing reports true after a refusal; sessions must remain ungated (degraded-not-dead)")
 			}
 			if got := rt.state(); got != toolsStateDegraded {
-				t.Errorf("state = %q, want %q so /api/health reports the failed subsystem instead of omitting the field", got, toolsStateDegraded)
+				t.Errorf("state = %q, want %q so /healthz reports the failed subsystem instead of omitting the field", got, toolsStateDegraded)
 			}
 			// The check runs before anything is written: no seeded manifest, no
 			// bin/ inside the tree it refused.
@@ -1025,7 +1025,7 @@ func TestParseAllowedHosts_allInvalidFailsClosed(t *testing.T) {
 // branch, which the fakeCLI-based tests never reach (their stub always
 // exists): when the configured kiro-cli path does not resolve (a failed
 // first-boot install on the persistent volume), the wrapper exits non-zero
-// with the operator-facing install hint -- naming /api/health -- and never
+// with the operator-facing install hint -- naming /healthz -- and never
 // falls through to the device-flow login or chat. Without this branch the
 // user would instead see the misleading "not signed in" explainer followed
 // by a shell command-not-found error (verified by running the script with
@@ -1041,8 +1041,8 @@ func TestSessionCommand_missingBinaryAborts(t *testing.T) {
 	if !strings.Contains(string(out), "kiro-cli is not installed or not on PATH") {
 		t.Errorf("missing the operator-facing install hint; output: %s", out)
 	}
-	if !strings.Contains(string(out), "/api/health") {
-		t.Errorf("hint does not point at /api/health; output: %s", out)
+	if !strings.Contains(string(out), "/healthz") {
+		t.Errorf("hint does not point at /healthz; output: %s", out)
 	}
 	if strings.Contains(string(out), "CHAT_STARTED") || strings.Contains(string(out), "device-flow sign-in") {
 		t.Errorf("guard fell through to login/chat despite a missing binary; output: %s", out)
@@ -1106,7 +1106,7 @@ func jobEvent(kind, state string) *toolbelt.Job {
 }
 
 // TestToolsStatus_reducerTransitions pins the whole documented state machine of
-// the /api/health tools field, one row per transition the reducer must or must
+// the /healthz tools field, one row per transition the reducer must or must
 // NOT make. Two properties carry the finding this reducer exists for:
 //
 //   - degraded -> ok is REACHABLE. The field used to latch the boot verdict, so
@@ -1361,7 +1361,7 @@ func TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates(t *testing.T) {
 				stage, rec.Code, rec.Body.String())
 		}
 		hrec := httptest.NewRecorder()
-		health(hrec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+		health(hrec, httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
 		if hrec.Code != http.StatusOK {
 			t.Fatalf("%s: health = %d (body %s), want 200; tool convergence never gates readiness",
 				stage, hrec.Code, hrec.Body.String())
@@ -1426,7 +1426,7 @@ func TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates(t *testing.T) {
 
 // TestToolsStatus_callbackAndHealthReadAreRaceClean pins the concurrency
 // contract the reducer was written for: OnJobChanged fires from toolbelt's job
-// worker (under its queue lock) while /api/health reads the field on request
+// worker (under its queue lock) while /healthz reads the field on request
 // goroutines. Meaningful under -race, which CI runs; without it the assertions
 // still catch a torn or unexpected value.
 func TestToolsStatus_callbackAndHealthReadAreRaceClean(t *testing.T) {
@@ -1459,7 +1459,7 @@ func TestToolsStatus_callbackAndHealthReadAreRaceClean(t *testing.T) {
 		wg.Go(func() {
 			for range rounds {
 				rec := httptest.NewRecorder()
-				health(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+				health(rec, httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
 				if rec.Code != http.StatusOK {
 					t.Errorf("health during concurrent job transitions = %d, want 200", rec.Code)
 					return
@@ -2321,7 +2321,7 @@ func TestStartTools_logsTheGatedWindowOpening(t *testing.T) {
 // Serial: capture.Default mutates the process-global default logger, and t.Setenv
 // forbids t.Parallel.
 func TestWarnIfToolsBinUnreachable(t *testing.T) {
-	const warnMsg = "the tools tree is not on PATH: every tool the manifest installs will be invisible to kiro-cli and to terminal sessions, even though /api/health will report tools=ok"
+	const warnMsg = "the tools tree is not on PATH: every tool the manifest installs will be invisible to kiro-cli and to terminal sessions, even though /healthz will report tools=ok"
 
 	t.Run("tools bin on PATH stays silent", func(t *testing.T) {
 		toolsDir := t.TempDir()

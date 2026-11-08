@@ -327,7 +327,7 @@ COPY . ./
 # so their pairing is governed by the engine's exported wire-compatibility
 # floors, not version strings. Assert both directional floors at build time —
 # a declared-incompatible pairing would refuse every session at first connect
-# (close code 4002) while /api/health stays green, so fail HERE instead.
+# (close code 4002) while /healthz stays green, so fail HERE instead.
 # Client constants come from the vendored artifact's own language-neutral
 # manifest (`wire-compatibility.json` at its package root, published via the
 # npm `files` list and the `./wire-compatibility.json` export subpath — the
@@ -420,7 +420,7 @@ RUN sh scripts/css-bundle.sh static-src/node_modules/@cplieger/web-terminal-ui/c
 # the released cell.json rather than by version strings, and a bump on either
 # side that moves the cell must fail HERE: the alternative is a silently
 # reflowed terminal, or an emboldened stand-in drawn over box drawing, behind a
-# green build and a healthy /api/health. It runs after the fonts AND after the
+# green build and a healthy /healthz. It runs after the fonts AND after the
 # CSS bundle above, because what it compares is the bundle this build just
 # served plus the assets beside it.
 #
@@ -607,7 +607,7 @@ WORKDIR /workspace
 EXPOSE 9848
 
 # start-period is the SELECTED startup tolerance for reaching a HEALTHY
-# /api/health, which means a completed kiro-cli install; it satisfies the
+# /healthz, which means a completed kiro-cli install; it satisfies the
 # smoke-harness sizing rule (tests/image-smoke.conf SMOKE_TIMEOUT 1260 = 1200 +
 # two 30s probe intervals). KEPT AT 20m across the move of the installer into the
 # server: the work the budget has to cover is the same ~528MB download plus
@@ -650,13 +650,13 @@ EXPOSE 9848
 # each), and the settings calls (10s each: one required before publication, then
 # four against the active binary). The manager then retries a failed attempt up to
 # 4 times with 30s/60s/120s backoff, so a persistently failing install keeps the
-# server up for the container's lifetime and reports the reason on /api/health.
+# server up for the container's lifetime and reports the reason on /healthz.
 #
 # THE BUDGET IS DELIBERATELY BELOW THE WORST CASE (decided 2026-07, unchanged by
 # the move). The two budgets protect different things and only one has teeth:
 #   - At RUNTIME `unhealthy` is cosmetic. The restart policy acts on process exit,
 #     not health status, so a very slow first boot shows unhealthy, keeps
-#     downloading, and converges once a version is active. /api/health is
+#     downloading, and converges once a version is active. /healthz is
 #     reachable throughout and names the phase, so the state is diagnosable while
 #     it lasts. Tool installs converge in the BACKGROUND alongside it (only
 #     session creation waits on them) and report through the informational "tools"
@@ -680,8 +680,8 @@ EXPOSE 9848
 # timeout on either side of the exec changes.
 # Under `restart: unless-stopped`, health failures are reported
 # but do not restart the container (restart policies react to process exit,
-# not health status); under a liveness-acting orchestrator, wire /api/health
-# to a readinessProbe.
+# not health status); under a liveness-acting orchestrator, wire /healthz
+# to a readinessProbe and a tcpSocket probe on the port for liveness.
 # DL3025 wants JSON notation, which cannot express this: the URL is built with
 # the shell parameter expansion ${LISTEN_ADDR##*:} to read the port out of the
 # runtime listen address, and exec form performs no expansion at all -- it would
@@ -690,6 +690,6 @@ EXPOSE 9848
 # arise here.
 # hadolint ignore=DL3025
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20m \
-    CMD curl -sfS --max-time 4 "http://127.0.0.1:${LISTEN_ADDR##*:}/api/health"
+    CMD curl -sfS --max-time 4 "http://127.0.0.1:${LISTEN_ADDR##*:}/healthz"
 
 ENTRYPOINT ["/opt/web-terminal-kiro/entrypoint.sh"]

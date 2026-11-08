@@ -78,11 +78,11 @@ done
 
 # --- KIRO_CLI_PATH is GONE, on both surfaces --------------------------------
 # It was an operator env var that stood the install manager down and dropped
-# kiro-cli readiness from /api/health; re-adding a READ brings that mode back
+# kiro-cli readiness from /healthz; re-adding a READ brings that mode back
 # silently, so its absence is asserted on both surfaces a developer or operator
 # would touch: the Go sources, and the README table.
 if grep -rq --include='*.go' --exclude-dir='.*' 'KIRO_CLI_PATH' "$GO_SOURCE_ROOT"; then
-  no "KIRO_CLI_PATH in Go sources" "a Go source still mentions KIRO_CLI_PATH; reading it stands the install manager down and takes kiro-cli readiness off /api/health"
+  no "KIRO_CLI_PATH in Go sources" "a Go source still mentions KIRO_CLI_PATH; reading it stands the install manager down and takes kiro-cli readiness off /healthz"
 else
   ok "no Go source mentions KIRO_CLI_PATH: the install manager is the only source of the binary path"
 fi

@@ -63,8 +63,8 @@ func TestCanonicalPathGuard_refusesNonCanonicalControlPlanePath(t *testing.T) {
 		// changed.
 		why string
 	}{
-		{"health, empty segment", http.MethodGet, "/api//health", "307 to /api/health; the baked HEALTHCHECK curl exits 0 and reports the container healthy without ever consulting readiness"},
-		{"health, dot segment", http.MethodGet, "/api/./health", "307 to /api/health, same probe"},
+		{"health, empty segment", http.MethodGet, "//healthz", "307 to /healthz; the baked HEALTHCHECK curl exits 0 and reports the container healthy without ever consulting readiness"},
+		{"health, dot segment", http.MethodGet, "/./healthz", "307 to /healthz, same probe"},
 		{"tools exact, empty segment", http.MethodGet, "/api//tools", "307 to /api/tools; the README's inventory read returns nothing and succeeds"},
 		{"tools exact, trailing dot", http.MethodGet, toolsPath + "/.", "307 to /api/tools"},
 		{"tools exact, dot-dot segment", http.MethodGet, "/api/x/../tools", "307 to /api/tools"},
