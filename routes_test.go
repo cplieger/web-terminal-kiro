@@ -1003,9 +1003,14 @@ func TestHealthEndpoint_methods(t *testing.T) {
 		}
 	}
 
-	mux, _, _ := mustRegisterRoutes(t, newTestDeps(true))
-	if _, pat := mux.Handler(httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody)); pat != "/" {
-		t.Errorf("/api/health routed to pattern %q, want the static catch-all %q", pat, "/")
+	mux, _, csp := mustRegisterRoutes(t, newTestDeps(true))
+	rec := httptest.NewRecorder()
+	buildHandler(mux, nil, csp, nil).ServeHTTP(rec, loopbackRequest(http.MethodGet, "/api/health", ""))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET /api/health: status %d, want 404", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), `"status"`) {
+		t.Errorf("GET /api/health: body %q carries a verdict", rec.Body.String())
 	}
 }
 

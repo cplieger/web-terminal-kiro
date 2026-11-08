@@ -460,12 +460,7 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 		if n, ok := deps.toolsMissing(); ok {
 			body.ToolsMissing = &n
 		}
-		if err := json.Unmarshal(answer.body.Bytes(), &body); err != nil {
-			// The library's own answer still carries the verdict; only the extra keys are lost.
-			w.WriteHeader(answer.code)
-			_, _ = w.Write(answer.body.Bytes())
-			return
-		}
+		_ = json.Unmarshal(answer.body.Bytes(), &body)
 		w.WriteHeader(answer.code)
 		_ = json.NewEncoder(w).Encode(body)
 	}
