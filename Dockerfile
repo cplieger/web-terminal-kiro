@@ -545,10 +545,12 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
 # container recreation. It does NOT hold the kiro-cli install: server-managed
 # versions live separately under /config/tools/kiro-cli-versions.
 # Those paths are fixed and version-addressed, so kiro-cli's per-session binary
-# pin (a copy under the data dir) protects nothing; entrypoint.sh purges old ones.
+# pin (a copy under the data dir) protects nothing; the server purges old ones.
 ENV HOME=/config/home
 ENV KIRO_SKIP_BINARY_PINNING=1
-# PATH leads with the engine-managed bin dir. runtimes/{go,node}/bin stay off
+# PATH leads with the kiro-cli install manager's link dir, so the pinned kiro-cli
+# keeps its bare name over a tools-engine tool of that name, then the
+# engine-managed bin dir. runtimes/{go,node}/bin stay off
 # it: they would sit ahead of /usr/bin, this entrypoint never creates or repairs
 # them, and a binary planted while a tree was group/other-writable stays
 # executable after the mode is tightened. A restored pre-toolbelt volume needs
@@ -556,7 +558,7 @@ ENV KIRO_SKIP_BINARY_PINNING=1
 # tools/go/bin stays: it is GOPATH/bin, where `go install` lands without the
 # engine's GOBIN. Deleting a user's own go-installed tools would break the dev
 # box, and anyone able to plant there already holds /config/home/.ssh.
-ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PATH="/config/tools/kiro-cli-bin:/config/tools/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # No GOROOT/GOBIN: the engine installs Go under versioned opt/go/<ver>/ trees
 # and sets GOBIN itself at install time; the toolchain derives GOROOT.
 ENV GOPATH="/config/tools/go"

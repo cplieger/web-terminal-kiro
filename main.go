@@ -24,6 +24,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -65,12 +66,9 @@ func parseTrustedProxies() []netip.Prefix {
 			"invalid_count", len(invalid),
 			"hint", "each entry must be a CIDR (e.g. 192.0.2.0/28) or a bare IP (e.g. 192.0.2.5)")
 	}
-	// A default route (0.0.0.0/0 or ::/0) parses cleanly but can never describe a proxy
-	// SET: every hop it covers is trusted, so the walk exhausts and falls back to the
-	// socket peer (the proxy, exactly what setting this var was meant to stop logging).
-	// ::/0 covers IPv4 too through the mapped form, but 0.0.0.0/0 never covers an IPv6
-	// entry, so there a forged IPv6 X-Forwarded-For becomes the logged client_ip. Warn by
-	// PREFIX LENGTH only, never the raw entry.
+	// A default route trusts every hop, so client_ip logs the proxy itself, and
+	// 0.0.0.0/0 never covers an IPv6 entry, so there a forged IPv6 X-Forwarded-For
+	// chooses the logged client. Warn by prefix length only, never the raw entry.
 	for _, p := range prefixes {
 		if p.Bits() == 0 {
 			slog.Warn(key+" contains a default route (0.0.0.0/0 or ::/0): every peer it covers counts as a proxy, so client_ip logs the proxy itself, and under 0.0.0.0/0 a forged IPv6 X-Forwarded-For can choose the logged client",
@@ -150,11 +148,8 @@ func parseCatalogRefresh(raw string) time.Duration {
 	switch strings.ToLower(trimmed) {
 	case "", "off", "disabled":
 	default:
-		// Parse the TRIMMED but NOT lowercased value: scheduler.ParseInterval
-		// lowercases only for the off/disabled sentinels and hands the trimmed
-		// string to time.ParseDuration, whose units are case-sensitive. Gating on
-		// a lowercased copy would pass "24H" through to the library's
-		// value-echoing warning.
+		// Trimmed, not lowercased: time.ParseDuration units are case-sensitive, and a
+		// lowercased "24H" would pass into the library's value-echoing warning.
 		if d, err := time.ParseDuration(trimmed); err != nil || d < 0 {
 			slog.Warn("unusable "+catalogRefreshKey+"; using the built-in catalog refresh cadence",
 				"hint", `use a Go duration (e.g. 24h, 90m) or "off" to disable the schedule`)
@@ -325,17 +320,10 @@ func checkWorkDir(workDir string) error {
 // lifecycle. Keeping the body here rather than in main is what lets the deferred
 // teardown run on every failure path.
 func run() error {
-	// First: a kiro-cli session lock written before this instant belongs to a dead boot
-	// (sweepStaleKiroLocks).
-	bootTime := time.Now()
 	setupLogging()
 
-	// The shutdown context every long-lived goroutine in run() keys its exit
-	// off: the tools convergence watcher and boot-convergence waiter inside
-	// startTools, the session-title poller, the tab restorer, and the server's
-	// request contexts via BaseContext. The pre-drain hook cancels it. It is
-	// created before startTools because a goroutine handed context.Background()
-	// has an exit path that can never fire. startKiroCLI keeps its own root.
+	// Every long-lived goroutine in run() exits on this context; the pre-drain hook
+	// cancels it. Created before startTools so no goroutine gets context.Background().
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
 
@@ -354,11 +342,8 @@ func run() error {
 	}
 	scrollback := resolveScrollback()
 
-	// ONE read for the ONE tools root, handed to both co-owners below: the toolbelt
-	// engine (its ConfigDir and ToolsDir) and the kiro-cli install manager (its
-	// install Root). A SECOND derivation is what previously split toolbelt's
-	// manifest from the tree it describes. Empty outside the container, where
-	// startTools falls back to <configDir>/tools.
+	// One read of the tools root, for toolbelt (ConfigDir and ToolsDir) and the
+	// kiro-cli install manager (Root). Empty outside the container.
 	kiroToolsDir := envx.String("KIRO_CLI_TOOLS_DIR")
 	ghToken, ghTokenEnv := githubToken()
 
@@ -405,11 +390,8 @@ func run() error {
 		slog.Info("appending extra kiro-cli chat flags", "chat_args_count", len(chatArgs))
 	}
 
-	// Concurrent sessions are uncapped, like browser tabs, and idle reaping is deliberately
-	// OFF: terminal state lives only in the in-memory VT buffer and replays on reconnect,
-	// so a session outliving its browser IS the resume feature. Any reaper window short
-	// enough to bound a runaway creator is short enough to break that; the create-rate
-	// limiter in routes.go is the bound chosen instead.
+	// No session cap and no idle reaping: a session outliving its browser is the
+	// resume feature. The create-rate limiter in routes.go is the bound instead.
 	tainted := os.Getenv("KIRO_CLI_TOOLS_TAINTED") == "1"
 	kiro := startKiroCLI(&baseKiro{
 		version:            envx.String("KIRO_CLI_VERSION"),
@@ -421,7 +403,7 @@ func run() error {
 		trustedInstallUIDs: trustedInstallUIDs,
 	})
 	sandbox := startSandbox(baseCtx, parseSandboxOptIn(), workDir, envx.String("HOME"))
-	tuning := newEngineTuning(parseHighThroughput(), envx.String(nodeValidatedKey), kiroDataHome(), kiro.engineBinary)
+	tuning := newEngineTuning(parseHighThroughput(), envx.String(nodeValidatedKey), kiroDataDir(), kiro.engineBinary)
 
 	mux := http.NewServeMux()
 	var ready httpserver.Ready
@@ -459,13 +441,8 @@ func run() error {
 			" rebuild the image — go generate ./... plus the Dockerfile static build. The container will crash-loop under its restart policy until it is rebuilt.)", err))
 	}
 
-	// Orphan reaping is the CONTAINER INIT's job (`init: true`, tini at pid 1), so no
-	// reaper is installed here — and the engine's terminal.StartZombieReaper is not
-	// merely redundant, it is INCOMPATIBLE: it sets PR_SET_CHILD_SUBREAPER, which
-	// re-parents orphans onto this server even behind an init shim, and its sweep
-	// exempts only pids in the engine's own spawn registry. This app also spawns
-	// through os/exec outside that registry, so the sweep can win the race for one of
-	// THOSE exit statuses and make successful work report as failed.
+	// Orphan reaping is the container init's job (`init: true`): os/exec waits only
+	// for the children this process started, so at PID 1 every orphan stays a zombie.
 	if os.Getpid() == 1 {
 		slog.Warn("running as PID 1 with no init: orphaned session processes will accumulate as zombies for the container's lifetime",
 			"hint", "add `init: true` to the compose service (or run with `docker run --init`) so an init at PID 1 reaps orphans; the shipped compose.yaml marks it required")
@@ -503,11 +480,8 @@ func run() error {
 		return atStage(stageListen, fmt.Errorf("listen on %s: %w", addr, err))
 	}
 
-	// httpserver.New supplies the streaming-safe timeout defaults the hijacked /ws
-	// stream needs. WithSlogErrorLog keeps net/http's OWN diagnostics inside the slog
-	// stream this app documents as its only observability channel; a nil ErrorLog routes
-	// them through the legacy log package instead, in a shape Loki cannot query alongside
-	// the access log. Warn, not Error: net/http's accept path retries itself.
+	// WithSlogErrorLog keeps net/http's own diagnostics in the slog stream; Warn, not
+	// Error, since net/http's accept path retries itself.
 	srv := httpserver.New(
 		buildHandler(mux, trustedProxies, cspPolicy, hostPolicy),
 		httpserver.WithSlogErrorLog(slog.LevelWarn),
@@ -527,7 +501,7 @@ func run() error {
 	}
 	// The sweep goes first: a restored tab resuming onto a stale lock would refuse to open.
 	go func() {
-		sweepStaleKiroLocks(baseCtx, pollers.titles.sessionsRoot, bootTime)
+		sweepStaleKiroLocks(baseCtx, pollers.titles.sessionsRoot)
 		if restorer != nil {
 			restorer.run(baseCtx, mgr, func() bool {
 				kiroOK, _ := kiro.ready()
@@ -543,12 +517,8 @@ func run() error {
 	slog.Info("web-terminal-kiro listening", "addr", addr, "work_dir", workDir)
 	ready.Set(true)
 
-	// The pre-drain hook flips readiness false and cancels in-flight request
-	// contexts before httpserver.Run drains, so /api/health reports 503 during the
-	// drain window. cancelBase unblocks the always-open /api/sessions/events SSE
-	// handler (it returns only on r.Context().Done(); srv.Shutdown does not
-	// interrupt an active stream, so without this the drain blocks the full
-	// grace window whenever a tab is open).
+	// The pre-drain hook flips readiness false and cancels baseCtx, which ends the
+	// open /api/sessions/events streams; srv.Shutdown does not interrupt them.
 	if err := httpserver.Run(ctx, srv, ln, shutdownSessions,
 		httpserver.WithShutdownGrace(shutdownGrace),
 		httpserver.WithPreDrain(func(context.Context) {
@@ -572,20 +542,23 @@ func run() error {
 }
 
 // The layout facts this app brings to the kiro-cli install: where the convenience
-// symlinks go, and what its own SHELL-era installer left on the volume.
+// symlink goes, and what its own SHELL-era installer left on the volume.
 const (
-	// kiroLinkDir holds the non-authoritative convenience symlink a `docker exec`
-	// shell resolves kiro-cli through. It is co-owned by the
-	// toolbelt engine, which publishes bin/<tool> symlinks of its own — which is
-	// why the legacy sweep names its targets instead of scanning it.
-	kiroLinkDir = "bin"
+	// kiroLinkDir holds the convenience symlink a `docker exec` shell resolves
+	// kiro-cli through. The install manager is its only writer, and the image PATH
+	// lists it before toolbeltBinDir, so a toolbelt tool named kiro-cli cannot
+	// take the bare name from the pinned binary.
+	kiroLinkDir = "kiro-cli-bin"
+	// toolbeltBinDir is the toolbelt engine's link dir; legacy dispatchers and a
+	// manager-shaped kiro-cli link can sit here (retractFormerKiroLink).
+	toolbeltBinDir = "bin"
 	// legacyStagePrefix prefixed the shell installer's staging trees directly under
 	// the tools dir, so anything matching this is an orphan its EXIT trap missed on
 	// a SIGKILL. It ends in a dot so it cannot match the install root or the marker
 	// below.
 	legacyStagePrefix = ".kiro-cli-stage."
 	// legacyPurgeMarker records that the one-time migration sweep completed, so it
-	// runs ONCE rather than walking the co-owned bin directory every boot.
+	// runs ONCE rather than reading toolbelt's bin directory every boot.
 	// Dot-prefixed and directly under the tools dir, where the toolbelt engine never
 	// looks and where neither the stage sweep nor the entrypoint's write-probe
 	// cleanup can match it.
@@ -676,6 +649,7 @@ func unavailableKiroRuntime() kiroRuntime {
 // probe, they are the 503 body of POST /api/sessions, and they are the reason text
 // /api/health serves. kiroReasonText is the single place they are produced.
 const (
+	// reasonInstalling also covers the first activation's data dir cleanup.
 	reasonInstalling = "kiro-cli installing"
 	reasonRetrying   = "kiro-cli install retrying"
 	// reasonUnavailable is also the fallback for a rescan with no verdict to read,
@@ -727,7 +701,10 @@ func startKiroCLI(cfg *baseKiro) kiroRuntime {
 			"hint", "this is an image defect: check the KIRO_CLI_VERSION / KIRO_CLI_SHA256 / KIRO_CLI_SHA256_ARM64 literals in entrypoint.sh")
 		return unavailableKiroRuntime()
 	}
+	retractFormerKiroLink(cfg.toolsDir)
 	ctx, cancel := context.WithCancel(context.Background())
+	cleanup := newKiroDataCleanup(kiroDataDir())
+	go cleanup.watch(ctx, mgr.Version)
 	go func() {
 		// EnsureWithRetry already logs the error with the attempt count and the
 		// in-container repair hint, and nothing here could act on it: the server
@@ -741,12 +718,22 @@ func startKiroCLI(cfg *baseKiro) kiroRuntime {
 		cmd:          func() []string { return sessionCommand(mgr.Path(), chatArgs...) },
 		env:          mgr.PathEnv,
 		engineBinary: mgr.Path,
-		ready: func() (bool, string) {
-			ok, why := mgr.Ready()
-			return ok, kiroReasonText(why)
-		},
-		rescan: mgr.Rescan,
-		stop:   cancel,
+		ready:        managedReady(mgr.Ready, cleanup),
+		rescan:       mgr.Rescan,
+		stop:         cancel,
+	}
+}
+
+// managedReady is the install manager's verdict, held back until the data dir
+// cleanup has run for the first version it activates, so no session starts
+// while that cleanup deletes another version's runtime.
+func managedReady(mgr func() (bool, pin.Reason), cleanup *kiroDataCleanup) func() (bool, string) {
+	return func() (bool, string) {
+		ok, why := mgr()
+		if ok && !cleanup.settled() {
+			return false, reasonInstalling
+		}
+		return ok, kiroReasonText(why)
 	}
 }
 
@@ -824,27 +811,35 @@ func kiroSetting(key, value string) pin.Assertion {
 // than about the release. Nothing in the list is read by anything any more.
 //
 // Larger than marotte's on purpose (this installer promoted in place, so it wrote a
-// journal, `.prev` backups and three markers), so do not copy it there. The dispatchers
-// are named exactly, which is what makes the sweep safe in a directory toolbelt
-// co-owns: a `kiro-cli*` prefix sweep deleted a live symlink.
+// journal, `.prev` backups and three markers), so do not copy it there. The
+// dispatchers in toolbelt's bin dir are named exactly, and the purge removes only a
+// regular file, so toolbelt's symlink at one of those names is spared.
 func kiroLegacyPurge() *pin.Purge {
 	return &pin.Purge{
-		Artifacts: []string{
+		Artifacts: append([]string{
 			".kiro-cli-update-in-progress",
 			".kiro-cli-installed",
 			".kiro-cli-installed.prev",
 			".kiro-cli-ready",
-			kiroLinkDir + "/.kiro-cli.prev",
-			kiroLinkDir + "/.kiro-cli.prev.absent",
-			kiroLinkDir + "/.kiro-cli-chat.prev",
-			kiroLinkDir + "/.kiro-cli-chat.prev.absent",
-			kiroLinkDir + "/.kiro-cli-term.prev",
-			kiroLinkDir + "/.kiro-cli-term.prev.absent",
-		},
-		// The dispatchers the shell installer linked, kiro-cli 2.x's sidecars included.
-		Names:       []string{kiroName, kiroName + "-chat", kiroName + "-term"},
+			toolbeltBinDir + "/.kiro-cli.prev",
+			toolbeltBinDir + "/.kiro-cli.prev.absent",
+			toolbeltBinDir + "/.kiro-cli-chat.prev",
+			toolbeltBinDir + "/.kiro-cli-chat.prev.absent",
+			toolbeltBinDir + "/.kiro-cli-term.prev",
+			toolbeltBinDir + "/.kiro-cli-term.prev.absent",
+		}, kiroLegacyDispatchers()...),
 		StagePrefix: legacyStagePrefix,
 		Marker:      legacyPurgeMarker,
+	}
+}
+
+// kiroLegacyDispatchers are the dispatchers the shell installer wrote into
+// toolbelt's bin dir, kiro-cli 2.x's sidecars included.
+func kiroLegacyDispatchers() []string {
+	return []string{
+		toolbeltBinDir + "/" + kiroName,
+		toolbeltBinDir + "/" + kiroName + "-chat",
+		toolbeltBinDir + "/" + kiroName + "-term",
 	}
 }
 
@@ -904,6 +899,8 @@ var requiredToolsList string
 // outside the container.
 type toolsRuntime struct {
 	engine *toolbelt.Engine
+	// stop cancels and joins the goroutines startTools started; nil when it started none.
+	stop func()
 	// syncing reports whether the boot convergence pass is still running; session
 	// creation is gated on it so the first kiro-cli never spawns before the
 	// manifest's tools are on PATH.
@@ -911,12 +908,9 @@ type toolsRuntime struct {
 	// state is the /api/health informational detail: syncing | ok | degraded. LIVE,
 	// not boot-only: after the boot verdict it tracks the engine's counted jobs.
 	state func() string
-	// missing is the WHOLE-TREE convergence signal, deliberately a second question
-	// from state: state answers "did the last job succeed, or are we still booting",
-	// which keeps monitoring from flapping through a long first-boot install, while
-	// this answers "is the tree actually converged". Reporting one as the other made
-	// state=ok readable as whole-tree health after a partial repair. ok is false until
-	// the first recount lands, so a premature zero cannot read as convergence.
+	// missing is whole-tree convergence, a separate question from state (did the
+	// last job succeed). ok is false until the first recount, so a premature zero
+	// cannot read as convergence.
 	missing func() (n int, ok bool)
 }
 
@@ -1008,12 +1002,8 @@ func (s *toolsStatus) watchConvergence(ctx context.Context, count func() (int, e
 	recount := func() {
 		n, err := count()
 		if err != nil {
-			// Return the field to UNKNOWN rather than freezing the last answer: the
-			// published contract is that tools_missing is absent when the count is
-			// not known, so a frozen 0 would assert a convergence the engine can no
-			// longer confirm. Warn, not Debug: Inventory's failure mode is an
-			// unreadable or unparseable manifest, which is persistent and
-			// operator-fixable.
+			// Back to unknown: tools_missing is absent when the count is not known, and an
+			// unreadable manifest is persistent and operator-fixable, hence Warn.
 			s.missing.Store(-1)
 			slog.Warn("tools: convergence recount failed; /api/health omits tools_missing until one succeeds",
 				"error", err,
@@ -1079,12 +1069,8 @@ func (s *toolsStatus) recordBoot(v string) {
 // into the field. Fires from toolbelt's job worker under the queue lock, so it does
 // exactly one atomic store, one non-blocking poke, and never blocks.
 func (s *toolsStatus) observeJob(j *toolbelt.Job) {
-	// The convergence count is a fact about the TREE, so EVERY settled job asks for a
-	// recount — deliberately not filtered by toolsStatusCounts, which is the state
-	// VERDICT's policy. A disable, an uninstall and a half-finished update all change
-	// which enabled entries are installed without meaning the boot was degraded.
-	// Cancelled is settled too: a job cancelled after it already changed the tree
-	// would otherwise leave the count asserting the pre-job state.
+	// Every settled job changes the tree, so each asks for a recount, cancelled ones
+	// included; toolsStatusCounts is the state verdict's policy, not this.
 	switch j.State {
 	case toolbelt.JobDone, toolbelt.JobFailed, toolbelt.JobCancelled:
 		s.requestRecount()
@@ -1134,7 +1120,12 @@ func degradedRuntime() toolsRuntime {
 	}
 }
 
+// close stops the runtime's goroutines and waits for them, then closes the engine,
+// so none of them logs or calls the engine after close returns.
 func (t *toolsRuntime) close() {
+	if t.stop != nil {
+		t.stop()
+	}
 	if t.engine != nil {
 		t.engine.Close()
 	}
@@ -1193,13 +1184,8 @@ func toolsConfig(cfg *baseTools, toolsRoot string, onJob func(*toolbelt.Job)) *t
 		ConfigDir:   toolsRoot,
 		ToolsDir:    toolsRoot,
 		CatalogPath: cfg.catalogPath,
-		// The tools this app BUNDLES, merged over every catalog the engine
-		// loads (baked, cached, fetched). The published catalog is a general
-		// reference and carries none of them: no registry packages gopls,
-		// typescript, typescript-language-server or pyright, and DefaultSeed
-		// below names all four, so without this the seeded templates would
-		// resolve to nothing at enable time. The image build gates the same
-		// file with `toolcatalog verify -overlay`.
+		// The published catalog carries none of the language servers DefaultSeed names,
+		// so without this overlay the seeded templates resolve to nothing.
 		CatalogOverlays: cfg.bundledToolsPaths,
 		Refresh: &toolbelt.CatalogRefresh{
 			URL:      cfg.catalogURL,
@@ -1212,13 +1198,9 @@ func toolsConfig(cfg *baseTools, toolsRoot string, onJob func(*toolbelt.Job)) *t
 		OnJobChanged: onJob,
 		TrustedUIDs:  cfg.trustedUIDs,
 		GitHubToken:  githubTokenSource(cfg.githubToken),
-		// Refuse to construct an engine over a managed root that is a symlink, is not a
-		// directory, resolves outside the tree, or can be written (owner, group, other or
-		// ACL) by anyone but root, this process or TrustedUIDs. The tree is an
-		// operator-controlled persistent volume, this process runs as root, and toolbelt's
-		// install probe EXECUTES what it finds in <ToolsDir>/bin with that dir first on PATH.
-		// ADDITIVE to entrypoint.sh: only the entrypoint can chmod and re-stat to prove a
-		// tightening took, and only the library covers a root reshaped AFTER it ran.
+		// Refuses a managed root writable by anyone but root, this process or TrustedUIDs:
+		// toolbelt's install probe executes what it finds in <ToolsDir>/bin, as root.
+		// Additive to entrypoint.sh, which cannot see a root reshaped after it ran.
 		VerifyRootIntegrity: true,
 	}
 }
@@ -1231,11 +1213,8 @@ func toolsConfig(cfg *baseTools, toolsRoot string, onJob func(*toolbelt.Job)) *t
 // update pass refreshes unpinned tools, and a boot warning nudges when no language
 // server is enabled (kiro-cli scans PATH for LSPs at session start).
 func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
-	// Three distinct outcomes, deliberately NOT collapsed: only a genuinely ABSENT
-	// directory is the intentionally-disabled out-of-container shape. A stat failure
-	// for any other reason, or a non-directory mounted at the config path, is a
-	// FAILED production subsystem — otherwise the operator reads a broken mount as
-	// "tools deliberately off".
+	// Only an absent dir is the out-of-container "tools off" shape; any other stat
+	// failure or a non-directory is a failed subsystem, never reported as off.
 	fi, statErr := os.Stat(cfg.configDir)
 	switch {
 	case errors.Is(statErr, fs.ErrNotExist):
@@ -1260,12 +1239,8 @@ func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
 			"config_dir", cfg.configDir)
 		return degradedRuntime()
 	}
-	// The tool subsystem's ONE root: the engine's ToolsDir, the directory whose bin/
-	// every session must find on PATH, AND the engine's ConfigDir. Those last two
-	// are the same path on purpose — toolbelt's three metadata files all describe
-	// the artifacts under ToolsDir, so a layout that let them sit in different
-	// volumes was one subsystem with two homes. Prefer the path the entrypoint
-	// hardened and exported; the derivation is the out-of-container fallback only.
+	// One root for both ToolsDir and ConfigDir, since toolbelt's metadata describes
+	// the artifacts under ToolsDir. The derivation is the out-of-container fallback.
 	toolsRoot := cfg.toolsDir
 	if toolsRoot == "" {
 		toolsRoot = filepath.Join(cfg.configDir, "tools")
@@ -1293,14 +1268,13 @@ func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
 		return degradedRuntime()
 	}
 	announceGitHubToken(cfg.githubTokenEnv)
-	go limits.run(ctx)
+	ctx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	wg.Go(func() { limits.run(ctx) })
 
-	// recordBoot BOTH arms the live reducer and lifts the session-create gate: the
-	// gate is derived from the reducer's one-way "syncing" state rather than kept in
-	// a second cell, so a request cannot observe tools=ok while session creation
-	// still refuses with "tools installing". A post-boot job failure stores only ok
-	// or degraded, so it can update the field without re-closing session creation.
-	// Boot failure lifting the gate is deliberate (degraded-not-dead).
+	// recordBoot arms the reducer and lifts the session-create gate, derived from
+	// the one-way "syncing" state, so tools=ok and "tools installing" never coexist.
+	// A boot failure lifts the gate too (degraded, not dead).
 	job, enqueued, rerr := eng.Reconcile(toolbelt.ReconcileMissing)
 	switch {
 	case rerr != nil:
@@ -1318,26 +1292,19 @@ func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
 		slog.Info("tools: boot convergence started; session creation is gated until it finishes",
 			"job", job.ID,
 			"hint", "POST /api/sessions answers 503 \"tools installing\" (Retry-After 5) and /api/health reports tools=syncing until this converges")
-		go awaitBootConvergence(ctx, eng, job.ID, status.recordBoot, manifestPath)
+		wg.Go(func() { awaitBootConvergence(ctx, eng, job.ID, status.recordBoot, manifestPath) })
 	}
-	// Boot catalog fetch, explicitly AFTER the reconcile enqueue: the engine's
-	// schedule deliberately has no fire-on-start, because an immediate enqueue
-	// inside New would land ahead of the boot-critical reconcile on the
-	// single-flight queue and delay the session gate. Failure is routine before the
-	// publisher is reachable; keep-last-good absorbs it.
+	// After the reconcile enqueue, so the single-flight queue runs the boot-critical
+	// reconcile first. A failure is routine before the publisher is reachable.
 	if _, rerr := eng.RefreshCatalog(); rerr != nil {
 		slog.Warn("tools: boot catalog refresh not enqueued", "error", rerr)
 	}
-	// The convergence watcher is started here rather than beside the reducer, so
-	// it exists only for a runtime that actually has an engine to count. It gets
-	// the SHUTDOWN context, not context.Background(): the callee selects on
-	// ctx.Done() to return, and a Background context defeats that exit path at
-	// the call site, so the goroutine outlived every shutdown and the select arm
-	// was unreachable code.
-	go status.watchConvergence(ctx, countMissingTools(eng))
+	// Started only for a runtime that has an engine to count.
+	wg.Go(func() { status.watchConvergence(ctx, countMissingTools(eng)) })
 
 	return toolsRuntime{
 		engine:  eng,
+		stop:    func() { cancel(); wg.Wait() },
 		syncing: func() bool { return status.get() == toolsStateSyncing },
 		state:   status.get,
 		missing: status.missingCount,
@@ -1345,37 +1312,18 @@ func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
 }
 
 // awaitBootConvergence blocks on the boot reconcile job, records the verdict
-// (lifting the session-create gate via finish), then runs the post-convergence
-// tail: the freshness pass for unpinned entries (off the boot path — version-check
-// network never holds the session gate) and the language-server nudge. manifestPath
-// is threaded through purely for that nudge's operator-facing `manifest` field.
-//
-// ctx is the process shutdown context, not context.Background(): a goroutine
-// blocked on Wait for a job budgeted at up to 30 minutes must not survive the
-// signal that ends the process. A cancelled Wait is not a fault — the engine's
-// own Close cancels the running job on the same path — so it lands on the
-// same not-a-tool-failure record as JobCancelled.
+// (lifting the session-create gate via finish), then runs the freshness pass for
+// unpinned entries off the boot path and the language-server nudge, whose
+// `manifest` field is manifestPath. ctx is the process shutdown context, so a
+// Wait on a job budgeted at up to 30 minutes ends with the process; a cancelled
+// Wait is recorded like JobCancelled, as not a tool failure.
 func awaitBootConvergence(ctx context.Context, eng *toolbelt.Engine, jobID string, finish func(string), manifestPath string) {
 	final, werr := eng.Wait(ctx, jobID)
 	switch {
 	case errors.Is(werr, context.Canceled), errors.Is(werr, context.DeadlineExceeded):
-		// Shutdown won the race with convergence. Keyed on the ERROR Wait
-		// returned, not on ctx.Err(): Wait checks for a terminal job BEFORE it
-		// selects on ctx.Done() (toolbelt jobs.go), so a job that finished in
-		// the same instant SIGTERM arrived comes back as (job, nil) with a
-		// cancelled ctx — and a bare ctx.Err() arm would have recorded that
-		// SUCCESS as an abandoned, degraded pass.
-		//
-		// The verdict still degrades (this pass did not converge) but the
-		// RECORD stays Info for the same reason the JobCancelled arm below
-		// does: a restart during a first-boot install is routine, and a Warn
-		// here is the false broken-install alert every deploy would fire.
-		//
-		// Returns, like the JobCancelled arm: the post-convergence tail must
-		// not run. Update() enqueues a real network pass, and the pre-drain
-		// hook cancels this ctx while tools.close() is still pending in the
-		// deferred teardown, so the engine is still OPEN here and the enqueue
-		// would SUCCEED on a draining process.
+		// Keyed on Wait's error, not ctx.Err(): a job finished as SIGTERM arrived returns
+		// (job, nil). No post-convergence tail: Update() would start a network pass while
+		// the process drains.
 		slog.Info("tools: boot convergence abandoned at shutdown; not a tool failure",
 			"cause", context.Cause(ctx))
 		finish(toolsStateDegraded)
@@ -1384,12 +1332,9 @@ func awaitBootConvergence(ctx context.Context, eng *toolbelt.Engine, jobID strin
 		slog.Warn("tools: boot reconcile wait failed", "error", werr)
 		finish(toolsStateDegraded)
 	case final.State == toolbelt.JobCancelled:
-		// Cancellation is not a fault: toolbelt cancels the active job from Engine.Close, and
-		// otherwise only on an explicit operator CancelJob. Reporting it at Warn would be the
-		// same false broken-install alert the session-side exit hook gates away on every
-		// deploy. The verdict still degrades — the pass did not converge — but the RECORD
-		// stays Info, and the post-convergence tail is skipped because on the shutdown path
-		// Update() can only fail and the LSP nudge has no reader.
+		// Cancellation comes from Engine.Close or an operator CancelJob, not a fault, so
+		// Info. The verdict still degrades, and the tail is skipped: on shutdown Update()
+		// can only fail.
 		slog.Info("tools: boot convergence cancelled; not a tool failure",
 			"cause", final.CancelCause.String(),
 			"hint", "expected during shutdown (the engine cancels the running job on Close) or after an explicit tools-API job cancel")
@@ -1428,11 +1373,8 @@ func manifestPathFor(toolsRoot string) string {
 func warnIfNoLSPEnabled(e *toolbelt.Engine, manifestPath string) {
 	inv, err := e.Inventory()
 	if err != nil {
-		// Warn, not Debug: Inventory's only failure mode is an unreadable manifest, and
-		// toolbelt returns that error without logging it, so at the default level this
-		// would be the one record of a manifest an operator has just broken. Deliberately
-		// NOT the "no language servers enabled" wording — that is a different event, and a
-		// test counts Warns by that message.
+		// Warn: toolbelt returns this error without logging it. Not the "no language
+		// servers enabled" wording, a different event a test counts.
 		slog.Warn("tools: manifest unreadable; cannot tell whether a language server is enabled",
 			"error", err,
 			"manifest", manifestPath,
@@ -1506,23 +1448,12 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 	return httpserver.Chain(mux,
 		httpserver.Logging(
 			httpserver.WithLogger(slog.Default()),
-			// The /ws skip decides on an OUTCOME rather than a prediction: it
-			// suppresses the record only for a response that actually switched
-			// protocols, which is the state that makes the line a lie — the exchange
-			// ENDED at the handshake, so a line emitted hours later at socket close
-			// would carry a session-length duration and a status net/http never sent.
-			// Every refusal therefore keeps its line by construction, including the
-			// 426 for missing upgrade headers (the classic reverse-proxy
-			// misconfiguration).
+			// Skips only a response that switched protocols, whose line at socket close would
+			// carry a session-length duration; every refusal, the 426 included, keeps its line.
 			httpserver.WithSkipUpgrades(true),
-			// SSE needs its own path-shaped skip because it never switches protocols: it
-			// is a plain 200 that does not return until the client disconnects, so
-			// WithSkipUpgrades cannot see it and its record would START being emitted.
-			//
-			// A predicate rather than WithSkipPaths, for the two conjuncts: skip rules run
-			// BEFORE the chain, so a bare path skip would also swallow the 403s
-			// hostPolicy.Middleware and CrossOriginProtection write — WriteError logs
-			// neither — leaving an attack on this unauthenticated PTY unrecorded (CWE-778).
+			// SSE is a plain 200 held open until disconnect, so it needs its own skip. A
+			// predicate, not WithSkipPaths: skip rules run before the chain, and a bare path
+			// skip would also hide the 403s the host and origin checks write (CWE-778).
 			httpserver.WithSkipFunc(func(r *http.Request) bool {
 				return r.Method == http.MethodGet &&
 					r.URL.Path == terminal.SessionEventsPath && hostPolicy.Allows(r)
@@ -1531,11 +1462,8 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 			// Debug while a FAILING probe surfaces at Warn/Error with its status and
 			// request id.
 			httpserver.ProbeLogLevel(healthPath),
-			// The session-id-bearing subtree logs the route template the mux actually
-			// matched instead of the raw path, so a live capability token never reaches the
-			// access log. The prefix comes from the engine — the package that DECLARES those
-			// routes — and the template from r.Pattern, so a route the engine adds in a
-			// future version logs correctly with no change here.
+			// The session subtree logs its matched route template, never the raw path, so a
+			// session id never reaches the access log. The engine declares the prefix.
 			httpserver.WithTemplatePathsUnder(terminal.SessionsSubtreePath),
 			httpserver.WithClientIP(trustedProxies...),
 		),
@@ -1547,13 +1475,9 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 		wsAttachLog(trustedProxies),
 		httpserver.SecurityHeaders(
 			httpserver.WithCSP(csp),
-			// COOP severs window.opener for any cross-origin page a session opens. The
-			// terminal renders clickable OSC 8 hyperlinks straight out of untrusted child
-			// output, so a session can be induced to open an attacker page; the vendored UI
-			// already sets rel="noopener noreferrer", and this header plus the tightened
-			// Referrer-Policy make that guarantee independent of the Renovate-bumped UI pin.
-			// COOP and the Permissions-Policy features are secure-context-gated, so inert on
-			// a plain-HTTP LAN bind; Referrer-Policy is not, which is why it is useful there.
+			// Untrusted child output renders clickable OSC 8 links, so COOP severs
+			// window.opener independently of the UI's rel="noopener". COOP is
+			// secure-context-gated; Referrer-Policy also applies on a plain-HTTP bind.
 			httpserver.WithCOOP("same-origin"),
 			httpserver.WithReferrerPolicy("same-origin"),
 			httpserver.WithPermissionsPolicy("camera=(), microphone=(), geolocation=()"),
@@ -1642,12 +1566,8 @@ const (
 func startContainment() *terminal.Containment {
 	c, err := terminal.NewContainment(containCgroupRoot, containCgroupPrefix, slog.Default())
 	if err != nil {
-		// WARN, not Info: entrypoint.sh has already logged that the cgroup tree was
-		// remounted rw, a claim about the mount and not about containment, and
-		// nothing else announces that containment is off. The container carries no
-		// mem_limit, so no memory alert catches stranded session trees either.
-		// Not fatal: reaping closes the process leak without containment, so the
-		// terminal must keep serving.
+		// Warn: nothing else announces that containment is off, and no memory alert
+		// covers stranded trees. Not fatal: marker-based reaping still closes the leak.
 		slog.Warn("per-session cgroup containment unavailable; session trees are still reaped, but per-session peak memory and task counts will not be reported",
 			"error", err,
 			"hint", "containment needs a writable cgroup v2 root, which needs CAP_SYS_ADMIN for a one-time remount. Not granted by default: the engine's marker-based reaping closes the process leak without it.")

@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# The $TOOLS/bin tightening loop: no entry is exempt by name.
-#
-# The install manager yields to a foreign entry at kiro-cli instead of
-# replacing it, so a toolbelt link at that name can survive a boot and lead
-# PATH. A link a 2.x install left at kiro-cli-chat or kiro-cli-term can too. Its target must be checked and tightened like any other bin
-# entry. The manager's own links need no exemption: their targets sit under
-# kiro-cli-versions/, which an earlier loop tightens.
+# The tightening loop over the two link dirs that lead PATH, $TOOLS/kiro-cli-bin
+# and $TOOLS/bin: no entry is exempt by name. A toolbelt link at kiro-cli, or a
+# link a 2.x install left at kiro-cli-chat or kiro-cli-term, is checked and
+# tightened like any other entry. The manager's own link needs no exemption: its
+# target sits under kiro-cli-versions/, which an earlier loop tightens.
 #
 # Lint directives for this whole file:
 #   SC2015 - `[ cond ] && ok "..." || no "..."` cannot mis-fire, because lib.sh's
@@ -46,13 +44,23 @@ for name in kiro-cli kiro-cli-chat kiro-cli-term other-tool; do
 done
 
 tools=$(mktemp -d "$WORK/tools.XXXXXX")
-mkdir -p "$tools/bin" "$tools/kiro-cli-versions/3.0.0"
+mkdir -p "$tools/kiro-cli-bin" "$tools/kiro-cli-versions/3.0.0"
+: >"$tools/kiro-cli-versions/3.0.0/kiro-cli"
+chmod 0775 "$tools/kiro-cli-versions/3.0.0/kiro-cli"
+ln -s "$tools/kiro-cli-versions/3.0.0/kiro-cli" "$tools/kiro-cli-bin/kiro-cli"
+run_loop "$tools"
+[ "$(mode_of "$tools/kiro-cli-bin/kiro-cli")" = 755 ] \
+  && ok "a group-writable target behind the manager's link dir is tightened" \
+  || no "kiro-cli-bin tightening" "mode is $(mode_of "$tools/kiro-cli-bin/kiro-cli"), expected 755"
+
+tools=$(mktemp -d "$WORK/tools.XXXXXX")
+mkdir -p "$tools/kiro-cli-bin" "$tools/kiro-cli-versions/3.0.0"
 : >"$tools/kiro-cli-versions/3.0.0/kiro-cli"
 chmod 0755 "$tools/kiro-cli-versions/3.0.0/kiro-cli"
-ln -s "$tools/kiro-cli-versions/3.0.0/kiro-cli" "$tools/bin/kiro-cli"
+ln -s "$tools/kiro-cli-versions/3.0.0/kiro-cli" "$tools/kiro-cli-bin/kiro-cli"
 run_loop "$tools"
-[ "$(mode_of "$tools/bin/kiro-cli")" = 755 ] && [ ! -s "$WORK/loop.log" ] \
+[ "$(mode_of "$tools/kiro-cli-bin/kiro-cli")" = 755 ] && [ ! -s "$WORK/loop.log" ] \
   && ok "a manager link to an already tight version-dir target passes silently" \
-  || no "manager link" "mode $(mode_of "$tools/bin/kiro-cli"), log: $(cat "$WORK/loop.log")"
+  || no "manager link" "mode $(mode_of "$tools/kiro-cli-bin/kiro-cli"), log: $(cat "$WORK/loop.log")"
 
 report

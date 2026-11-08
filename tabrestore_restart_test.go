@@ -121,12 +121,15 @@ func TestTabRestore_survivesARestart(t *testing.T) {
 		tabs = append(tabs, info)
 	}
 	recordDir := plantRecord(t, home, resumeA, resumeA, "restored title")
-	lock := plantLock(t, recordDir, time.Now().Add(-time.Hour))
+	lock := plantStaleLock(t, recordDir)
 	handle, ok := b1.pollers.titles.handleFor(tabs[1].ID)
 	if !ok {
 		t.Fatal("tab 1 has no title handle")
 	}
-	if err := os.WriteFile(filepath.Join(b1.pollers.titles.stateDir, handle), []byte(resumeA+"\n"), 0o600); err != nil {
+	if err := os.MkdirAll(filepath.Join(b1.pollers.titles.stateDir, handle+reportDirSuffix), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b1.pollers.titles.stateDir, handle+reportDirSuffix, resumeA), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	b1.mustCall(t, http.MethodPut, terminal.SessionsSubtreePath+string(tabs[2].ID)+"/pinned-title", `{"title":"pinned two"}`, http.StatusNoContent)
@@ -138,7 +141,6 @@ func TestTabRestore_survivesARestart(t *testing.T) {
 	newSessionShutdown(b1.cancel, b1.mgr)(context.Background())
 
 	// Boot 2: a fresh store, routes and restorer over the same config dir and home.
-	bootTime := time.Now()
 	b2 := boot(t, configDir, home, argvDir)
 	if !b2.restore || !b2.pending.Load() {
 		t.Fatalf("boot 2 restore = %v pending = %v, want the saved set pending", b2.restore, b2.pending.Load())
@@ -146,7 +148,7 @@ func TestTabRestore_survivesARestart(t *testing.T) {
 	if status, _ := b2.call(t, http.MethodGet, terminal.SessionsSubtreePath+"layout", ""); status != http.StatusServiceUnavailable {
 		t.Errorf("GET layout before the restore = %d, want 503", status)
 	}
-	sweepStaleKiroLocks(b2.ctx, b2.pollers.titles.sessionsRoot, bootTime)
+	sweepStaleKiroLocks(b2.ctx, b2.pollers.titles.sessionsRoot)
 	newTabRestorer(b2.pollers.titles, &b2.set, b2.build, b2.pending).
 		run(b2.ctx, b2.mgr, func() bool { return true }, b2.store)
 	if b2.pending.Load() {

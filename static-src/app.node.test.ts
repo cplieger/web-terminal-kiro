@@ -210,47 +210,52 @@ describe("web-terminal-kiro bootstrap (app.ts)", () => {
     }
   });
 
-  it("declares an importmap entry for every bare specifier the vendored graph imports", () => {
-    // The test above covers app.ts's OWN two specifiers. The browser also resolves
-    // the specifiers the VENDORED packages import: the Dockerfile compiles
-    // web-terminal-ui's and web-terminal-engine's TypeScript into static/vendor/
-    // with bare specifiers preserved (only relative "./*.js" paths resolve inside
-    // the vendored dirs). @cplieger/web-terminal-engine is imported by the UI's
-    // kernel/viewport/tabs modules and NEVER by app.ts, so deleting that importmap
-    // entry puts every visitor on the watchdog's fatal dialog while the
-    // app.ts-only check above stays green.
-    const specifiers = new Set<string>();
-    for (const pkg of ["@cplieger/web-terminal-ui", "@cplieger/web-terminal-engine"]) {
-      const src = resolve(fixtureRoot(), `node_modules/${pkg}/src`);
-      for (const entry of readdirSync(src, { recursive: true, encoding: "utf8" })) {
-        if (!entry.endsWith(".ts")) {
-          continue;
-        }
-        for (const specifier of browserResolvedSpecifiers(
-          readFileSync(resolve(src, entry), "utf8"),
-        )) {
-          if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
-            specifiers.add(specifier);
+  // Reads every source file of two packages, which outlasts the 2 s default under a full parallel run.
+  it(
+    "declares an importmap entry for every bare specifier the vendored graph imports",
+    { timeout: 10_000 },
+    () => {
+      // The test above covers app.ts's OWN two specifiers. The browser also resolves
+      // the specifiers the VENDORED packages import: the Dockerfile compiles
+      // web-terminal-ui's and web-terminal-engine's TypeScript into static/vendor/
+      // with bare specifiers preserved (only relative "./*.js" paths resolve inside
+      // the vendored dirs). @cplieger/web-terminal-engine is imported by the UI's
+      // kernel/viewport/tabs modules and NEVER by app.ts, so deleting that importmap
+      // entry puts every visitor on the watchdog's fatal dialog while the
+      // app.ts-only check above stays green.
+      const specifiers = new Set<string>();
+      for (const pkg of ["@cplieger/web-terminal-ui", "@cplieger/web-terminal-engine"]) {
+        const src = resolve(fixtureRoot(), `node_modules/${pkg}/src`);
+        for (const entry of readdirSync(src, { recursive: true, encoding: "utf8" })) {
+          if (!entry.endsWith(".ts")) {
+            continue;
+          }
+          for (const specifier of browserResolvedSpecifiers(
+            readFileSync(resolve(src, entry), "utf8"),
+          )) {
+            if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
+              specifiers.add(specifier);
+            }
           }
         }
       }
-    }
-    // Guard the walk: the UI package imports the engine by bare specifier in
-    // several modules, so an engine-less set means the walk found nothing and the
-    // loop below would pass forever.
-    expect([...specifiers]).toContain("@cplieger/web-terminal-engine");
+      // Guard the walk: the UI package imports the engine by bare specifier in
+      // several modules, so an engine-less set means the walk found nothing and the
+      // loop below would pass forever.
+      expect([...specifiers]).toContain("@cplieger/web-terminal-engine");
 
-    const html = readStaticAsset("index.html");
-    const map = /<script\b[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script\s*>/i.exec(html);
-    const parsed: unknown = JSON.parse(map?.[1] ?? "null");
-    const keys = Object.keys((parsed as { imports?: Record<string, string> })?.imports ?? {});
-    for (const specifier of specifiers) {
-      expect(
-        keys.some((key) => key === specifier || (key.endsWith("/") && specifier.startsWith(key))),
-        `no importmap entry in static/index.html resolves ${specifier}, which the vendored library graph imports`,
-      ).toBe(true);
-    }
-  });
+      const html = readStaticAsset("index.html");
+      const map = /<script\b[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script\s*>/i.exec(html);
+      const parsed: unknown = JSON.parse(map?.[1] ?? "null");
+      const keys = Object.keys((parsed as { imports?: Record<string, string> })?.imports ?? {});
+      for (const specifier of specifiers) {
+        expect(
+          keys.some((key) => key === specifier || (key.endsWith("/") && specifier.startsWith(key))),
+          `no importmap entry in static/index.html resolves ${specifier}, which the vendored library graph imports`,
+        ).toBe(true);
+      }
+    },
+  );
 });
 
 describe("the attention icon variants app.ts opts into are actually served", () => {
