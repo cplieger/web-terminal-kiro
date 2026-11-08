@@ -103,8 +103,8 @@ func parseHighThroughput() bool {
 }
 
 // newEngineTuning returns nil when the setting is off or cannot apply, logging why
-// in the second case. dataHome is kiro-cli's data home (kiroDataHome).
-func newEngineTuning(on bool, validated, dataHome string, engineBinary func() string) *engineTuning {
+// in the second case. dataDir is kiro-cli's data dir (kiroDataDir).
+func newEngineTuning(on bool, validated, dataDir string, engineBinary func() string) *engineTuning {
 	if !on {
 		return nil
 	}
@@ -118,7 +118,7 @@ func newEngineTuning(on bool, validated, dataHome string, engineBinary func() st
 		slog.Warn(highThroughputKey+" is on but "+kasNodePathKey+" is already set in the container; leaving it alone, so tabs start without the high-throughput flags",
 			"hint", "unset "+kasNodePathKey+" to let "+highThroughputKey+" choose kiro-cli's agent engine node")
 		return nil
-	case dataHome == "":
+	case dataDir == "":
 		slog.Warn(highThroughputKey + " is on but neither XDG_DATA_HOME nor HOME is set, so kiro-cli's Node.js cannot be found; tabs start without the high-throughput flags")
 		return nil
 	}
@@ -132,22 +132,11 @@ func newEngineTuning(on bool, validated, dataHome string, engineBinary func() st
 	slog.Info("high-throughput flags on for kiro-cli's agent engine", "validated_node", validated)
 	return &engineTuning{
 		engineBinary: engineBinary,
-		node:         filepath.Join(dataHome, "kiro-cli", "node"),
+		node:         filepath.Join(dataDir, "node"),
 		validated:    validated,
 		launcher:     kasNodeLauncher,
 		reported:     map[string]bool{},
 	}
-}
-
-// kiroDataHome mirrors entrypoint.sh's kiro_cli_data_dir parent.
-func kiroDataHome() string {
-	if d := envx.String("XDG_DATA_HOME"); d != "" {
-		return d
-	}
-	if h := envx.String("HOME"); h != "" {
-		return filepath.Join(h, ".local", "share")
-	}
-	return ""
 }
 
 // env is one tab's overlay: the launcher as kiro-cli's agent-engine node when

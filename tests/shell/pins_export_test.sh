@@ -183,7 +183,7 @@ taint_export_writes=$(grep -cE '^[[:space:]]*(local|declare|export|readonly)?[[:
   || no "taint flag assignment count" "KIRO_CLI_TOOLS_TAINTED is assigned $taint_export_writes times; the last one wins at exec, so the observation this script proved can be overwritten by a value nothing checked"
 
 # --- the image default that gates the pinned-binary purge ---------------------
-# purge_pinned_chat_cli_copies acts only on KIRO_SKIP_BINARY_PINNING=1, so the
+# kirodata.go purges the pinned copies only on KIRO_SKIP_BINARY_PINNING=1, so the
 # runtime stage must set exactly that, once, or the purge silently never runs.
 DOCKERFILE="${WT_DOCKERFILE:-$REPO/Dockerfile}"
 pinning_env=$(awk '/^FROM /{n=0} /^ENV KIRO_SKIP_BINARY_PINNING=/{n++; v=$0} END{print n "|" v}' "$DOCKERFILE")
@@ -191,9 +191,10 @@ any_pinning=$(grep -c 'KIRO_SKIP_BINARY_PINNING' "$DOCKERFILE")
 [ "$pinning_env" = "1|ENV KIRO_SKIP_BINARY_PINNING=1" ] && [ "$any_pinning" -eq 1 ] \
   && ok "the runtime stage sets ENV KIRO_SKIP_BINARY_PINNING=1 exactly once" \
   || no "binary pinning ENV" "final stage reads '$pinning_env' ($any_pinning mentions); the purge's gate and the image default disagree"
-grep -q '"${KIRO_SKIP_BINARY_PINNING:-}" = 1 ]' "$ENTRYPOINT" \
+grep -q 'skipBinaryPinningKey = "KIRO_SKIP_BINARY_PINNING"' "$GO_SOURCE_ROOT/kirodata.go" \
+  && grep -q 'envx.String(skipBinaryPinningKey) == "1"' "$GO_SOURCE_ROOT/kirodata.go" \
   && ok "the purge is gated on the same exact value" \
-  || no "purge gate" "entrypoint.sh no longer gates the purge on KIRO_SKIP_BINARY_PINNING = 1"
+  || no "purge gate" "kirodata.go no longer gates the purge on KIRO_SKIP_BINARY_PINNING = 1"
 
 # --- every GitHub token variable the server reads reaches it from compose -----
 # githubtoken.go reads GH_TOKEN, else GITHUB_TOKEN, from its own environment, and

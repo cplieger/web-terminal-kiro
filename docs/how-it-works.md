@@ -26,6 +26,8 @@ When a tab opens and kiro-cli is not signed in, the tab runs kiro-cli's device s
 
 kiro-cli is pinned to one version, downloaded on first start and checked against a pinned digest. It is not redistributed inside the image, and a newer version arrives by pulling a newer image tag. Automatic updates inside kiro-cli are turned off, because a binary that replaces itself would no longer match the digest.
 
+A shell opened with `docker exec` finds the pinned kiro-cli through `/config/tools/kiro-cli-bin`, which comes before the tools folder `/config/tools/bin` on `PATH`. A tool in the tools list that is also named `kiro-cli` stays in `/config/tools/bin` and does not replace it.
+
 The download runs after the server starts listening, so the web page and `/api/health` answer at once. New tabs answer `503 {"error":"kiro-cli installing","code":"not_ready"}` until the install finishes, and the message names the stage when something goes wrong.
 
 `/config` must be on a filesystem that allows running programs. kiro-cli and every tool the container installs live there and run from there, so a `noexec` mount makes the install fail. The startup log reports that in one line that names the folder.

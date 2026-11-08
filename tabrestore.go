@@ -62,15 +62,15 @@ func resumeOwners(entries []terminal.SessionSetEntry) map[string]int {
 }
 
 // adoptLaunchingSessions re-points every entry saved with a workflow step's session at the
-// conversation that launched the run (sessionTitleSync.tabSession says why a tab's mapping
-// can name a step), then re-claims the owners, since two entries may now name one session.
+// conversation that launched the run (sessionTitleSync.tabSession says which sets hold one),
+// then re-claims the owners, since two entries may now name one session.
 func (r *tabRestorer) adoptLaunchingSessions(ctx context.Context) {
 	for i := range r.set.Sessions {
 		e := &r.set.Sessions[i]
 		if !validKiroResumeID(e.Resume) {
 			continue
 		}
-		if id, _, _ := r.titles.tabSession(ctx, e.Resume); id != e.Resume && validKiroResumeID(id) {
+		if id := r.titles.tabSession(ctx, e.Resume); id != e.Resume && validKiroResumeID(id) {
 			slog.Info("tab restore: stored kiro session is a workflow step; resuming the conversation that launched it",
 				"kiro_session", id)
 			e.Resume = id
@@ -97,7 +97,7 @@ func (r *tabRestorer) run(ctx context.Context, mgr sessionRestorer, ready func()
 	for i := range res.Restored {
 		rs := &res.Restored[i]
 		if kiroID, ok := r.resumed[rs.Index]; ok {
-			_ = r.titles.seedMapping(ctx, rs.Info.ID, kiroID) // logged inside; the hook maps it at the next prompt
+			r.titles.seedConversation(rs.Info.ID, kiroID)
 		}
 	}
 	if len(res.Restored) == 0 && res.Failed > 0 {

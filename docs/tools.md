@@ -50,6 +50,8 @@ These sources are supported:
 - `npm:`, `pip:`, `cargo:` and `go:` packages.
 - `manual` shell commands, with the `${VERSION}`, `${BIN}` and `${ARCH_*}` placeholders.
 
+Installed tools are linked into `/config/tools/bin`. The pinned kiro-cli has its own `/config/tools/kiro-cli-bin`, earlier on `PATH`, so a tool you name `kiro-cli` does not replace it.
+
 ## The catalog
 
 Download addresses, checksums and dependencies come from a catalog of about 700 tools, built from the mise and aqua registries by [tool-catalog](https://github.com/cplieger/tool-catalog). A template carries no install commands, so it never goes stale. Dependencies come along on their own. Enabling `typescript-language-server` also installs `node` and the `typescript` package. The server refreshes the catalog at start and then every `TOOL_CATALOG_REFRESH`, keeping the last good copy when a refresh fails. [Configuration](configuration.md) lists the catalog settings.

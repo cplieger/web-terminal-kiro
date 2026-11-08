@@ -2,8 +2,8 @@
 # secure_tools_dir(): tighten what we can, and never brick boot over a tree the
 # entrypoint does not own.
 #
-# The third argument encodes the app's failure posture. owned=1 is for the THIRTEEN directories the entrypoint
-# creates itself — /config, $TOOLS, $TOOLS/bin, $TOOLS/opt, $TOOLS/kiro-cli-versions,
+# The third argument encodes the app's failure posture. owned=1 is for the FOURTEEN directories the entrypoint
+# creates itself — /config, $TOOLS, $TOOLS/bin, $TOOLS/kiro-cli-bin, $TOOLS/opt, $TOOLS/kiro-cli-versions,
 # and the npm and python roots with every directory beneath them the toolbelt
 # engine's root-integrity check judges ($TOOLS/npm/bin, npm/lib,
 # npm/lib/node_modules, python/bin, python/tools, python/interpreters),
@@ -125,8 +125,7 @@ attempt "$R/seg" 0
 # not-a-directory check when it dangles, and fails the mode check when it does not
 # (stat does not dereference, and a symlink's own mode is 0777), so no bait isolates
 # the -L guard by outcome -- with the branch deleted this case stayed green. Naming
-# the message is what makes it able to fail, the same reason kas_prune_test.sh
-# asserts which refusal its two redundant guards emitted.
+# the message is what makes it able to fail.
 R=$(mk) && ln -s /nonexistent-target "$R/owned"
 attempt "$R/owned" 1
 [ "$FATAL_FIRST" = 'refusing to use a symlinked tools directory; its target may be outside the /config mount' ] \
@@ -240,13 +239,13 @@ fi
 # file have drifted from the code. Both sides go through the same `LC_ALL=C sort`, so the assertion
 # is about membership and never about the collation order of `$` versus `/`.
 OWNED_EXPECTED=$(printf '%s\n' \
-  /config '$TOOLS' '$TOOLS/bin' '$TOOLS/opt' \
+  /config '$TOOLS' '$TOOLS/bin' '$TOOLS/kiro-cli-bin' '$TOOLS/opt' \
   '$TOOLS/npm' '$TOOLS/npm/bin' '$TOOLS/npm/lib' '$TOOLS/npm/lib/node_modules' \
   '$TOOLS/python' '$TOOLS/python/bin' '$TOOLS/python/tools' '$TOOLS/python/interpreters' \
   '$TOOLS/kiro-cli-versions' | LC_ALL=C sort)
 OWNED_ACTUAL=$(printf '%s\n' "$CALLS" | awk '$2 == 1 { print $1 }' | LC_ALL=C sort)
 if [ "$OWNED_ACTUAL" = "$OWNED_EXPECTED" ]; then
-  ok "the fail-closed (owned=1) set is exactly the thirteen directories the entrypoint creates"
+  ok "the fail-closed (owned=1) set is exactly the fourteen directories the entrypoint creates"
 else
   no "owned=1 set drifted" "expected [$(printf '%s' "$OWNED_EXPECTED" | tr '\n' ' ')] but the boot path has [$(printf '%s' "$OWNED_ACTUAL" | tr '\n' ' ')] -- if intended, update secure_tools_dir's doc comment in the same change"
 fi

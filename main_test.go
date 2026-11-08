@@ -1342,6 +1342,11 @@ func TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates(t *testing.T) {
 
 	assertStage := func(stage, wantTools string) {
 		t.Helper()
+		// toolbelt releases Wait before it calls OnJobChanged with the terminal
+		// state, so the reducer's store can land just after Wait returns.
+		for deadline := time.Now().Add(10 * time.Second); rt.state() != wantTools && time.Now().Before(deadline); {
+			time.Sleep(5 * time.Millisecond)
+		}
 		if got := rt.state(); got != wantTools {
 			t.Fatalf("%s: tools state = %q, want %q", stage, got, wantTools)
 		}
@@ -2943,8 +2948,15 @@ func TestKiroInstallConfigCarriesTheReleaseShape(t *testing.T) {
 		t.Errorf("ProbeArgs = %q, want [--version]", cfg.ProbeArgs)
 	case !strings.Contains(cfg.Notice, "https://kiro.dev/license/"):
 		t.Errorf("Notice = %q, want the licence link", cfg.Notice)
-	case cfg.Purge == nil || !slices.Equal(cfg.Purge.Names, []string{"kiro-cli", "kiro-cli-chat", "kiro-cli-term"}):
-		t.Errorf("Purge = %+v, want the three shell-era dispatcher names", cfg.Purge)
+	case cfg.LinkDir != "kiro-cli-bin":
+		t.Errorf("LinkDir = %q, want kiro-cli-bin, a dir toolbelt never writes", cfg.LinkDir)
+	case cfg.Purge == nil || len(cfg.Purge.Names) != 0:
+		t.Errorf("Purge = %+v, want no Names: they sweep LinkDir, where the shell installer wrote nothing", cfg.Purge)
+	}
+	for _, d := range []string{"bin/kiro-cli", "bin/kiro-cli-chat", "bin/kiro-cli-term"} {
+		if cfg.Purge != nil && !slices.Contains(cfg.Purge.Artifacts, d) {
+			t.Errorf("Purge.Artifacts = %q, want the shell-era dispatcher %s", cfg.Purge.Artifacts, d)
+		}
 	}
 }
 

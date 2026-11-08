@@ -20,13 +20,8 @@ import (
 // carries; a test rewrites it to the kiro session it joins through.
 const workflowFixtureParent = "sess_c0ffee01-2222-3333-4444-555555555555"
 
-// The two step sessions the fixtures carry on their nodes. They are the run's
-// other owners: KAS runs each step as its own kiro session, so these are the ids a
-// tab's mapping actually names while the run is working.
-const (
-	workflowFixtureStepOne = "sess_a1b2c3d4-5566-7788-99aa-bbccddeeff00"
-	workflowFixtureStepTwo = "sess_b2c3d4e5-6677-8899-aabb-ccddeeff0011"
-)
+// workflowFixtureStepOne is the first step session the fixtures carry on their nodes.
+const workflowFixtureStepOne = "sess_a1b2c3d4-5566-7788-99aa-bbccddeeff00"
 
 // workflowFixtureBeatPID is the placeholder pid run-beat.json carries; beat
 // rewrites it to the pid a case wants the probe asked about.
@@ -446,22 +441,16 @@ func TestWorkflowWatchAdmission(t *testing.T) {
 	})
 }
 
-// TestWorkflowMarkSurvivesAStepTransition pins the join across a step boundary,
-// which is the reported defect. Each workflow step runs as its OWN kiro session and
-// kiro-cli fires the session-title hook for it, so the tab's mapping names the
-// RUNNING STEP rather than the launching session for almost the whole life of a
-// run: measured on the live container, one tab's mapping named a step session
-// throughout a 17-minute window and followed the run from one step to the next. A
-// join on parentSessionId alone therefore finds no tab, the run is admitted for
-// nobody, and the mark goes dark the moment the next step's hook fires.
+// TestWorkflowMarkSurvivesAStepTransition pins the join across a step boundary. Each
+// workflow step runs as its own kiro session and reports in the launching tab, but the
+// tab's mapping stays its own conversation (sessionTitleSync.conversationOf), so the run
+// joins the tab through its parentSessionId whichever step is running.
 func TestWorkflowMarkSurvivesAStepTransition(t *testing.T) {
-	// A launching session no tab is mapped to, so every leg below joins through a
-	// STEP session and the parent id can light nothing on its own.
 	const launching = "sess_dddddddd-eeee-ffff-1111-222222222222"
 
-	t.Run("one run stays lit while its mapping moves from step one to step two", func(t *testing.T) {
+	t.Run("one run stays lit while it moves from step one to step two", func(t *testing.T) {
 		f := newWorkflowFixture(t)
-		f.pairs["tab1"] = workflowFixtureStepOne
+		f.pairs["tab1"] = launching
 		path := f.run("hash0", "wf_1111", "running.json", launching, tabStart.Add(time.Minute))
 
 		f.watch.pass(t.Context(), liveTabs("tab1"))
@@ -471,14 +460,11 @@ func TestWorkflowMarkSurvivesAStepTransition(t *testing.T) {
 			t.Fatalf("mark(tab1) = %+v while step one runs, want %+v", got, want)
 		}
 
-		// The transition: step one completes, step two starts as a new kiro session,
-		// and the hook re-points the tab's mapping to it. Same run, same file.
 		second, err := os.ReadFile(filepath.Join("testdata", "workflow-state", "running-second-step.json"))
 		if err != nil {
 			t.Fatalf("read the second-step fixture: %v", err)
 		}
 		f.write(path, strings.ReplaceAll(string(second), workflowFixtureParent, launching), tabStart.Add(2*time.Minute))
-		f.pairs["tab1"] = workflowFixtureStepTwo
 
 		f.watch.pass(t.Context(), liveTabs("tab1"))
 
@@ -487,26 +473,22 @@ func TestWorkflowMarkSurvivesAStepTransition(t *testing.T) {
 		}
 	})
 
-	t.Run("a completed step's session does not resurrect a terminal run", func(t *testing.T) {
-		// A run's owner set reaches a step whose own status is completed, so the
-		// run's TOP-LEVEL status has to stay the only thing that admits it.
+	t.Run("a tab mapped to a step session joins no run", func(t *testing.T) {
+		// A step's session is never a tab's conversation, so a run is not admitted for it.
 		f := newWorkflowFixture(t)
 		f.pairs["tab1"] = workflowFixtureStepOne
-		f.run("hash0", "wf_4444", "completed.json", launching, tabStart.Add(time.Minute))
+		f.run("hash0", "wf_3333", "running.json", launching, tabStart.Add(time.Minute))
 
 		f.watch.pass(t.Context(), liveTabs("tab1"))
 
 		if got := f.watch.mark("tab1"); got != (workflowMark{}) {
-			t.Errorf("mark(tab1) = %+v, want the zero mark: a completed run still holding its step's session must light nothing", got)
+			t.Errorf("mark(tab1) = %+v, want the zero mark: the run's one owner is its launching session", got)
 		}
 	})
 
 	t.Run("a run repeating one step session across nodes is counted once", func(t *testing.T) {
-		// paused-need-input.json carries the same step session on two nodes, which is
-		// what a real record does; an undeduplicated owner set would admit the run
-		// twice for the one tab and report two runs where there is one.
 		f := newWorkflowFixture(t)
-		f.pairs["tab1"] = workflowFixtureStepOne
+		f.pairs["tab1"] = launching
 		f.run("hash0", "wf_2222", "paused-need-input.json", launching, tabStart.Add(time.Minute))
 
 		f.watch.pass(t.Context(), liveTabs("tab1"))

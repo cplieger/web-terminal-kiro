@@ -276,15 +276,15 @@ RUN set -e; mkdir -p static/vendor/fonts; \
 # Both packages ship TS source only; they are extracted side by side under
 # static-src/node_modules/@cplieger so tsc resolves the UI's engine import.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.5.0-dev.5
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.5.0-dev.6
 # sha256 of the tarball: npm's dist.integrity is SHA-512, so this digest cannot be
 # copied from the registry; a hand bump of the version re-runs scripts/repin-sha.sh.
 # repin: dep=@cplieger/web-terminal-engine url=https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=d818d30225033469535fa325c7c16bf1dd79552c40e5d1d45a9b519a8b988947
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=76ee84e06d3c464f92c08fc77b3c31bfb9512844dadc1984b3c52674e179e5a5
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.7.0-dev.2
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=9.0.0-dev.1
 # repin: dep=@cplieger/web-terminal-ui url=https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=2d1aa5b5b0629ba8eb7189b8e659f204fe2ba40a1d58e6756960902037e25821
+ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=b4488cf564bcde9cb0825957dcc1b3fe304c47ad9b795ab3ff6c892ffeae51cb
 # The served bundle is built from the ARG pins while local dev compiles against
 # static-src/package.json, and nothing else fails when the two disagree. go.mod
 # is deliberately not compared: the engine's Go module and npm package version
@@ -545,10 +545,12 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
 # container recreation. It does NOT hold the kiro-cli install: server-managed
 # versions live separately under /config/tools/kiro-cli-versions.
 # Those paths are fixed and version-addressed, so kiro-cli's per-session binary
-# pin (a copy under the data dir) protects nothing; entrypoint.sh purges old ones.
+# pin (a copy under the data dir) protects nothing; the server purges old ones.
 ENV HOME=/config/home
 ENV KIRO_SKIP_BINARY_PINNING=1
-# PATH leads with the engine-managed bin dir. runtimes/{go,node}/bin stay off
+# PATH leads with the kiro-cli install manager's link dir, so the pinned kiro-cli
+# keeps its bare name over a tools-engine tool of that name, then the
+# engine-managed bin dir. runtimes/{go,node}/bin stay off
 # it: they would sit ahead of /usr/bin, this entrypoint never creates or repairs
 # them, and a binary planted while a tree was group/other-writable stays
 # executable after the mode is tightened. A restored pre-toolbelt volume needs
@@ -556,7 +558,7 @@ ENV KIRO_SKIP_BINARY_PINNING=1
 # tools/go/bin stays: it is GOPATH/bin, where `go install` lands without the
 # engine's GOBIN. Deleting a user's own go-installed tools would break the dev
 # box, and anyone able to plant there already holds /config/home/.ssh.
-ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PATH="/config/tools/kiro-cli-bin:/config/tools/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # No GOROOT/GOBIN: the engine installs Go under versioned opt/go/<ver>/ trees
 # and sets GOBIN itself at install time; the toolchain derives GOROOT.
 ENV GOPATH="/config/tools/go"

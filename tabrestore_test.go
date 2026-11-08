@@ -227,8 +227,9 @@ func TestTabRestorer_seedsTheMapping(t *testing.T) {
 		}
 		mgr := catManager(t)
 		tab := createTab(t, mgr)
-		if err := pollers.titles.seedMapping(t.Context(), tab, resumeA); err != nil {
-			t.Errorf("seedMapping = %v, want nil", err)
+		pollers.titles.seedConversation(tab, resumeA)
+		if got := pollers.titles.seedFor(tab); got != "" {
+			t.Errorf("seed for a tab with no title handle = %q, want none", got)
 		}
 		if entries, err := os.ReadDir(leaf); err != nil || len(entries) != 0 {
 			t.Errorf("the refused state dir holds %d entries (%v), want none", len(entries), err)

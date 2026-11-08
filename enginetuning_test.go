@@ -29,18 +29,18 @@ func TestMain(m *testing.M) {
 
 const validatedNode = "22.23.4"
 
-// kiroInstall is a fake kiro-cli data home and active kiro-cli.
+// kiroInstall is a fake kiro-cli data dir and active kiro-cli.
 type kiroInstall struct {
-	dataHome string
-	engine   string
-	node     string
+	dataDir string
+	engine  string
+	node    string
 }
 
 func newKiroInstall(t *testing.T) *kiroInstall {
 	t.Helper()
 	dir := t.TempDir()
-	in := &kiroInstall{dataHome: filepath.Join(dir, "share"), engine: filepath.Join(dir, "kiro-cli")}
-	in.node = filepath.Join(in.dataHome, "kiro-cli", "node")
+	in := &kiroInstall{dataDir: filepath.Join(dir, "share", "kiro-cli"), engine: filepath.Join(dir, "kiro-cli")}
+	in.node = filepath.Join(in.dataDir, "node")
 	if err := os.MkdirAll(filepath.Dir(in.node), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func (in *kiroInstall) unpack(t *testing.T, version string, embedded bool) {
 }
 
 func (in *kiroInstall) tuning() *engineTuning {
-	return newEngineTuning(true, validatedNode, in.dataHome, func() string { return in.engine })
+	return newEngineTuning(true, validatedNode, in.dataDir, func() string { return in.engine })
 }
 
 // noPresetKasNode clears an inherited KIRO_KAS_NODE_PATH and points the launcher
@@ -210,7 +210,7 @@ func TestEngineTuning_noActiveKiroCLIStartsStock(t *testing.T) {
 	capture.Default(t)
 	in := newKiroInstall(t)
 	in.unpack(t, "v"+validatedNode, true)
-	tuning := newEngineTuning(true, validatedNode, in.dataHome, func() string { return "" })
+	tuning := newEngineTuning(true, validatedNode, in.dataDir, func() string { return "" })
 	if got := tuning.env(); got != nil {
 		t.Errorf("env() with no active kiro-cli = %q, want nothing", got)
 	}
@@ -264,7 +264,7 @@ func TestNewEngineTuning_refusesWhatItCannotApply(t *testing.T) {
 		capture.Default(t)
 		in := newKiroInstall(t)
 		in.unpack(t, "v"+validatedNode, true)
-		got := newEngineTuning(true, "v"+validatedNode, in.dataHome, func() string { return in.engine }).env()
+		got := newEngineTuning(true, "v"+validatedNode, in.dataDir, func() string { return in.engine }).env()
 		if len(got) == 0 {
 			t.Error("env() = nothing, want the overlay: v22.23.4 and 22.23.4 name one version")
 		}
@@ -295,23 +295,6 @@ func TestParseHighThroughput(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestKiroDataHome(t *testing.T) {
-	t.Run("XDG_DATA_HOME wins", func(t *testing.T) {
-		t.Setenv("XDG_DATA_HOME", "/data")
-		t.Setenv("HOME", "/config/home")
-		if got := kiroDataHome(); got != "/data" {
-			t.Errorf("kiroDataHome() = %q, want /data", got)
-		}
-	})
-	t.Run("HOME otherwise", func(t *testing.T) {
-		t.Setenv("XDG_DATA_HOME", "")
-		t.Setenv("HOME", "/config/home")
-		if got := kiroDataHome(); got != "/config/home/.local/share" {
-			t.Errorf("kiroDataHome() = %q, want /config/home/.local/share", got)
-		}
-	})
 }
 
 func TestFileContains_findsANeedleAcrossReads(t *testing.T) {
