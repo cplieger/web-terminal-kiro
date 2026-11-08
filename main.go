@@ -549,8 +549,9 @@ const (
 	// lists it before toolbeltBinDir, so a toolbelt tool named kiro-cli cannot
 	// take the bare name from the pinned binary.
 	kiroLinkDir = "kiro-cli-bin"
-	// toolbeltBinDir is the toolbelt engine's link dir; legacy dispatchers and a
-	// manager-shaped kiro-cli link can sit here (retractFormerKiroLink).
+	// toolbeltBinDir is the toolbelt engine's link dir. Legacy dispatchers can sit here,
+	// and so can the manager's former kiro-cli links, which the manager retracts
+	// (FormerLinkDirs).
 	toolbeltBinDir = "bin"
 	// legacyStagePrefix prefixed the shell installer's staging trees directly under
 	// the tools dir, so anything matching this is an orphan its EXIT trap missed on
@@ -701,7 +702,6 @@ func startKiroCLI(cfg *baseKiro) kiroRuntime {
 			"hint", "this is an image defect: check the KIRO_CLI_VERSION / KIRO_CLI_SHA256 / KIRO_CLI_SHA256_ARM64 literals in entrypoint.sh")
 		return unavailableKiroRuntime()
 	}
-	retractFormerKiroLink(cfg.toolsDir)
 	ctx, cancel := context.WithCancel(context.Background())
 	cleanup := newKiroDataCleanup(kiroDataDir())
 	go cleanup.watch(ctx, mgr.Version)
@@ -768,10 +768,11 @@ func kiroInstallConfig(cfg *baseKiro) *pin.Config {
 			"amd64": cfg.sha256,
 			"arm64": cfg.sha256ARM64,
 		},
-		Root:       cfg.toolsDir,
-		LinkDir:    kiroLinkDir,
-		Assertions: kiroSettings(),
-		Purge:      kiroLegacyPurge(),
+		Root:           cfg.toolsDir,
+		LinkDir:        kiroLinkDir,
+		FormerLinkDirs: []string{toolbeltBinDir},
+		Assertions:     kiroSettings(),
+		Purge:          kiroLegacyPurge(),
 		// With the taint set, no pre-existing version directory may be activated at
 		// all: a forgeable sentinel is worthless evidence on a tree another host
 		// user could write. marotte deliberately leaves this UNSET — it has no

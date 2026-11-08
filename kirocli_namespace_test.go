@@ -10,7 +10,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -265,6 +267,73 @@ func TestToolbeltKiroCLIFootprintSurvivesABoot(t *testing.T) {
 	if target != filepath.Join(own, nsTool) {
 		t.Errorf("%s points at %q, want the active version's own dispatcher", link, target)
 	}
+}
+
+// imageToolsPath is the runtime image PATH's /config/tools segments (the last
+// ENV PATH line, the builder stages set their own), in order, moved under tools.
+// The others are dropped so a kiro-cli on the host cannot answer.
+func imageToolsPath(t *testing.T, tools string) string {
+	t.Helper()
+	raw, err := os.ReadFile("Dockerfile")
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	all := regexp.MustCompile(`(?m)^ENV PATH="([^"]+)"$`).FindAllSubmatch(raw, -1)
+	if all == nil {
+		t.Fatal("no ENV PATH line in the Dockerfile")
+	}
+	var dirs []string
+	for dir := range strings.SplitSeq(string(all[len(all)-1][1]), ":") {
+		if rest, ok := strings.CutPrefix(dir, "/config/tools/"); ok {
+			dirs = append(dirs, filepath.Join(tools, rest))
+		}
+	}
+	return strings.Join(dirs, string(os.PathListSeparator))
+}
+
+// TestToolbeltKiroCLIKeepsThePinnedBareName: with toolbelt's own bin/kiro-cli
+// on the volume, a `docker exec` shell's bare kiro-cli still resolves to the
+// pinned binary, and toolbelt's link is left as it is.
+func TestToolbeltKiroCLIKeepsThePinnedBareName(t *testing.T) {
+	env := newNSEnv(t)
+	survivors, _ := env.plantToolbeltKiroCLI(nsTool)
+	own := env.plantOwnVersion()
+	if err := env.manager().Ensure(t.Context()); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	env.assertIntact(survivors)
+
+	t.Setenv("PATH", imageToolsPath(t, env.tools))
+	found, err := exec.LookPath(nsTool)
+	if err != nil {
+		t.Fatalf("kiro-cli does not resolve on the image PATH %q: %v", os.Getenv("PATH"), err)
+	}
+	got, err := filepath.EvalSymlinks(found)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%s): %v", found, err)
+	}
+	if want := filepath.Join(own, nsTool); got != want {
+		t.Errorf("bare kiro-cli resolves through %s to %s, want the pinned %s", found, got, want)
+	}
+}
+
+// TestFormerKiroLinkInToolbeltBinIsRetracted: a manager-shaped bin/kiro-cli,
+// which a volume can still hold and which dangles once retention prunes its
+// version, is removed by a boot's Ensure, and toolbelt's own bin entries stay.
+func TestFormerKiroLinkInToolbeltBinIsRetracted(t *testing.T) {
+	env := newNSEnv(t)
+	survivors, _ := env.plantToolbeltKiroCLI()
+	own := env.plantOwnVersion()
+	former := env.symlink(filepath.Join(own, nsTool), filepath.Join(env.tools, toolbeltBinDir, nsTool))
+
+	if err := env.manager().Ensure(t.Context()); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	if _, err := os.Lstat(former); err == nil {
+		t.Errorf("%s survived the boot: the manager's former link in toolbelt's bin dir was not retracted", former)
+	}
+	env.assertIntact(survivors)
 }
 
 // nsToolsRel names dir relative to the tools dir, refusing anything not under
