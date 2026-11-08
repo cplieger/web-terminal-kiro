@@ -2302,6 +2302,14 @@ func TestStartTools_logsTheGatedWindowOpening(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	// The convergence goroutine logs the language-server nudge after lifting the gate.
+	// Wait for it, or that record lands in a later test's log capture.
+	for records.CountLevel(slog.LevelWarn, "no language servers enabled") == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the post-convergence language-server nudge never logged")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // TestWarnIfToolsBinUnreachable pins the PATH-reachability nudge added for h-f1:
