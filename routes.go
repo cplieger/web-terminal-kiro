@@ -10,6 +10,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/go/httpserver"
@@ -24,7 +25,7 @@ import (
 // the same path cannot drift apart across files.
 const (
 	apiPrefix = "/api/"
-	// healthPath is the readiness route; buildHandler's ProbeLogLevel policy must name
+	// healthPath is the readiness route; buildHandler's WithProbeLogLevel policy must name
 	// the same path the mux registers, or a healthy probe stops being demoted to Debug
 	// and a failing one stops being promoted.
 	healthPath = apiPrefix + "health"
@@ -43,7 +44,7 @@ type routeDeps struct {
 	// static is the embedded-static serving handler, built by the composition root
 	// together with the hash-pinned CSP the same tree produces.
 	static http.Handler
-	ready  *httpserver.Ready
+	ready  *atomic.Bool
 	// listenHint is "localhost[:port]" for THIS deployment; loopback refusals quote
 	// it so the remedy works on a server that did not keep the default port.
 	listenHint string
@@ -356,7 +357,7 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 			// otherwise fire this as a false broken-install alert on every deploy.
 			terminal.WithOnProcessExit(func(err error) {
 				kiroReady, _ := deps.kiroReady()
-				if err != nil && deps.ready.Ready() && kiroReady && time.Since(start) < 10*time.Second {
+				if err != nil && deps.ready.Load() && kiroReady && time.Since(start) < 10*time.Second {
 					sessionLogger.Warn(sessionFastDeathMsg,
 						"error", err,
 						"hint", "check /api/health and the kiro-cli install under /config/tools/kiro-cli-versions")
@@ -418,7 +419,7 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 		unready := func(reason string) {
 			httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, healthResponse("unready", reason))
 		}
-		if !deps.ready.Ready() {
+		if !deps.ready.Load() {
 			unready("starting up or shutting down")
 			return
 		}
@@ -608,11 +609,8 @@ func firstBlocked(checks []func() (bool, string)) (string, bool) {
 // What stays here is the refusal wording, which names the guarded surface and the
 // deployment's own listen hint — the 403 is the whole of what a refused caller is told.
 func loopbackOnly(surface, hint string, next http.Handler) http.Handler {
-	refuse := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		httpserver.WriteError(w, r, http.StatusForbidden, "loopback_only",
-			surface+" is loopback-only. Call it from inside the container with curl "+hint)
-	})
-	return httpserver.LoopbackOnly(refuse)(next)
+	return httpserver.LoopbackOnly(httpserver.WithLoopbackError("loopback_only",
+		surface+" is loopback-only. Call it from inside the container with curl "+hint))(next)
 }
 
 // sessionCostInterval is how often a contained session logs what it is currently costing.

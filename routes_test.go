@@ -68,7 +68,7 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 		t.Errorf("before ready: status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
 	}
 
-	deps.ready.Set(true)
+	deps.ready.Store(true)
 	if rec := get(); rec.Code != http.StatusOK {
 		t.Errorf("after ready: status = %d, want %d", rec.Code, http.StatusOK)
 	}
@@ -731,8 +731,8 @@ func TestWSAcceptsSameOrigin(t *testing.T) {
 // with no failing test anywhere. Asserting it THROUGH registerRoutes is the only
 // place that catches a dropped option.
 func TestSessionFactoryRequestsTheTitleEnv(t *testing.T) {
-	var ready httpserver.Ready
-	ready.Set(true)
+	var ready atomic.Bool
+	ready.Store(true)
 
 	var gotIDs []terminal.SessionID
 	staticSrv, _ := testStaticSurface()
@@ -890,15 +890,13 @@ func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
 	}
 }
 
-// TestHealthEndpoint_envelopeMatchesTheLibrary pins the wire shape this app
-// shares with httpserver.ReadinessHandler. The verdict is composite, so the handler
-// cannot reuse the library's and keeps its key order ("status" before "reason")
-// by hand. It sets no-store itself, because a cached "ok" keeps traffic arriving
-// at an instance that has begun draining (RFC 9111 heuristic freshness), so this
-// asserts against the bare mux. The byte-exact bodies also pin the ready document
-// (an absent tools key means disabled, not degraded) and the status codes, which
-// are all the Docker HEALTHCHECK reads.
-func TestHealthEndpoint_envelopeMatchesTheLibrary(t *testing.T) {
+// TestHealthEndpoint_envelope pins the wire shape, key order ("status" before
+// "reason") included. The handler sets no-store itself, because a cached "ok" keeps
+// traffic arriving at an instance that has begun draining (RFC 9111 heuristic
+// freshness), so this asserts against the bare mux. The byte-exact bodies also pin
+// the ready document (an absent tools key means disabled, not degraded) and the
+// status codes, which are all the Docker HEALTHCHECK reads.
+func TestHealthEndpoint_envelope(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		deps       *routeDeps
@@ -941,47 +939,13 @@ func TestHealthEndpoint_envelopeMatchesTheLibrary(t *testing.T) {
 			}
 			got := strings.TrimSpace(rec.Body.String())
 			if got != tc.wantBody {
-				t.Errorf("raw health body = %q, want %q (byte-exact: the key ORDER is the shared contract)", got, tc.wantBody)
+				t.Errorf("raw health body = %q, want %q (byte-exact: the key ORDER is the contract)", got, tc.wantBody)
 			}
 			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 				t.Errorf("Cache-Control = %q, want no-store: a cached readiness verdict defeats the gate", got)
 			}
-			// The "ready" and "unready" rows ARE the library's envelope; the tools row is
-			// this app's composite extension and has no library counterpart.
-			switch tc.name {
-			case "ready":
-				if libBody, libCC := libraryEnvelope(t, true); got != libBody || rec.Header().Get("Cache-Control") != libCC {
-					t.Errorf("ready envelope = %q/%q, httpserver.ReadinessHandler emits %q/%q; the two must agree byte-for-byte",
-						got, rec.Header().Get("Cache-Control"), libBody, libCC)
-				}
-			case "unready":
-				if libBody, libCC := libraryEnvelope(t, false); got != libBody || rec.Header().Get("Cache-Control") != libCC {
-					t.Errorf("unready envelope = %q/%q, httpserver.ReadinessHandler emits %q/%q; the reason string and key order are the shared contract",
-						got, rec.Header().Get("Cache-Control"), libBody, libCC)
-				}
-			}
 		})
 	}
-}
-
-// readyStub adapts a bool to httpserver.ReadinessChecker so the library's own
-// handler can be driven here.
-type readyStub bool
-
-func (r readyStub) Ready() bool { return bool(r) }
-
-// libraryEnvelope returns httpserver.ReadinessHandler's body and Cache-Control
-// for the given readiness, so the assertions above compare this app's
-// hand-matched envelope against the REAL library output rather than against a
-// literal copied from it. A httpserver bump that reorders the keys, renames a
-// field, reworks the unready wording, or drops no-store fails HERE.
-func libraryEnvelope(t *testing.T, ready bool) (body, cacheControl string) {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	httpserver.ReadinessHandler(readyStub(ready)).ServeHTTP(
-		rec, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody),
-	)
-	return strings.TrimSpace(rec.Body.String()), rec.Header().Get("Cache-Control")
 }
 
 // withDefaultPolicies fills the routeDeps POLICY functions with the
@@ -1024,8 +988,8 @@ func testStaticSurface() (http.Handler, string) {
 // fixture, a ready flag, and a short-lived cat as the session command. Tests
 // tweak fields (cmd, kiroReady) before registering.
 func newTestDeps(ready bool) *routeDeps {
-	var r httpserver.Ready
-	r.Set(ready)
+	var r atomic.Bool
+	r.Store(ready)
 	staticSrv, _ := testStaticSurface()
 	return withDefaultPolicies(&routeDeps{
 		static:  staticSrv,
@@ -1117,7 +1081,7 @@ func mustRegisterRoutes(t *testing.T, deps *routeDeps) (*http.ServeMux, *termina
 // must call it.
 func quietTeardown(t *testing.T, deps *routeDeps) {
 	t.Helper()
-	t.Cleanup(func() { deps.ready.Set(false) })
+	t.Cleanup(func() { deps.ready.Store(false) })
 }
 
 // readMarkerWithin polls a marker file the session's child process writes and
@@ -1171,8 +1135,8 @@ func newToolsDeps(t *testing.T) *routeDeps {
 		t.Fatalf("toolbelt.New: %v", err)
 	}
 	t.Cleanup(eng.Close)
-	var ready httpserver.Ready
-	ready.Set(true)
+	var ready atomic.Bool
+	ready.Store(true)
 	staticSrv, _ := testStaticSurface()
 	return withDefaultPolicies(&routeDeps{
 		static:  staticSrv,

@@ -406,7 +406,7 @@ func run() error {
 	tuning := newEngineTuning(parseHighThroughput(), envx.String(nodeValidatedKey), kiroDataDir(), kiro.engineBinary)
 
 	mux := http.NewServeMux()
-	var ready httpserver.Ready
+	var ready atomic.Bool
 
 	// The saved tab set, read before anything can save over it.
 	store := newTabStore(configMountDir)
@@ -515,14 +515,15 @@ func run() error {
 	defer stop()
 
 	slog.Info("web-terminal-kiro listening", "addr", addr, "work_dir", workDir)
-	ready.Set(true)
+	ready.Store(true)
 
 	// The pre-drain hook flips readiness false and cancels baseCtx, which ends the
 	// open /api/sessions/events streams; srv.Shutdown does not interrupt them.
-	if err := httpserver.Run(ctx, srv, ln, shutdownSessions,
+	if err := httpserver.Run(ctx, srv, ln,
+		httpserver.WithTeardown(shutdownSessions),
 		httpserver.WithShutdownGrace(shutdownGrace),
 		httpserver.WithPreDrain(func(context.Context) {
-			ready.Set(false)
+			ready.Store(false)
 			cancelBase()
 			slog.Info("shutting down", "cause", context.Cause(ctx))
 		})); err != nil {
@@ -530,7 +531,7 @@ func run() error {
 		// registerRoutes keys on it to distinguish app-initiated process
 		// cancellation from a spontaneous early child failure, so this fatal path
 		// must clear it too or a teardown emits a false broken-install alert.
-		ready.Set(false)
+		ready.Store(false)
 		// This path gets its own budget: httpserver builds a teardown context only
 		// on the graceful path, and it returns before the pre-drain hook here.
 		tctx, cancelTeardown := context.WithTimeout(context.Background(), shutdownGrace)
@@ -1459,10 +1460,10 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 				return r.Method == http.MethodGet &&
 					r.URL.Path == terminal.SessionEventsPath && hostPolicy.Allows(r)
 			}),
-			// /api/health is probed every 30s. ProbeLogLevel keeps healthy probes at
+			// /api/health is probed every 30s. WithProbeLogLevel keeps healthy probes at
 			// Debug while a FAILING probe surfaces at Warn/Error with its status and
 			// request id.
-			httpserver.ProbeLogLevel(healthPath),
+			httpserver.WithProbeLogLevel(healthPath),
 			// The session subtree logs its matched route template, never the raw path, so a
 			// session id never reaches the access log. The engine declares the prefix.
 			httpserver.WithTemplatePathsUnder(terminal.SessionsSubtreePath),
