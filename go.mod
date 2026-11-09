@@ -10,7 +10,7 @@ require (
 	github.com/cplieger/go/slogx v1.0.0
 	github.com/cplieger/go/textsafe v1.0.0
 	github.com/cplieger/toolbelt/v3 v3.15.0-dev.20
-	github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.6
+	github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.10
 )
 
 require (
@@ -25,7 +25,7 @@ require (
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	golang.org/x/mod v0.42.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 )
 
 tool github.com/cplieger/toolbelt/v3/cmd/toolcatalog
