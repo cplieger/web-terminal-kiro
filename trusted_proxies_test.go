@@ -374,7 +374,7 @@ func firstAttrValue(records *capture.Recorder, key string) (string, bool) {
 // file uses elsewhere -- because two assertions here turn on level
 // FILTERING rather than capture: TestBuildHandlerSkipsAccessLogForStreams
 // proves a HEALTHY /api/health probe never reaches the shipped stream
-// (the handler drops the Debug record ProbeLogLevel demotes it to), and
+// (the handler drops the Debug record WithProbeLogLevel demotes it to), and
 // TestBuildHandlerFailingProbeSurfaces reads the rendered level=ERROR. A
 // capture.Recorder keeps every level, which would weaken both to "recorded
 // at Debug".
@@ -562,10 +562,10 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 			t.Errorf("access log = %q, want no access line for skipped path %q (the skip wiring must keep stream lines out)", log, skipped)
 		}
 	}
-	// A HEALTHY probe logs at Debug (ProbeLogLevel), which the Info-level
+	// A HEALTHY probe logs at Debug (WithProbeLogLevel), which the Info-level
 	// handler above drops — so no /api/health line lands in the stream.
 	if strings.Contains(log, "path=/api/health") {
-		t.Errorf("access log = %q, want no healthy-probe line at the default level (ProbeLogLevel maps 2xx to Debug)", log)
+		t.Errorf("access log = %q, want no healthy-probe line at the default level (WithProbeLogLevel maps 2xx to Debug)", log)
 	}
 	for _, token := range []string{"live-token-1234", "live-token-5678", "live-token-2345", "live-token-3456", "live-token-9012"} {
 		if strings.Contains(log, token) {
@@ -611,7 +611,7 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 }
 
 // TestBuildHandlerFailingProbeSurfaces pins the other half of the
-// ProbeLogLevel contract: a FAILING /api/health probe (the readiness 503 when
+// WithProbeLogLevel contract: a FAILING /api/health probe (the readiness 503 when
 // kiro-cli is broken or missing) must land in the shipped log stream at
 // Error — the silent-skip idiom this replaced hid exactly that signal.
 // Serial: swaps the process-global default logger.
@@ -631,6 +631,6 @@ func TestBuildHandlerFailingProbeSurfaces(t *testing.T) {
 		t.Errorf("access log = %q, want the failing probe's access line (a 503 health check must not be silent)", log)
 	}
 	if !strings.Contains(log, "level=ERROR") {
-		t.Errorf("access log = %q, want the failing probe at Error (ProbeLogLevel maps 5xx to Error)", log)
+		t.Errorf("access log = %q, want the failing probe at Error (WithProbeLogLevel maps 5xx to Error)", log)
 	}
 }

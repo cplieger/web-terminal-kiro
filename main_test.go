@@ -2026,7 +2026,10 @@ func TestWSAttachLog(t *testing.T) {
 		if wantID == sessionID {
 			t.Fatalf("terminal.LogID(%q) returned the id unchanged; pick a longer fixture or the redaction assertion below proves nothing", sessionID)
 		}
-		for _, tc := range []struct{ key, want string }{
+		for _, tc := range []struct {
+			key  capture.AttrName
+			want string
+		}{
 			{"session", wantID},
 			{"client_ip", "192.0.2.1"}, // httptest.NewRequest's RemoteAddr, host only
 		} {

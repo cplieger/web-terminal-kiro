@@ -693,7 +693,7 @@ func (s *sessionTitleSync) forget(handle string) {
 // readSmallFile reads one regular, non-symlink state file of at most limit bytes, refusing a
 // larger one. The caller picks the bound: a lock is a line, a run record holds reports.
 func readSmallFile(ctx context.Context, path string, limit int) ([]byte, error) {
-	f, _, err := filesafe.OpenRegular(path)
+	f, _, err := filesafe.OpenRegularNoFollow(path)
 	if err != nil {
 		return nil, err
 	}
