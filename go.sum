@@ -6,8 +6,8 @@ github.com/cplieger/go/envx v1.0.0 h1:L9JL05FV8MkK6Bo4o9fnWCkhRfgKhOoycglAtY34hb
 github.com/cplieger/go/envx v1.0.0/go.mod h1:O0Nxq8Qfg/b1xqduFZYqi7Qm/FczL9fSYpjWq0/nvik=
 github.com/cplieger/go/filesafe v1.0.0 h1:V63mC2Kc1PlbAKhiCXMA5WiellXJtWPtNJwTG2Q37us=
 github.com/cplieger/go/filesafe v1.0.0/go.mod h1:Pu9t7x6mRQwXm09EdWaQvVK++fpjgGP7+58XiMxGYks=
-github.com/cplieger/go/httpclient v1.1.0-dev.1 h1:UIU9dimhFtx/ru3O7AqhqsznJoRIje91FGa9YLCf5Fc=
-github.com/cplieger/go/httpclient v1.1.0-dev.1/go.mod h1:zXZyXwYWXVujBH7qoNR16WYGHOGCo8hbJb0Gy8gNgBQ=
+github.com/cplieger/go/httpclient v1.1.0-dev.2 h1:UQIynDV7270GoBBlqE72yDyJI8EbdXCQFFkyfeHaN/o=
+github.com/cplieger/go/httpclient v1.1.0-dev.2/go.mod h1:zXZyXwYWXVujBH7qoNR16WYGHOGCo8hbJb0Gy8gNgBQ=
 github.com/cplieger/go/httpserver v1.1.0-dev.1 h1:3ourAEJNrs4SduR/NyRRSzwKEbObVc+mbZJgh3pmEq0=
 github.com/cplieger/go/httpserver v1.1.0-dev.1/go.mod h1:JEmYTXf41gzCh9IsslcEaAX8WMcHJBuqEiLEJCvoPUo=
 github.com/cplieger/go/keyenc v1.2.0 h1:aXG4y6YasM/qkP0dEut/P/POtrRnksdvAqGmh0CNBxo=
@@ -18,10 +18,12 @@ github.com/cplieger/go/scheduler v1.0.0 h1:9hfHmwGHDeV3CenwffaNrOVQ/l9i5XiEz5U4R
 github.com/cplieger/go/scheduler v1.0.0/go.mod h1:2cQv1OLOFwmyVNBbR/ocU1I6Qbg46787ZS+a0xZKHJI=
 github.com/cplieger/go/slogx v1.0.0 h1:o2KvMVQVuG9tUUHY26GCKf0rY2zgmuPnXnKKCqr/AvA=
 github.com/cplieger/go/slogx v1.0.0/go.mod h1:4v0aqEGWQ4ubxjIiddoMocANHMKB6SdYTgOWYaIUX6A=
-github.com/cplieger/go/ssrf v1.0.0 h1:AEex9GGBHsn+NL2ySAFETK3YwUk09Hi/Z7qNHhO3YcM=
-github.com/cplieger/go/ssrf v1.0.0/go.mod h1:hT5GvkE5Dpppz1C8VpTr8tOurelqdmOseIRDjeGcP68=
+github.com/cplieger/go/ssrf v1.1.0-dev.1 h1:nC7PVmgzfPtA+eJnqROwUdmp5Foo5eaIvL7T21Otn9o=
+github.com/cplieger/go/ssrf v1.1.0-dev.1/go.mod h1:r91QfhoaoHv+7Jyt9xXNcKcFAXB/NNxSwY/7RFacSPI=
 github.com/cplieger/go/textsafe v1.0.0 h1:cQhZdSsiwSI9VpRjGoib5N59K9uC7fLzqIg8DrmQneU=
 github.com/cplieger/go/textsafe v1.0.0/go.mod h1:5IH0ZWTC+U864nzWGtcwGkp+PtA5hrlcfY2zLY/TexM=
+github.com/cplieger/go/urlform v1.0.0 h1:CWebm+CTRVFjRKV5TUN1NyJ/dRPcj6IPMPf6hx+ZnK0=
+github.com/cplieger/go/urlform v1.0.0/go.mod h1:za2vxWNMT4+X50qgurZEDBsrxhMlkntfh6XJnfxzYH8=
 github.com/cplieger/toolbelt/v3 v3.15.0-dev.23 h1:LX/PKFfTm5dxxoZHB7Cx8lKwqUKQcYboA6OpOVo1utQ=
 github.com/cplieger/toolbelt/v3 v3.15.0-dev.23/go.mod h1:16Pyp1xAZh17bPA0+Qsy2oHLrBDDt1JCnQ36CgEmk6c=
 github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.10 h1:XLf0npiq9mALk6N+mviEG06qLfKPJapENOnFlZ+dsig=
