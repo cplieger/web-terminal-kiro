@@ -11,7 +11,7 @@ require (
 	github.com/cplieger/go/slogx v1.1.0-dev.1
 	github.com/cplieger/go/textsafe v1.1.0-dev.1
 	github.com/cplieger/toolbelt/v3 v3.15.0-dev.23
-	github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.11
+	github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.12
 )
 
 require (
