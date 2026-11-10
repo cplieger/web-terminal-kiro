@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net/http"
 	"path"
 	"slices"
@@ -13,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cplieger/go/health"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"
@@ -25,10 +29,10 @@ import (
 // the same path cannot drift apart across files.
 const (
 	apiPrefix = "/api/"
-	// healthPath is the readiness route; buildHandler's WithProbeLogLevel policy must name
+	// healthPath is the health route; buildHandler's WithProbeLogLevel policy must name
 	// the same path the mux registers, or a healthy probe stops being demoted to Debug
 	// and a failing one stops being promoted.
-	healthPath = apiPrefix + "health"
+	healthPath = "/healthz"
 	// toolsPath is the loopback tools API mount; httpapi.Handler is told the same base
 	// path so its own routing matches where it is mounted.
 	toolsPath = apiPrefix + "tools"
@@ -63,7 +67,7 @@ type routeDeps struct {
 	// holding 1.35 GB on a two-tab container).
 	containment *terminal.Containment
 	// kiroReady is the install manager's readiness verdict plus the reason to report
-	// when false; gates /api/health and session creation.
+	// when false; gates /healthz and session creation.
 	kiroReady func() (bool, string)
 	// restoring is true from boot until the tab restore finished; it holds session
 	// creation and the layout read (restorePendingGate).
@@ -98,7 +102,7 @@ type routeDeps struct {
 	workDir    string
 	// uploadDir is where pasted images are written; empty leaves uploadsPath unmounted.
 	uploadDir string
-	// sandbox is the startup check's /api/health state; "" omits the field.
+	// sandbox is the startup check's /healthz state; "" omits the field.
 	sandbox string
 }
 
@@ -208,14 +212,19 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 		})
 	}
 
-	mux.HandleFunc(healthPath, handleHealth(deps))
+	mux.Handle("GET "+healthPath, handleHealth(deps))
+	// Same two-pattern shape as kiroRescanPath: the "/" mount would otherwise serve
+	// every other method.
+	mux.HandleFunc(healthPath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Allow", "GET, HEAD")
+		httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "the health check answers GET and HEAD only")
+	})
 
 	return mgr
 }
 
-// kiroRescanBody is the repair hook's response envelope, matching healthBody's key order.
-// The status vocabulary is only partly shared: "ok"/"unready" mean what they mean on
-// /api/health; "abandoned" is this hook's own — only a rescan can fail to reach a verdict.
+// kiroRescanBody is the repair hook's response envelope. "ok" and "unready" report the
+// install manager's verdict; "abandoned" means the rescan reached none.
 type kiroRescanBody struct {
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
@@ -360,7 +369,7 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 				if err != nil && deps.ready.Load() && kiroReady && time.Since(start) < 10*time.Second {
 					sessionLogger.Warn(sessionFastDeathMsg,
 						"error", err,
-						"hint", "check /api/health and the kiro-cli install under /config/tools/kiro-cli-versions")
+						"hint", "check /healthz and the kiro-cli install under /config/tools/kiro-cli-versions")
 				}
 			}),
 		}
@@ -378,63 +387,82 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 	}
 }
 
-// healthBody is /api/health's response envelope. A struct, not a map, because
-// encoding/json sorts map keys, and httpserver's own readiness handler (and therefore
-// web-terminal-server and subflux) emits {"status":…,"reason":…}. ToolsMissing is a
-// POINTER so it is absent rather than 0 when unknown, since zero means converged.
-// FIELD ORDER IS THE WIRE CONTRACT: never reorder for fieldalignment.
-type healthBody struct {
-	Status       string `json:"status"`
-	Reason       string `json:"reason,omitempty"`
-	Tools        string `json:"tools,omitempty"`
-	ToolsMissing *int   `json:"tools_missing,omitempty"`
-	Sandbox      string `json:"sandbox,omitempty"`
+// reasonStarting is the /healthz reason while the listener is not serving: before
+// startup completes and from the start of a drain.
+const reasonStarting = "starting up or shutting down"
+
+// kiroReasons are the kiro-cli faults /healthz can list, one check each, in this order.
+var kiroReasons = []string{reasonInstalling, reasonRetrying, reasonUnavailable, reasonSettings}
+
+// healthVerdict is a health.Signal fixed for one request.
+type healthVerdict bool
+
+func (v healthVerdict) Healthy() bool { return bool(v) }
+
+// healthChecks reads listener readiness and the kiro-cli verdict once each. A refusal
+// whose reason is not one of kiroReasons is reported as reasonUnavailable, so an
+// unready install can never answer 200.
+func healthChecks(deps *routeDeps) []health.Check {
+	kiroFault := ""
+	if ok, why := deps.kiroReady(); !ok {
+		kiroFault = reasonUnavailable
+		if slices.Contains(kiroReasons, why) {
+			kiroFault = why
+		}
+	}
+	checks := make([]health.Check, 0, 1+len(kiroReasons))
+	checks = append(checks, health.Check{Signal: healthVerdict(deps.ready.Load()), Reason: reasonStarting})
+	for _, reason := range kiroReasons {
+		checks = append(checks, health.Check{Signal: healthVerdict(kiroFault != reason), Reason: reason})
+	}
+	return checks
 }
 
-// handleHealth returns the /api/health readiness handler. It reflects, in order: listener
-// readiness, the kiro-cli install manager's verdict, and the INFORMATIONAL tools and
-// sandbox fields — neither gates readiness.
+// healthBody is the /healthz answer: the health library's status and reasons, then
+// the informational keys, which never change the status code. ToolsMissing is a
+// pointer so it is absent while uncounted, because zero means converged.
+type healthBody struct { //nolint:govet // fieldalignment: the field order is the JSON key order
+	Status       string   `json:"status"`
+	Reasons      []string `json:"reasons,omitempty"`
+	Tools        string   `json:"tools,omitempty"`
+	ToolsMissing *int     `json:"tools_missing,omitempty"`
+	Sandbox      string   `json:"sandbox,omitempty"`
+}
+
+// capturedResponse holds one handler's answer so handleHealth can extend it.
+type capturedResponse struct {
+	header http.Header
+	body   bytes.Buffer
+	code   int
+}
+
+func (c *capturedResponse) Header() http.Header { return c.header }
+
+func (c *capturedResponse) WriteHeader(code int) {
+	if c.code == 0 {
+		c.code = code
+	}
+}
+
+func (c *capturedResponse) Write(p []byte) (int, error) {
+	c.WriteHeader(http.StatusOK)
+	return c.body.Write(p)
+}
+
+// handleHealth answers /healthz with health.CheckHandler's verdict, code and headers,
+// adding the tools, tools_missing and sandbox keys to its body.
 func handleHealth(deps *routeDeps) http.HandlerFunc {
-	// One constructor for both outcomes, so the informational fields cannot diverge
-	// between them; they belong on the 503 bodies too, since an operator diagnosing a
-	// 503 needs to see tools state as much as a healthy caller does.
-	healthResponse := func(status, reason string) healthBody {
-		body := healthBody{
-			Status:  status,
-			Reason:  reason,
-			Tools:   deps.toolsState(),
-			Sandbox: deps.sandbox,
-		}
+	return func(w http.ResponseWriter, r *http.Request) {
+		answer := capturedResponse{header: http.Header{}}
+		health.CheckHandler(healthChecks(deps)...).ServeHTTP(&answer, r)
+		maps.Copy(w.Header(), answer.header)
+		body := healthBody{Tools: deps.toolsState(), Sandbox: deps.sandbox}
 		if n, ok := deps.toolsMissing(); ok {
 			body.ToolsMissing = &n
 		}
-		return body
-	}
-	return func(w http.ResponseWriter, _ *http.Request) {
-		// Set here rather than by middleware, so the handler carries its own contract
-		// wherever it is mounted: a 200 with no explicit freshness is heuristically
-		// cacheable under RFC 9111, and a cached "ok" keeps traffic arriving at an
-		// instance that has begun draining.
-		w.Header().Set("Cache-Control", "no-store")
-		unready := func(reason string) {
-			httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, healthResponse("unready", reason))
-		}
-		if !deps.ready.Load() {
-			unready("starting up or shutting down")
-			return
-		}
-		// kiro-cli readiness, straight from the install manager. The listener binds
-		// BEFORE the install runs, so this is what tells `docker ps` and the monitoring
-		// probe apart from "serving". A READINESS signal, not liveness: under Swarm or
-		// k8s, wire this to a readinessProbe, never a livenessProbe.
-		if ok, reason := deps.kiroReady(); !ok {
-			unready(reason)
-			return
-		}
-		// The tools field is INFORMATIONAL: kiro-cli is the only core dependency, so
-		// monitoring stays green during a long first-boot install while operators can
-		// still see it.
-		httpserver.WriteJSON(w, healthResponse("ok", ""))
+		_ = json.Unmarshal(answer.body.Bytes(), &body)
+		w.WriteHeader(answer.code)
+		_ = json.NewEncoder(w).Encode(body)
 	}
 }
 

@@ -373,7 +373,7 @@ func firstAttrValue(records *capture.Recorder, key string) (string, bool) {
 // A TEXT handler at the DEFAULT level -- not the slogx/capture recorder this
 // file uses elsewhere -- because two assertions here turn on level
 // FILTERING rather than capture: TestBuildHandlerSkipsAccessLogForStreams
-// proves a HEALTHY /api/health probe never reaches the shipped stream
+// proves a HEALTHY /healthz probe never reaches the shipped stream
 // (the handler drops the Debug record WithProbeLogLevel demotes it to), and
 // TestBuildHandlerFailingProbeSurfaces reads the rendered level=ERROR. A
 // capture.Recorder keeps every level, which would weaken both to "recorded
@@ -464,7 +464,7 @@ func TestBuildHandlerClientIPThreading(t *testing.T) {
 // never switches protocols, so the response-based WithSkipUpgrades can't
 // cover it), while a request to /ws that never becomes a stream -- no
 // upgrade headers, or a non-GET carrying them -- MUST be logged; a healthy
-// /api/health probe is suppressed at the default Info level while a
+// /healthz probe is suppressed at the default Info level while a
 // failing probe still emits at Warn/Error (that admitted-upgrade half lives
 // in TestAccessLogSkipsOnlyCompletedUpgrades).
 //
@@ -494,7 +494,7 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 	)
 	t.Cleanup(func() { shutdownManager(t, mgr) })
 	mgr.MountAPI(mux)
-	mux.HandleFunc("/api/health", ok)
+	mux.HandleFunc("/healthz", ok)
 	mux.HandleFunc("/probe", ok)
 
 	h := buildHandler(mux, nil, "default-src 'self'", nil)
@@ -516,7 +516,7 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 		{method: http.MethodDelete, path: "/api/sessions/live-token-5678"},
 		{method: http.MethodPut, path: "/api/sessions/live-token-2345/pinned-title"},
 		{method: http.MethodDelete, path: "/api/sessions/live-token-3456/pinned-title"},
-		{method: http.MethodGet, path: "/api/health"},
+		{method: http.MethodGet, path: "/healthz"},
 		{method: http.MethodGet, path: "/api/sessions"},
 		{method: http.MethodGet, path: "/probe"},
 		{method: http.MethodGet, path: "/api/sessions/live-token-9012/extra/title"},
@@ -563,8 +563,8 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 		}
 	}
 	// A HEALTHY probe logs at Debug (WithProbeLogLevel), which the Info-level
-	// handler above drops — so no /api/health line lands in the stream.
-	if strings.Contains(log, "path=/api/health") {
+	// handler above drops — so no /healthz line lands in the stream.
+	if strings.Contains(log, "path=/healthz") {
 		t.Errorf("access log = %q, want no healthy-probe line at the default level (WithProbeLogLevel maps 2xx to Debug)", log)
 	}
 	for _, token := range []string{"live-token-1234", "live-token-5678", "live-token-2345", "live-token-3456", "live-token-9012"} {
@@ -611,7 +611,7 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 }
 
 // TestBuildHandlerFailingProbeSurfaces pins the other half of the
-// WithProbeLogLevel contract: a FAILING /api/health probe (the readiness 503 when
+// WithProbeLogLevel contract: a FAILING /healthz probe (the readiness 503 when
 // kiro-cli is broken or missing) must land in the shipped log stream at
 // Error — the silent-skip idiom this replaced hid exactly that signal.
 // Serial: swaps the process-global default logger.
@@ -619,15 +619,15 @@ func TestBuildHandlerFailingProbeSurfaces(t *testing.T) {
 	buf := captureTextLog(t)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	})
 
 	h := buildHandler(mux, nil, "default-src 'self'", nil)
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
 
 	log := buf.String()
-	if !strings.Contains(log, "path=/api/health") {
+	if !strings.Contains(log, "path=/healthz") {
 		t.Errorf("access log = %q, want the failing probe's access line (a 503 health check must not be silent)", log)
 	}
 	if !strings.Contains(log, "level=ERROR") {

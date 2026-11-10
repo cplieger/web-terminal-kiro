@@ -187,7 +187,7 @@ func parseTrustedInstallUIDs() []int {
 // SESSION, because cliPath is the manager's ACTIVE version directory.
 func sessionCommand(cliPath string, chatArgs ...string) []string {
 	const script = `if ! command -v "$0" >/dev/null 2>&1; then
-printf '%s\n' 'kiro-cli is not installed or not on PATH. The first-boot install may have failed. Check the container logs and /api/health.'
+printf '%s\n' 'kiro-cli is not installed or not on PATH. The first-boot install may have failed. Check the container logs and /healthz.'
 exit 1
 fi
 if ! "$0" whoami >/dev/null 2>&1; then
@@ -240,8 +240,8 @@ func main() {
 const shutdownGrace = 5 * time.Second
 
 // The startup stages a failure can be attributed to. Values, not messages: these
-// are the strings an operator's log query or alert rule matches, so changing one
-// is a breaking change to the log surface.
+// are the strings an operator's log search matches, so changing one is a breaking
+// change to the log surface.
 const (
 	stageWorkDir = "work_dir" // the /workspace mount is absent or not a directory
 	stageStatic  = "static"   // the embedded static tree is unusable
@@ -597,7 +597,7 @@ type kiroRuntime struct {
 	// engineBinary is the active kiro-cli, the binary that embeds the agent
 	// engine and its Node.js, or "" while none is installed.
 	engineBinary func() string
-	// ready is the /api/health and session-create verdict plus its 503 reason, or
+	// ready is the /healthz and session-create verdict plus its 503 reason, or
 	// nil when this app does not own the install (a bare `go run` with no pins)
 	// and readiness stays pure-listener.
 	ready func() (bool, string)
@@ -630,7 +630,7 @@ func unmanagedKiroRuntime(chatArgs []string) kiroRuntime {
 // unavailableKiroRuntime is the runtime for a container that CANNOT install
 // kiro-cli: the pins it was handed are unusable, so no version can ever be
 // activated. It reports unready rather than pretending, which gates session
-// creation and surfaces the fault on /api/health instead of letting every terminal
+// creation and surfaces the fault on /healthz instead of letting every terminal
 // die one by one. Degraded, never fatal: the HTTP surface and the `docker exec`
 // repair path stay alive, per this app's failure posture.
 func unavailableKiroRuntime() kiroRuntime {
@@ -649,7 +649,7 @@ func unavailableKiroRuntime() kiroRuntime {
 // its users is the consumer's. These four literals ARE that wording, and they are a
 // published contract: an operator reads them from `docker inspect` and a monitoring
 // probe, they are the 503 body of POST /api/sessions, and they are the reason text
-// /api/health serves. kiroReasonText is the single place they are produced.
+// /healthz serves. kiroReasonText is the single place they are produced.
 const (
 	// reasonInstalling also covers the first activation's data dir cleanup.
 	reasonInstalling = "kiro-cli installing"
@@ -666,7 +666,7 @@ const (
 )
 
 // kiroReasonText renders the install manager's typed reason as the reason
-// /api/health, the session-create gate and the repair hook serve. ReasonReady maps
+// /healthz, the session-create gate and the repair hook serve. ReasonReady maps
 // to "", which every one of those surfaces omits.
 func kiroReasonText(why pin.Reason) string {
 	switch why {
@@ -907,7 +907,7 @@ type toolsRuntime struct {
 	// creation is gated on it so the first kiro-cli never spawns before the
 	// manifest's tools are on PATH.
 	syncing func() bool
-	// state is the /api/health informational detail: syncing | ok | degraded. LIVE,
+	// state is the /healthz informational detail: syncing | ok | degraded. LIVE,
 	// not boot-only: after the boot verdict it tracks the engine's counted jobs.
 	state func() string
 	// missing is whole-tree convergence, a separate question from state (did the
@@ -916,7 +916,7 @@ type toolsRuntime struct {
 	missing func() (n int, ok bool)
 }
 
-// The three documented values of /api/health's informational tools field. Each is
+// The three documented values of /healthz's informational tools field. Each is
 // named rather than inlined because every one is written from more than one site
 // and a health consumer keys on the literal.
 const (
@@ -929,7 +929,7 @@ const (
 	toolsStateDegraded = "degraded"
 )
 
-// toolsStatus is the app-owned reducer behind /api/health's INFORMATIONAL tools field,
+// toolsStatus is the app-owned reducer behind /healthz's INFORMATIONAL tools field,
 // fed by the boot reconcile's verdict once and by the engine's OnJobChanged callback
 // thereafter — so a repair through the loopback API heals the field without a restart.
 //
@@ -964,7 +964,7 @@ func newToolsStatus() *toolsStatus {
 	return s
 }
 
-// get reads the current value for /api/health.
+// get reads the current value for /healthz.
 func (s *toolsStatus) get() string {
 	v, _ := s.state.Load().(string)
 	return v
@@ -1007,7 +1007,7 @@ func (s *toolsStatus) watchConvergence(ctx context.Context, count func() (int, e
 			// Back to unknown: tools_missing is absent when the count is not known, and an
 			// unreadable manifest is persistent and operator-fixable, hence Warn.
 			s.missing.Store(-1)
-			slog.Warn("tools: convergence recount failed; /api/health omits tools_missing until one succeeds",
+			slog.Warn("tools: convergence recount failed; /healthz omits tools_missing until one succeeds",
 				"error", err,
 				"hint", "fix the manifest (schema v2 JSON); an unreadable manifest also fails the tools engine outright on the next restart")
 			return
@@ -1110,7 +1110,7 @@ func toolsStatusCounts(kind string) bool {
 
 // degradedRuntime is the engine-less runtime a startTools failure returns: engine
 // stays nil (no /api/tools mount) and syncing reports false (sessions ungated) while
-// state reports degraded so the failure is visible on /api/health instead of looking
+// state reports degraded so the failure is visible on /healthz instead of looking
 // like a deliberate disable.
 func degradedRuntime() toolsRuntime {
 	return toolsRuntime{
@@ -1135,7 +1135,7 @@ func (t *toolsRuntime) close() {
 
 // warnIfToolsBinUnreachable warns when the engine's single PATH directory
 // (<toolsDir>/bin) is absent from this process's PATH. Every tool then provisions
-// successfully and /api/health reports tools=ok while no session, and therefore no
+// successfully and /healthz reports tools=ok while no session, and therefore no
 // kiro-cli PATH scan, can see any of it. Sessions inherit this process's environment,
 // so this process's PATH is the right thing to test. Warn, never fatal: in the
 // container the cause is a compose PATH override or an image whose ENV PATH dropped
@@ -1150,14 +1150,14 @@ func warnIfToolsBinUnreachable(toolsDir string) {
 			return
 		}
 	}
-	slog.Warn("the tools tree is not on PATH: every tool the manifest installs will be invisible to kiro-cli and to terminal sessions, even though /api/health will report tools=ok",
+	slog.Warn("the tools tree is not on PATH: every tool the manifest installs will be invisible to kiro-cli and to terminal sessions, even though /healthz will report tools=ok",
 		"tools_bin", binDir,
 		"hint", "add "+binDir+" to this process's PATH. In the container that means the image's ENV PATH (or a compose override of it) no longer leads with the tools tree entrypoint.sh hardened and exported; outside it, a bare `go run` inherits the developer's PATH, so the derived tree is expected to be absent from it.")
 }
 
 // logRootIntegrityFindings turns a toolbelt root-integrity refusal into one
 // operator-queryable line per offending root. toolbelt logs the refusal too, but as
-// a single joined string, so without this the degraded /api/health verdict is backed
+// a single joined string, so without this the degraded /healthz verdict is backed
 // only by a message nothing can be filtered on.
 func logRootIntegrityFindings(err error) {
 	var unfit *toolbelt.RootIntegrityError
@@ -1265,7 +1265,7 @@ func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
 		// class).
 		logRootIntegrityFindings(err)
 		// Unlike the missing-config-dir path, a FAILED production subsystem must
-		// stay visible on /api/health. The engine stays nil and syncing reports
+		// stay visible on /healthz. The engine stays nil and syncing reports
 		// false, so sessions remain ungated.
 		return degradedRuntime()
 	}
@@ -1293,7 +1293,7 @@ func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
 		// which job to correlate with toolbelt's own job warnings.
 		slog.Info("tools: boot convergence started; session creation is gated until it finishes",
 			"job", job.ID,
-			"hint", "POST /api/sessions answers 503 \"tools installing\" (Retry-After 5) and /api/health reports tools=syncing until this converges")
+			"hint", "POST /api/sessions answers 503 \"tools installing\" (Retry-After 5) and /healthz reports tools=syncing until this converges")
 		wg.Go(func() { awaitBootConvergence(ctx, eng, job.ID, status.recordBoot, manifestPath) })
 	}
 	// After the reconcile enqueue, so the single-flight queue runs the boot-critical
@@ -1460,7 +1460,7 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 				return r.Method == http.MethodGet &&
 					r.URL.Path == terminal.SessionEventsPath && hostPolicy.Allows(r)
 			}),
-			// /api/health is probed every 30s. WithProbeLogLevel keeps healthy probes at
+			// /healthz is probed every 30s. WithProbeLogLevel keeps healthy probes at
 			// Debug while a FAILING probe surfaces at Warn/Error with its status and
 			// request id.
 			httpserver.WithProbeLogLevel(healthPath),

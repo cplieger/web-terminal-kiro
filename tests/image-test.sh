@@ -116,12 +116,12 @@ start_server() {
   docker run -d --name "$name" "$@" "$image" >/dev/null
 }
 
-# sandbox_state <name> prints the sandbox state /api/health reports. The 503
+# sandbox_state <name> prints the sandbox state /healthz reports. The 503
 # body carries it too, so this does not wait for the kiro-cli download.
 sandbox_state() {
   local state="" i
   for i in $(seq 1 60); do
-    state=$(docker exec "$1" curl -s --max-time 2 http://127.0.0.1:9848/api/health 2>/dev/null \
+    state=$(docker exec "$1" curl -s --max-time 2 http://127.0.0.1:9848/healthz 2>/dev/null \
       | jq -r '.sandbox // empty' 2>/dev/null || true)
     [ -n "$state" ] && break
     [ "$i" -lt 60 ] && sleep 1
@@ -206,7 +206,7 @@ load_profile "$aa_file"
 p=smoke-web-terminal-kiro-sbx-P-$$
 start_server "$p" "${profile_args[@]}" -e KIRO_CLI_SANDBOX=true
 state=$(sandbox_state "$p")
-[ "$state" = available ] || fail "under the shipped profiles /api/health reports sandbox \"$state\", want available"
+[ "$state" = available ] || fail "under the shipped profiles /healthz reports sandbox \"$state\", want available"
 wait_for_log "$p" 'kiro-cli sandbox available' || fail "no 'kiro-cli sandbox available' log line under the shipped profiles"
 log=$(docker logs "$p" 2>&1) || fail "could not read the log of $p"
 proc=$(sed -n '/kiro-cli sandbox available/{s/.*proc=\([a-z]*\).*/\1/p;q;}' <<<"$log")
@@ -240,11 +240,11 @@ out=$(in_container "$p" "$shim" "${argv[@]}" -- /bin/sh -c \
   'test -e /config/home/.ssh/id || echo ssh-hidden; test -s /config/home/.netrc || echo netrc-hidden') \
   || fail "a sandboxed command hiding credentials failed under the shipped profiles (exit $?)"
 [ "$out" = "ssh-hidden"$'\n'"netrc-hidden" ] || fail "credential-hiding probe printed \"$out\", want ssh-hidden and netrc-hidden"
-docker exec "$p" curl -s --max-time 2 -o /dev/null http://127.0.0.1:9848/api/health || fail "the server is unreachable outside the sandbox"
-if sandboxed "$p" block 'curl -s --max-time 2 -o /dev/null http://127.0.0.1:9848/api/health'; then
+docker exec "$p" curl -s --max-time 2 -o /dev/null http://127.0.0.1:9848/healthz || fail "the server is unreachable outside the sandbox"
+if sandboxed "$p" block 'curl -s --max-time 2 -o /dev/null http://127.0.0.1:9848/healthz'; then
   fail "a block-all sandboxed command reached the server; it must have its own network"
 fi
-sandboxed "$p" allow 'curl -s --max-time 2 -o /dev/null http://127.0.0.1:9848/api/health' \
+sandboxed "$p" allow 'curl -s --max-time 2 -o /dev/null http://127.0.0.1:9848/healthz' \
   || fail "an allow-all sandboxed command could not reach the server (exit $?)"
 tab=$(tab_path "$p")
 case "$tab" in
@@ -260,7 +260,7 @@ docker rm -f "$p" >/dev/null
 c=smoke-web-terminal-kiro-sbx-C-$$
 start_server "$c" "${profile_args[@]}" --cap-add SYS_ADMIN -e KIRO_CLI_SANDBOX=true
 state=$(sandbox_state "$c")
-[ "$state" = available ] || fail "with cap_add SYS_ADMIN /api/health reports sandbox \"$state\", want available"
+[ "$state" = available ] || fail "with cap_add SYS_ADMIN /healthz reports sandbox \"$state\", want available"
 wait_for_log "$c" 'kiro-cli sandbox available' || fail "no 'kiro-cli sandbox available' log line with cap_add SYS_ADMIN"
 # Without the shim's --unshare-pid, kiro-cli's probe would bind the
 # container's /proc here and pick a fresh /proc no command can mount.
@@ -286,14 +286,14 @@ for pair in "$r:$aa_name (enforce)" "$u:unconfined"; do
   arm=${pair%%:*}
   label=${pair#*:}
   state=$(sandbox_state "$arm")
-  [ "$state" = unavailable ] || fail "$arm: under AppArmor \"$label\" /api/health reports sandbox \"$state\", want unavailable"
+  [ "$state" = unavailable ] || fail "$arm: under AppArmor \"$label\" /healthz reports sandbox \"$state\", want unavailable"
   wait_for_log "$arm" 'kiro-cli sandbox unavailable' || fail "$arm: no 'kiro-cli sandbox unavailable' warning under AppArmor \"$label\""
   log_has "$arm" 'kiro-cli sandbox unavailable' 'AppArmor confines the container as' "$label" \
     || fail "$arm: the unavailable warning does not name the AppArmor confinement \"$label\""
   docker rm -f "$arm" >/dev/null
 done
 state=$(sandbox_state "$s")
-[ "$state" = unavailable ] || fail "under Docker's default seccomp profile /api/health reports sandbox \"$state\", want unavailable"
+[ "$state" = unavailable ] || fail "under Docker's default seccomp profile /healthz reports sandbox \"$state\", want unavailable"
 wait_for_log "$s" 'kiro-cli sandbox unavailable' || fail "no 'kiro-cli sandbox unavailable' warning under Docker's default seccomp profile"
 log_has "$s" 'kiro-cli sandbox unavailable' 'output="bwrap: ' \
   || fail "under Docker's default seccomp profile the unavailable warning does not carry bwrap's own error"
@@ -310,7 +310,7 @@ chmod 755 "$tmp/stray" "$tmp/stray/bwrap"
 d=smoke-web-terminal-kiro-sbx-D-$$
 start_server "$d" -e KIRO_CLI_SANDBOX=true -v "$tmp/stray:/opt/stray:ro" -e PATH="/opt/stray:$image_path"
 state=$(sandbox_state "$d")
-[ "$state" = unavailable ] || fail "under Docker's default profiles /api/health reports sandbox \"$state\", want unavailable"
+[ "$state" = unavailable ] || fail "under Docker's default profiles /healthz reports sandbox \"$state\", want unavailable"
 wait_for_log "$d" 'kiro-cli sandbox unavailable' || fail "no 'kiro-cli sandbox unavailable' warning under Docker's defaults"
 log_has "$d" 'kiro-cli sandbox unavailable' 'AppArmor confines the container as' 'docker-default (enforce)' \
   || fail "under Docker's defaults the unavailable warning does not name the AppArmor confinement \"docker-default (enforce)\""
@@ -343,7 +343,7 @@ docker rm -f "$d" >/dev/null
 o=smoke-web-terminal-kiro-sbx-O-$$
 start_server "$o" "${profile_args[@]}"
 state=$(sandbox_state "$o")
-[ "$state" = off ] || fail "without KIRO_CLI_SANDBOX /api/health reports sandbox \"$state\", want off"
+[ "$state" = off ] || fail "without KIRO_CLI_SANDBOX /healthz reports sandbox \"$state\", want off"
 wait_for_log "$o" 'web-terminal-kiro listening' || fail "the server never logged that it is listening"
 if log_has "$o" 'kiro-cli sandbox'; then
   fail "the server logged a sandbox verdict with the sandbox off"

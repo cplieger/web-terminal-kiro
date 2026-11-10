@@ -12,7 +12,7 @@ A change to the wire protocol, or to how a route the engine mounts answers, belo
 
 ## Rules
 
-- Every refusal the app writes goes through `httpserver.WriteError` with a snake_case code, like `loopback_only` and `not_ready`. The `/api/health` and rescan status documents use `httpserver.WriteJSONStatus` instead. A plain `http.Error` body keeps the status but drops the JSON envelope and the request ID that matches the access-log line.
+- Every refusal the app writes goes through `httpserver.WriteError` with a snake_case code, like `loopback_only` and `not_ready`. The `/healthz` body comes from `go/health`'s `CheckHandler`, with the app's `tools`, `tools_missing` and `sandbox` fields added, and the rescan status document uses `httpserver.WriteJSONStatus`. A plain `http.Error` body keeps the status but drops the JSON envelope and the request ID that matches the access-log line.
 - A rejected environment value is logged by its variable name, never by its value, because a compose expansion mistake can put a credential in any variable. Some library parsers log the raw value of a bad input, so screen a value before you hand it to one, as `parseCatalogRefresh` does for `TOOL_CATALOG_REFRESH`.
 - `static-src/eslint.config.base.mjs` is synced from cplieger/ci, so do not edit it here. A lint rule for this repo alone goes in `static-src/eslint.config.mjs`.
 - `static/app.js`, `static/style.css` and `static/vendor/` are gitignored build output. `go:embed static` embeds whatever the folder holds, so a local build serves what the last run left there.

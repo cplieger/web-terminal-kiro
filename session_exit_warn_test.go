@@ -107,7 +107,7 @@ func TestSessionFastDeathWarn(t *testing.T) {
 	t.Run("fast death while kiro-cli is unready stays quiet", func(t *testing.T) {
 		records := runFastDeathSession(t, true, func() (bool, string) { return false, reasonInstalling })
 		if got := records.CountLevel(slog.LevelWarn, warnMsg); got != 0 {
-			t.Errorf("log = %q, want no fast-death Warn while the kiro-cli install is unready (got %d); that state reports itself through /api/health's reason, and a broken-install alert per tab during a first-boot download is the false signal the guard exists to suppress", records.Messages(), got)
+			t.Errorf("log = %q, want no fast-death Warn while the kiro-cli install is unready (got %d); that state reports itself through /healthz's reasons, and a broken-install alert per tab during a first-boot download is the false signal the guard exists to suppress", records.Messages(), got)
 		}
 	})
 }

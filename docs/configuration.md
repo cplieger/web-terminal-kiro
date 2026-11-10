@@ -35,7 +35,7 @@ Run `kiro-cli settings <key> <value>` in a tab to change one of these defaults, 
 
 List the exact names and addresses you type in the browser, for example `localhost,192.0.2.5,webterm.example.com`. Use bare names and addresses only, with no scheme, path or CIDR range such as `192.0.2.0/24`. This list is the check that stops DNS rebinding, described in [Security](hardening.md).
 
-A request that is loopback on both ends is always admitted, so the healthcheck and commands run inside the container keep working. Both the client address and the `Host` must be loopback for that, as with `127.0.0.1:9848` or `localhost:9848`. Any other name still needs to be in the list.
+A request that is loopback on both ends is always admitted, so the healthcheck and commands run inside the container keep working. Both the client address and the `Host` must be loopback for that, as with `127.0.0.1:9848` or `localhost:9848`. Any other name still needs to be in the list. An uptime prober from outside must use a name in the list.
 
 Malformed entries are dropped with a warning that gives their count. When every entry is malformed, the server refuses every request that is not loopback and logs why.
 
@@ -87,7 +87,7 @@ Each user ID you list states that the account is already as privileged as this s
 
 ## KIRO_CLI_SANDBOX
 
-Set it to `true` once the container runs with both the seccomp and AppArmor profiles from [Command sandbox](sandbox.md), which needs a host with AppArmor. At each start the server then checks that the container runs under that AppArmor profile, runs one command in kiro-cli's sandbox, and logs whether both worked. Only when it worked does kiro-cli get a working bubblewrap, so `/sandbox` does not report a sandbox that cannot run. `true`, `yes`, `on` and `1` turn it on, in any letter case, and `false`, `no`, `off` and `0` leave it off. Any other value also leaves it off, with a warning. `/api/health` reports the result in its `sandbox` field.
+Set it to `true` once the container runs with both the seccomp and AppArmor profiles from [Command sandbox](sandbox.md), which needs a host with AppArmor. At each start the server then checks that the container runs under that AppArmor profile, runs one command in kiro-cli's sandbox, and logs whether both worked. Only when it worked does kiro-cli get a working bubblewrap, so `/sandbox` does not report a sandbox that cannot run. `true`, `yes`, `on` and `1` turn it on, in any letter case, and `false`, `no`, `off` and `0` leave it off. Any other value also leaves it off, with a warning. `/healthz` reports the result in its `sandbox` field.
 
 ## Uploads
 

@@ -17,7 +17,7 @@ import { expect, test } from "@playwright/test";
 // Deliberately NOT here: sending keystrokes, asserting terminal output, or
 // exercising a session. Those need an authenticated kiro-cli.
 
-// The server may be answering 503 on /api/health because kiro-cli is still
+// The server may be answering 503 on /healthz because kiro-cli is still
 // installing. That is irrelevant to every assertion below, which is the point of
 // the app's bind-first boot: static assets and the shell are reachable regardless.
 
