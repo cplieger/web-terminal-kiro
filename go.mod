@@ -3,7 +3,7 @@ module github.com/cplieger/web-terminal-kiro
 go 1.27.4
 
 require (
-	github.com/cplieger/go/envx v1.1.0-dev.1
+	github.com/cplieger/go/envx v1.1.0-dev.2
 	github.com/cplieger/go/filesafe v1.1.0-dev.1
 	github.com/cplieger/go/health v1.1.0-dev.1
 	github.com/cplieger/go/httpserver v1.2.0-dev.1
@@ -20,7 +20,7 @@ require (
 	github.com/cplieger/go/httpclient v1.2.0-dev.1 // indirect
 	github.com/cplieger/go/keyenc v1.3.0-dev.1 // indirect
 	github.com/cplieger/go/scheduler v1.1.0-dev.1 // indirect
-	github.com/cplieger/go/ssrf v1.1.0-dev.4 // indirect
+	github.com/cplieger/go/ssrf v1.1.0-dev.5 // indirect
 	github.com/cplieger/go/urlform v1.2.0-dev.1 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
