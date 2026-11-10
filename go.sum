@@ -18,12 +18,12 @@ github.com/cplieger/go/scheduler v1.0.0 h1:9hfHmwGHDeV3CenwffaNrOVQ/l9i5XiEz5U4R
 github.com/cplieger/go/scheduler v1.0.0/go.mod h1:2cQv1OLOFwmyVNBbR/ocU1I6Qbg46787ZS+a0xZKHJI=
 github.com/cplieger/go/slogx v1.0.0 h1:o2KvMVQVuG9tUUHY26GCKf0rY2zgmuPnXnKKCqr/AvA=
 github.com/cplieger/go/slogx v1.0.0/go.mod h1:4v0aqEGWQ4ubxjIiddoMocANHMKB6SdYTgOWYaIUX6A=
-github.com/cplieger/go/ssrf v1.1.0-dev.1 h1:nC7PVmgzfPtA+eJnqROwUdmp5Foo5eaIvL7T21Otn9o=
-github.com/cplieger/go/ssrf v1.1.0-dev.1/go.mod h1:r91QfhoaoHv+7Jyt9xXNcKcFAXB/NNxSwY/7RFacSPI=
+github.com/cplieger/go/ssrf v1.1.0-dev.2 h1:y3Le2mtAnpJQLKeyc2ip4WHUMe0HoNmkGfmMnTtMXQA=
+github.com/cplieger/go/ssrf v1.1.0-dev.2/go.mod h1:kK0nCpWxIgDL8rx7xUweZrPlELrcjWKq7m6vAMx4Cz8=
 github.com/cplieger/go/textsafe v1.0.0 h1:cQhZdSsiwSI9VpRjGoib5N59K9uC7fLzqIg8DrmQneU=
 github.com/cplieger/go/textsafe v1.0.0/go.mod h1:5IH0ZWTC+U864nzWGtcwGkp+PtA5hrlcfY2zLY/TexM=
-github.com/cplieger/go/urlform v1.0.0 h1:CWebm+CTRVFjRKV5TUN1NyJ/dRPcj6IPMPf6hx+ZnK0=
-github.com/cplieger/go/urlform v1.0.0/go.mod h1:za2vxWNMT4+X50qgurZEDBsrxhMlkntfh6XJnfxzYH8=
+github.com/cplieger/go/urlform v1.1.0-dev.1 h1:ajOx3GNwhwkf2LTMBhEgOMlgpTJdRwZDjIMGD92LDAo=
+github.com/cplieger/go/urlform v1.1.0-dev.1/go.mod h1:za2vxWNMT4+X50qgurZEDBsrxhMlkntfh6XJnfxzYH8=
 github.com/cplieger/toolbelt/v3 v3.15.0-dev.23 h1:LX/PKFfTm5dxxoZHB7Cx8lKwqUKQcYboA6OpOVo1utQ=
 github.com/cplieger/toolbelt/v3 v3.15.0-dev.23/go.mod h1:16Pyp1xAZh17bPA0+Qsy2oHLrBDDt1JCnQ36CgEmk6c=
 github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.10 h1:XLf0npiq9mALk6N+mviEG06qLfKPJapENOnFlZ+dsig=
