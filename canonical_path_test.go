@@ -30,8 +30,8 @@ func loopbackRequest(method, target, body string) *http.Request {
 // TestCanonicalPathGuard_refusesNonCanonicalControlPlanePath is the reason the
 // guard exists. Each row is a spelling http.ServeMux CLEANS before it selects a
 // pattern, aimed at a route whose caller does not follow redirects: the README's
-// documented repair POST and mutating tool calls (plain `curl`, no -L) and the
-// image's baked health probe (`curl -sfS --max-time 4`, no -L). Verified against
+// documented repair POST and mutating tool calls (plain `curl`, no -L) and a
+// health probe that does not follow redirects (`curl -sf`). Verified against
 // the real mux on go1.26.5, every one of these was a 307 before the guard — and a
 // 307 makes those callers exit 0 having never reached a handler, so the mutation
 // silently did not happen.
@@ -63,7 +63,7 @@ func TestCanonicalPathGuard_refusesNonCanonicalControlPlanePath(t *testing.T) {
 		// changed.
 		why string
 	}{
-		{"health, empty segment", http.MethodGet, "//healthz", "307 to /healthz; the baked HEALTHCHECK curl exits 0 and reports the container healthy without ever consulting readiness"},
+		{"health, empty segment", http.MethodGet, "//healthz", "307 to /healthz; a probe that does not follow redirects exits 0 and reports healthy without ever consulting readiness"},
 		{"health, dot segment", http.MethodGet, "/./healthz", "307 to /healthz, same probe"},
 		{"tools exact, empty segment", http.MethodGet, "/api//tools", "307 to /api/tools; the README's inventory read returns nothing and succeeds"},
 		{"tools exact, trailing dot", http.MethodGet, toolsPath + "/.", "307 to /api/tools"},
@@ -334,7 +334,7 @@ func TestCanonicalPathGuardedRoute(t *testing.T) {
 		want bool
 		why  string
 	}{
-		{healthPath, true, "the baked HEALTHCHECK's probe"},
+		{healthPath, true, "the health probe"},
 		{toolsPath, true, "the tools API's exact mount"},
 		{toolsPath + "/", true, "the tools API's subtree mount"},
 		{toolsPath + "/gopls", true, "a mutating tool call under the subtree"},

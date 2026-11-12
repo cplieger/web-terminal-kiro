@@ -682,14 +682,7 @@ EXPOSE 9848
 # but do not restart the container (restart policies react to process exit,
 # not health status); under a liveness-acting orchestrator, wire /healthz
 # to a readinessProbe and a tcpSocket probe on the port for liveness.
-# DL3025 wants JSON notation, which cannot express this: the URL is built with
-# the shell parameter expansion ${LISTEN_ADDR##*:} to read the port out of the
-# runtime listen address, and exec form performs no expansion at all -- it would
-# probe a literal. This image also runs as root with a shell for git/gh, so it
-# will never be shell-less, and the distroless case the rule guards does not
-# arise here.
-# hadolint ignore=DL3025
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20m \
-    CMD curl -sfS --max-time 4 "http://127.0.0.1:${LISTEN_ADDR##*:}/healthz"
+    CMD ["/app/web-terminal-kiro", "health"]
 
 ENTRYPOINT ["/opt/web-terminal-kiro/entrypoint.sh"]

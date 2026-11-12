@@ -221,6 +221,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, kasNodeLauncherName+":", err)
 		os.Exit(127)
 	}
+	if len(os.Args) == 2 && os.Args[1] == "health" {
+		os.Exit(healthCommand(os.Stderr, listenAddr()))
+	}
 	if err := run(); err != nil {
 		// Rendered once, here: the failure branches in run carry their operator hint
 		// inside the returned error, so a startup failure produces exactly one ERROR
@@ -327,7 +330,7 @@ func run() error {
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
 
-	addr := cmp.Or(envx.String("LISTEN_ADDR"), ":9848")
+	addr := listenAddr()
 	// Warn for any bind reachable beyond loopback: a client that can reach this
 	// port gets an UNAUTHENTICATED kiro-cli PTY. Only a definite exposure warns; an
 	// unparseable addr will fail at Listen with its own error.
