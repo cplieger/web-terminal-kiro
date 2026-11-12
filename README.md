@@ -113,7 +113,7 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 | --- | --- | --- |
 | `ALLOWED_HOSTS` | Comma-separated hostnames and IPs you open the terminal at. Any other host name is refused. Unset accepts every host and logs a warning. | _(unset)_ |
 | `TRUSTED_PROXIES` | Reverse-proxy CIDRs or IPs whose `X-Forwarded-For` the access log trusts to name the real client. | _(unset)_ |
-| `LISTEN_ADDR` | Listen address as `host:port`. Keep the host part empty so the healthcheck can still reach it on `127.0.0.1`. | `:9848` |
+| `LISTEN_ADDR` | Listen address as `host:port`. The healthcheck asks the same address, or `127.0.0.1` when the host part is empty. | `:9848` |
 | `KIRO_CLI_CHAT_ARGS` | Extra flags added to every tab's `kiro-cli chat` command, separated by spaces, for example `--effort high`. | _(unset)_ |
 | `KIRO_CLI_HIGH_THROUGHPUT` | Experimental. `true` starts each tab's kiro-cli agent engine with two Node.js flags, a larger young generation and AsyncLocalStorage without promise hooks, when kiro-cli's Node.js is the version they were tested on. They pay off when one tab runs many sessions at once, such as workflows and subagents. [Configuration](docs/configuration.md#kiro_cli_high_throughput) has the numbers. | `false` |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error`. An unknown value falls back to `info` with a warning. | `info` |

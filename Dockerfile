@@ -464,8 +464,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # interactive user needs:
 #   - bash: the entrypoint interpreter (entrypoint.sh is a bash
 #     script; Debian's /bin/sh is dash)
-#   - ca-certificates + curl: HTTPS trust, the baked HEALTHCHECK probe, and the
-#     archive/catalog fetches the server and the toolbelt engine make
+#   - ca-certificates + curl: HTTPS trust, the archive/catalog fetches the
+#     server and the toolbelt engine make, and the in-container API calls
+#     the docs give
 #   - unzip: `.zip` extraction from inside the terminal. Neither the toolbelt
 #     engine nor its pin package needs it: both unpack zip archives in Go.
 #   - git: source control from inside the terminal (gh is NOT baked; it

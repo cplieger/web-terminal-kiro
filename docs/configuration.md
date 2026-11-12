@@ -16,7 +16,7 @@ Run `kiro-cli settings <key> <value>` in a tab to change one of these defaults, 
 | --- | --- | --- |
 | `ALLOWED_HOSTS` | Comma-separated hostnames and IPs you open the terminal at. Any other host name is refused. Unset accepts every host and logs a warning. | _(unset)_ |
 | `TRUSTED_PROXIES` | Reverse-proxy CIDRs or IPs whose `X-Forwarded-For` the access log trusts to name the real client. | _(unset)_ |
-| `LISTEN_ADDR` | Listen address as `host:port`. Keep the host part empty so the healthcheck can still reach it on `127.0.0.1`. | `:9848` |
+| `LISTEN_ADDR` | Listen address as `host:port`. The healthcheck asks the same address, or `127.0.0.1` when the host part is empty. | `:9848` |
 | `KIRO_CLI_CHAT_ARGS` | Extra flags added to every tab's `kiro-cli chat` command, separated by spaces, for example `--effort high`. | _(unset)_ |
 | `KIRO_CLI_HIGH_THROUGHPUT` | Experimental. `true` starts each tab's kiro-cli agent engine with two Node.js flags, a larger young generation and AsyncLocalStorage without promise hooks, when kiro-cli's Node.js is the version they were tested on. They pay off when one tab runs many sessions at once, such as workflows and subagents. [KIRO_CLI_HIGH_THROUGHPUT](#kiro_cli_high_throughput) has the numbers. | `false` |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error`. An unknown value falls back to `info` with a warning. | `info` |
@@ -35,7 +35,7 @@ Run `kiro-cli settings <key> <value>` in a tab to change one of these defaults, 
 
 List the exact names and addresses you type in the browser, for example `localhost,192.0.2.5,webterm.example.com`. Use bare names and addresses only, with no scheme, path or CIDR range such as `192.0.2.0/24`. This list is the check that stops DNS rebinding, described in [Security](hardening.md).
 
-A request that is loopback on both ends is always admitted, so the healthcheck and commands run inside the container keep working. Both the client address and the `Host` must be loopback for that, as with `127.0.0.1:9848` or `localhost:9848`. Any other name still needs to be in the list. An uptime prober from outside must use a name in the list.
+A request that is loopback on both ends is always admitted, so the healthcheck and commands run inside the container keep working. Both the client address and the `Host` must be loopback for that, as with `127.0.0.1:9848` or `localhost:9848`. When `LISTEN_ADDR` names one IP address, a request from that address to that address is admitted too, which is how the healthcheck reaches it. Any other name still needs to be in the list. An uptime prober from outside must use a name in the list.
 
 Malformed entries are dropped with a warning that gives their count. When every entry is malformed, the server refuses every request that is not loopback and logs why.
 
@@ -45,7 +45,7 @@ With this unset, the access log records the address that opened the connection a
 
 ## LISTEN_ADDR
 
-The image's healthcheck calls `127.0.0.1` on the port taken from this value. A listen address pinned to one interface that is not loopback therefore reports the container `unhealthy` while it serves normally. Limit who can reach the port with the published port, for example `127.0.0.1:9848:9848`, or with a reverse proxy.
+The image's healthcheck asks `/healthz` at the host and port this value names, or on `127.0.0.1` when the host part is empty, `0.0.0.0` or `::`. A host given as a name other than `localhost` must also be in `ALLOWED_HOSTS` when that is set, or the healthcheck is refused and reports the container `unhealthy`. Limit who can reach the port with the published port, for example `127.0.0.1:9848:9848`, or with a reverse proxy.
 
 ## KIRO_CLI_CHAT_ARGS
 

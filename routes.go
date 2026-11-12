@@ -30,8 +30,7 @@ import (
 const (
 	apiPrefix = "/api/"
 	// healthPath is the health route; buildHandler's WithProbeLogLevel policy must name
-	// the same path the mux registers, or a healthy probe stops being demoted to Debug
-	// and a failing one stops being promoted.
+	// the same path the mux registers, or its access lines stop being demoted to Debug.
 	healthPath = "/healthz"
 	// toolsPath is the loopback tools API mount; httpapi.Handler is told the same base
 	// path so its own routing matches where it is mounted.
