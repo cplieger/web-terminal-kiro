@@ -364,16 +364,11 @@ func firstAttrValue(records *capture.Recorder, key string) (string, bool) {
 	return "", false
 }
 
-// captureTextLog swaps the process-global default logger for a text handler
-// writing into the returned buffer and restores the previous logger on
-// cleanup. buildHandler binds WithLogger(slog.Default()) at CONSTRUCTION, so
-// the capture must be installed before the handler is built; the default
-// logger is process-global, so callers must not use t.Parallel.
-//
-// A TEXT handler at a set level, not the slogx/capture recorder this file
-// uses elsewhere, because the probe assertions turn on level FILTERING: a
-// capture.Recorder keeps every level, so it cannot show that a probe line
-// stays out of the Info stream.
+// captureTextLog swaps the process-global default logger for an Info text
+// handler writing into the returned buffer, restored on cleanup. Install it
+// before buildHandler, which binds slog.Default() at construction; callers
+// must not use t.Parallel. It filters by level, unlike capture.Recorder, so it
+// can show that a probe line stays out of the Info stream.
 func captureTextLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	return captureTextLogAt(t, slog.LevelInfo)
