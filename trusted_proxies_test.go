@@ -364,28 +364,22 @@ func firstAttrValue(records *capture.Recorder, key string) (string, bool) {
 	return "", false
 }
 
-// captureTextLog swaps the process-global default logger for a text handler
-// writing into the returned buffer and restores the previous logger on
-// cleanup. buildHandler binds WithLogger(slog.Default()) at CONSTRUCTION, so
-// the capture must be installed before the handler is built; the default
-// logger is process-global, so callers must not use t.Parallel.
-//
-// A TEXT handler at the DEFAULT level -- not the slogx/capture recorder this
-// file uses elsewhere -- because two assertions here turn on level
-// FILTERING rather than capture: TestBuildHandlerSkipsAccessLogForStreams
-// proves a HEALTHY /healthz probe never reaches the shipped stream
-// (the handler drops the Debug record WithProbeLogLevel demotes it to), and
-// TestBuildHandlerFailingProbeSurfaces reads the rendered level=ERROR. A
-// capture.Recorder keeps every level, which would weaken both to "recorded
-// at Debug".
+// captureTextLog swaps the process-global default logger for an Info text
+// handler writing into the returned buffer, restored on cleanup. Install it
+// before buildHandler, which binds slog.Default() at construction; callers
+// must not use t.Parallel. It filters by level, unlike capture.Recorder, so it
+// can show that a probe line stays out of the Info stream.
 func captureTextLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
+	return captureTextLogAt(t, slog.LevelInfo)
+}
+
+// captureTextLogAt is captureTextLog with slogx.Setup's handler (logfmt,
+// UTC timestamps) at level.
+func captureTextLogAt(t *testing.T, level slog.Level) *bytes.Buffer {
+	t.Helper()
 	var buf bytes.Buffer
-	// slogx.Setup's constructor: text/logfmt, Info by default, UTC-normalized
-	// timestamps. The returned LevelVar is unused -- these tests assert
-	// against the DEFAULT level, which is what makes the probe demotion
-	// observable.
-	handler, _ := slogx.NewHandler(slogx.Options{Output: &buf})
+	handler, _ := slogx.NewHandler(slogx.Options{Output: &buf, Level: level})
 	capture.SwapDefault(t, slog.New(handler))
 	return &buf
 }
@@ -610,27 +604,28 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 	}
 }
 
-// TestBuildHandlerFailingProbeSurfaces pins the other half of the
-// WithProbeLogLevel contract: a FAILING /healthz probe (the readiness 503 when
-// kiro-cli is broken or missing) must land in the shipped log stream at
-// Error — the silent-skip idiom this replaced hid exactly that signal.
-// Serial: swaps the process-global default logger.
-func TestBuildHandlerFailingProbeSurfaces(t *testing.T) {
-	buf := captureTextLog(t)
-
+// TestBuildHandlerFailingProbeLogsAtDebug pins that a FAILING /healthz probe
+// (the 503 while kiro-cli is broken or missing) logs at Debug like a healthy
+// one: a standing 503 would otherwise write a line every 30 seconds, while the
+// app logs the cause once when it appears. Serial: swaps the process-global
+// default logger.
+func TestBuildHandlerFailingProbeLogsAtDebug(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	})
 
-	h := buildHandler(mux, nil, "default-src 'self'", nil)
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
-
-	log := buf.String()
-	if !strings.Contains(log, "path=/healthz") {
-		t.Errorf("access log = %q, want the failing probe's access line (a 503 health check must not be silent)", log)
+	info := captureTextLog(t)
+	buildHandler(mux, nil, "default-src 'self'", nil).
+		ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
+	if strings.Contains(info.String(), "path=/healthz") {
+		t.Errorf("Info-level log = %q, want no line for a failing probe", info.String())
 	}
-	if !strings.Contains(log, "level=ERROR") {
-		t.Errorf("access log = %q, want the failing probe at Error (WithProbeLogLevel maps 5xx to Error)", log)
+
+	debug := captureTextLogAt(t, slog.LevelDebug)
+	buildHandler(mux, nil, "default-src 'self'", nil).
+		ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
+	if log := debug.String(); !strings.Contains(log, "level=DEBUG") || !strings.Contains(log, "path=/healthz") || !strings.Contains(log, "status=503") {
+		t.Errorf("Debug-level log = %q, want the failing probe's access line at Debug with status=503", log)
 	}
 }

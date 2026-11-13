@@ -21,7 +21,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/cplieger/go/health"
+	"github.com/cplieger/go/health/v2"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
@@ -948,7 +948,7 @@ func TestHealthEndpoint_matchesTheLibrary(t *testing.T) {
 		mux.ServeHTTP(got, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
 
 		want := httptest.NewRecorder()
-		health.CheckHandler(health.Check{Signal: fixedSignal(ready), Reason: "starting up or shutting down"}).
+		health.CheckHandler(health.Check{Signal: health.SignalFunc(func() bool { return ready }), Reason: "starting up or shutting down"}).
 			ServeHTTP(want, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
 
 		if got.Code != want.Code || got.Body.String() != want.Body.String() {
@@ -961,11 +961,6 @@ func TestHealthEndpoint_matchesTheLibrary(t *testing.T) {
 		}
 	}
 }
-
-// fixedSignal is a health.Signal with a set answer.
-type fixedSignal bool
-
-func (s fixedSignal) Healthy() bool { return bool(s) }
 
 // TestHealthEndpoint_methods pins the route: GET and HEAD answer the verdict,
 // every other method 405 with no verdict, and the retired /api/health path is

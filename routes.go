@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/go/health"
+	"github.com/cplieger/go/health/v2"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"
@@ -30,8 +30,7 @@ import (
 const (
 	apiPrefix = "/api/"
 	// healthPath is the health route; buildHandler's WithProbeLogLevel policy must name
-	// the same path the mux registers, or a healthy probe stops being demoted to Debug
-	// and a failing one stops being promoted.
+	// the same path the mux registers, or its access lines stop being demoted to Debug.
 	healthPath = "/healthz"
 	// toolsPath is the loopback tools API mount; httpapi.Handler is told the same base
 	// path so its own routing matches where it is mounted.
@@ -394,11 +393,6 @@ const reasonStarting = "starting up or shutting down"
 // kiroReasons are the kiro-cli faults /healthz can list, one check each, in this order.
 var kiroReasons = []string{reasonInstalling, reasonRetrying, reasonUnavailable, reasonSettings}
 
-// healthVerdict is a health.Signal fixed for one request.
-type healthVerdict bool
-
-func (v healthVerdict) Healthy() bool { return bool(v) }
-
 // healthChecks reads listener readiness and the kiro-cli verdict once each. A refusal
 // whose reason is not one of kiroReasons is reported as reasonUnavailable, so an
 // unready install can never answer 200.
@@ -411,9 +405,9 @@ func healthChecks(deps *routeDeps) []health.Check {
 		}
 	}
 	checks := make([]health.Check, 0, 1+len(kiroReasons))
-	checks = append(checks, health.Check{Signal: healthVerdict(deps.ready.Load()), Reason: reasonStarting})
+	checks = append(checks, health.Check{Signal: health.SignalFunc(deps.ready.Load), Reason: reasonStarting})
 	for _, reason := range kiroReasons {
-		checks = append(checks, health.Check{Signal: healthVerdict(kiroFault != reason), Reason: reason})
+		checks = append(checks, health.Check{Signal: health.SignalFunc(func() bool { return kiroFault != reason }), Reason: reason})
 	}
 	return checks
 }

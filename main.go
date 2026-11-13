@@ -221,6 +221,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, kasNodeLauncherName+":", err)
 		os.Exit(127)
 	}
+	if len(os.Args) == 2 && os.Args[1] == "health" {
+		os.Exit(healthCommand(os.Stderr, listenAddr()))
+	}
 	if err := run(); err != nil {
 		// Rendered once, here: the failure branches in run carry their operator hint
 		// inside the returned error, so a startup failure produces exactly one ERROR
@@ -327,7 +330,7 @@ func run() error {
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
 
-	addr := cmp.Or(envx.String("LISTEN_ADDR"), ":9848")
+	addr := listenAddr()
 	// Warn for any bind reachable beyond loopback: a client that can reach this
 	// port gets an UNAUTHENTICATED kiro-cli PTY. Only a definite exposure warns; an
 	// unparseable addr will fail at Listen with its own error.
@@ -1460,9 +1463,8 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 				return r.Method == http.MethodGet &&
 					r.URL.Path == terminal.SessionEventsPath && hostPolicy.Allows(r)
 			}),
-			// /healthz is probed every 30s. WithProbeLogLevel keeps healthy probes at
-			// Debug while a FAILING probe surfaces at Warn/Error with its status and
-			// request id.
+			// /healthz is probed every 30s, so its access lines are Debug whatever the
+			// status; the startup and kiro-cli install lines report a fault once.
 			httpserver.WithProbeLogLevel(healthPath),
 			// The session subtree logs its matched route template, never the raw path, so a
 			// session id never reaches the access log. The engine declares the prefix.

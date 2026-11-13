@@ -27,25 +27,13 @@ func loopbackRequest(method, target, body string) *http.Request {
 	return req
 }
 
-// TestCanonicalPathGuard_refusesNonCanonicalControlPlanePath is the reason the
-// guard exists. Each row is a spelling http.ServeMux CLEANS before it selects a
-// pattern, aimed at a route whose caller does not follow redirects: the README's
-// documented repair POST and mutating tool calls (plain `curl`, no -L) and the
-// image's baked health probe (`curl -sfS --max-time 4`, no -L). Verified against
-// the real mux on go1.26.5, every one of these was a 307 before the guard — and a
-// 307 makes those callers exit 0 having never reached a handler, so the mutation
-// silently did not happen.
-//
-// The assertion that matters is therefore twofold and both halves are checked:
-// the response is a 4xx the caller cannot mistake for success, and it is NOT a
-// redirect. Asserting only "not 307" would pass on a 200; asserting only "400"
-// would pass if some future layer answered 400 for an unrelated reason.
-//
-// Driven through buildHandler — the REAL chain in production order — because the
-// guard is chain middleware by necessity: ServeMux's canonicalization runs BEFORE
-// pattern selection, so no wrapper at the mount (where loopbackOnly sits) can
-// ever see one of these requests. A test against the mux alone would assert the
-// old 307 and stay green forever.
+// TestCanonicalPathGuard_refusesNonCanonicalControlPlanePath: each row is a
+// spelling http.ServeMux cleans and would answer with a 307, aimed at a route
+// whose caller does not follow redirects (the README's repair POST, mutating
+// tool calls, a health probe), so the caller would exit 0 without reaching a
+// handler. Each row must get a 4xx that is not a redirect. The test drives
+// buildHandler because ServeMux cleans the path before pattern selection, so
+// only chain middleware sees these requests, never a wrapper at the mount.
 func TestCanonicalPathGuard_refusesNonCanonicalControlPlanePath(t *testing.T) {
 	deps := newToolsDeps(t)
 	var rescans atomic.Int64
@@ -63,7 +51,7 @@ func TestCanonicalPathGuard_refusesNonCanonicalControlPlanePath(t *testing.T) {
 		// changed.
 		why string
 	}{
-		{"health, empty segment", http.MethodGet, "//healthz", "307 to /healthz; the baked HEALTHCHECK curl exits 0 and reports the container healthy without ever consulting readiness"},
+		{"health, empty segment", http.MethodGet, "//healthz", "307 to /healthz; a probe that does not follow redirects exits 0 and reports healthy without ever consulting readiness"},
 		{"health, dot segment", http.MethodGet, "/./healthz", "307 to /healthz, same probe"},
 		{"tools exact, empty segment", http.MethodGet, "/api//tools", "307 to /api/tools; the README's inventory read returns nothing and succeeds"},
 		{"tools exact, trailing dot", http.MethodGet, toolsPath + "/.", "307 to /api/tools"},
@@ -334,7 +322,7 @@ func TestCanonicalPathGuardedRoute(t *testing.T) {
 		want bool
 		why  string
 	}{
-		{healthPath, true, "the baked HEALTHCHECK's probe"},
+		{healthPath, true, "the health probe"},
 		{toolsPath, true, "the tools API's exact mount"},
 		{toolsPath + "/", true, "the tools API's subtree mount"},
 		{toolsPath + "/gopls", true, "a mutating tool call under the subtree"},

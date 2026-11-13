@@ -113,7 +113,7 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 | --- | --- | --- |
 | `ALLOWED_HOSTS` | Comma-separated hostnames and IPs you open the terminal at. Any other host name is refused. Unset accepts every host and logs a warning. | _(unset)_ |
 | `TRUSTED_PROXIES` | Reverse-proxy CIDRs or IPs whose `X-Forwarded-For` the access log trusts to name the real client. | _(unset)_ |
-| `LISTEN_ADDR` | Listen address as `host:port`. Keep the host part empty so the healthcheck can still reach it on `127.0.0.1`. | `:9848` |
+| `LISTEN_ADDR` | Listen address as `host:port`. The healthcheck asks the same address, or `127.0.0.1` when the host part is empty. | `:9848` |
 | `KIRO_CLI_CHAT_ARGS` | Extra flags added to every tab's `kiro-cli chat` command, separated by spaces, for example `--effort high`. | _(unset)_ |
 | `KIRO_CLI_HIGH_THROUGHPUT` | Experimental. `true` starts each tab's kiro-cli agent engine with two Node.js flags, a larger young generation and AsyncLocalStorage without promise hooks, when kiro-cli's Node.js is the version they were tested on. They pay off when one tab runs many sessions at once, such as workflows and subagents. [Configuration](docs/configuration.md#kiro_cli_high_throughput) has the numbers. | `false` |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error`. An unknown value falls back to `info` with a warning. | `info` |
@@ -149,7 +149,7 @@ Web Terminal for Kiro has no login. Anyone who reaches the port gets a root shel
 
 ## Troubleshooting
 
-The healthcheck asks `/healthz` every 30 seconds whether kiro-cli is ready, after a 20-minute grace period for the first download. Unhealthy means kiro-cli is not ready, because it is still installing or its install or setup failed. Docker does not restart the container for it, so `docker ps` shows `unhealthy` while the container keeps running. An unhealthy container notifies nobody. [Knowing the app is alive](docs/monitoring.md#knowing-the-app-is-alive) says what does.
+An unhealthy container means kiro-cli is not ready: it is still installing, or its install or setup failed. Docker does not restart the container for it, so it keeps running while `docker ps` shows `unhealthy`. The bullets below give the remedy for each cause.
 
 - A new tab keeps saying `kiro-cli installing`, or says `kiro-cli install retrying` or `kiro-cli unavailable`. The first download needs internet access. Fix the network, then restart the container to retry the download.
 - The log warns that the server runs as PID 1. Add `init: true` to the service.

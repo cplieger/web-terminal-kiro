@@ -17,17 +17,17 @@ The server and the container's start script both write logfmt lines to standard 
 
 No alert rule reads the log. Search it by the `stage` key when the server does not start. Its one `ERROR` line, `web-terminal-kiro exited with error`, carries `stage` and the remedy in `error`. [Startup failures](how-it-works.md#startup-failures) lists the stage values, which stay the same between releases. The `terminal attach attempt` line records each request that presents a session id, with the client address and request id.
 
-A healthy probe of `/healthz` logs nothing at `info`. A probe that gets `503` logs one access line at `ERROR`, and one refused with a `4xx` code logs it at `WARN`.
+Every access line for `/healthz` is logged at `debug`, whatever its status, because a prober repeats the same answer every interval. The startup and kiro-cli install lines report a fault once, and a probe refused for its host name logs one `WARN` line from the host check.
 
 ## Knowing the app is alive
 
 | Route | Method | Port | Login | Answers |
 | --- | --- | --- | --- | --- |
-| `/healthz` | `GET`, `HEAD` | `LISTEN_ADDR`, `9848` by default | none. `ALLOWED_HOSTS` applies, loopback always admitted | `200 {"status":"ok"}`, or `503 {"status":"unhealthy","reasons":[...]}` |
+| `/healthz` | `GET`, `HEAD` | `LISTEN_ADDR`, `9848` by default | none. `ALLOWED_HOSTS` applies, except to the image's own `web-terminal-kiro health` check, unless `LISTEN_ADDR` names a host name other than `localhost` | `200 {"status":"ok"}`, or `503 {"status":"unhealthy","reasons":[...]}` |
 
 **What healthy means.** The server is listening, is not starting or shutting down, and has kiro-cli installed with its required settings applied. While kiro-cli downloads, retries its install or cannot be installed, `/healthz` answers `503`, and `reasons` names the state, such as `kiro-cli installing`. Any other method answers `405`. The answer may also carry `tools`, `tools_missing` and `sandbox`, described in [Tools](tools.md#when-tabs-open) and [Command sandbox](sandbox.md#the-startup-check). Those fields never change the status code, so a failed tool install or an unreachable GitHub never makes the terminal unhealthy. It shows in `tools` and in the log. `tools_missing` is absent until the count is known.
 
-**Docker health.** The image checks itself every 30 seconds with `curl`, which asks `/healthz` on `127.0.0.1` at the port in `LISTEN_ADDR` and gives up after 4 seconds. Docker marks the container unhealthy after 3 failures, and allows 20 minutes after a start, which covers the first kiro-cli download. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container.
+**Docker health.** The image checks itself every 30 seconds with `web-terminal-kiro health`, which asks `/healthz` on the container's loopback, or on the address `LISTEN_ADDR` names, and gives up after 4 seconds. Docker marks the container unhealthy after 3 failures, and allows 20 minutes after a start, which covers the first kiro-cli download. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container.
 
 **Who is told.**
 
