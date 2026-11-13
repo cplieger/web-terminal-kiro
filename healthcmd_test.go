@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -52,6 +53,31 @@ func TestHealthCommand_readsTheServedVerdict(t *testing.T) {
 	}
 }
 
+// TestHealthCommand_probesTheNamedAddress serves on 127.0.0.2 only, so a health
+// command that probed 127.0.0.1 for an address naming one host would be refused.
+func TestHealthCommand_probesTheNamedAddress(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux routes all of 127.0.0.0/8 to loopback")
+	}
+	t.Setenv("ALLOWED_HOSTS", "webterm.example.com")
+	ln, err := net.Listen("tcp", "127.0.0.2:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux, _, csp := mustRegisterRoutes(t, newTestDeps(true))
+	srv := httptest.NewUnstartedServer(buildHandler(mux, nil, csp, parseAllowedHosts()))
+	_ = srv.Listener.Close()
+	srv.Listener = ln
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	addr := ln.Addr().String()
+	var out bytes.Buffer
+	if got := healthCommand(&out, addr); got != 0 {
+		t.Fatalf("healthCommand(%q) = %d, want 0 (output %q)", addr, got, out.String())
+	}
+}
+
 // TestHealthCommand_badListenAddr pins that an address the probe cannot turn
 // into a URL fails the check with a reason instead of probing a guess.
 func TestHealthCommand_badListenAddr(t *testing.T) {
@@ -77,10 +103,9 @@ func TestListenAddr_default(t *testing.T) {
 	}
 }
 
-// TestHealthProbe_singleAddressBindAdmitted pins the request the health command
-// sends when LISTEN_ADDR names one non-loopback address: the peer and Host are
-// that address, which ALLOWED_HOSTS does not list, and the probe must still be
-// admitted.
+// TestHealthProbe_singleAddressBindAdmitted pins that the host gate admits a
+// request whose peer and Host are the non-loopback address the server is bound
+// to, which ALLOWED_HOSTS does not list, and refuses another peer naming it.
 func TestHealthProbe_singleAddressBindAdmitted(t *testing.T) {
 	t.Setenv("ALLOWED_HOSTS", "webterm.example.com")
 	mux, _, csp := mustRegisterRoutes(t, newTestDeps(true))
