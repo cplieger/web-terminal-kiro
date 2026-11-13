@@ -23,7 +23,7 @@ Every access line for `/healthz` is logged at `debug`, whatever its status, beca
 
 | Route | Method | Port | Login | Answers |
 | --- | --- | --- | --- | --- |
-| `/healthz` | `GET`, `HEAD` | `LISTEN_ADDR`, `9848` by default | none. `ALLOWED_HOSTS` applies, the container's own healthcheck always admitted | `200 {"status":"ok"}`, or `503 {"status":"unhealthy","reasons":[...]}` |
+| `/healthz` | `GET`, `HEAD` | `LISTEN_ADDR`, `9848` by default | none. `ALLOWED_HOSTS` applies, except to the image's own `web-terminal-kiro health` check, unless `LISTEN_ADDR` names a host other than `localhost` | `200 {"status":"ok"}`, or `503 {"status":"unhealthy","reasons":[...]}` |
 
 **What healthy means.** The server is listening, is not starting or shutting down, and has kiro-cli installed with its required settings applied. While kiro-cli downloads, retries its install or cannot be installed, `/healthz` answers `503`, and `reasons` names the state, such as `kiro-cli installing`. Any other method answers `405`. The answer may also carry `tools`, `tools_missing` and `sandbox`, described in [Tools](tools.md#when-tabs-open) and [Command sandbox](sandbox.md#the-startup-check). Those fields never change the status code, so a failed tool install or an unreachable GitHub never makes the terminal unhealthy. It shows in `tools` and in the log. `tools_missing` is absent until the count is known.
 
