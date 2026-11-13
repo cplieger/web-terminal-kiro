@@ -40,7 +40,7 @@ The compose file sets `init: true`, and it is required. A kiro-cli session start
 
 ## Health
 
-The image checks `/healthz` on loopback every 30 seconds, after a 20-minute start period that covers the first kiro-cli download. It is a readiness check, which waits for kiro-cli and not only for the listener. Nothing restarts on an unhealthy state, so a broken install shows as `unhealthy` in `docker ps` without a restart loop. [Knowing the app is alive](monitoring.md#knowing-the-app-is-alive) gives the answers, the fields beside them and who is told.
+The image runs `web-terminal-kiro health` every 30 seconds, after a 20-minute start period that covers the first kiro-cli download. It is a readiness check, which waits for kiro-cli and not only for the listener. Nothing restarts on an unhealthy state, so a broken install shows as `unhealthy` in `docker ps` without a restart loop. [Knowing the app is alive](monitoring.md#knowing-the-app-is-alive) gives the answers, the fields beside them and who is told.
 
 ## Startup failures
 
