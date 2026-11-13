@@ -22,11 +22,11 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 # The `# go<version>` trailer on each sha line is the anchor Renovate uses to
 # resolve that arch's digest — do not hand-edit; Renovate owns these lines.
 # renovate: datasource=golang-version depName=golang
-ARG GO_VERSION=1.27.3
+ARG GO_VERSION=1.27.4
 # renovate: datasource=custom.golang-amd64 depName=golang-amd64
-ARG GO_SHA256_AMD64=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40  # go1.27.3
+ARG GO_SHA256_AMD64=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840  # go1.27.4
 # renovate: datasource=custom.golang-arm64 depName=golang-arm64
-ARG GO_SHA256_ARM64=a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49  # go1.27.3
+ARG GO_SHA256_ARM64=3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92  # go1.27.4
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
       amd64) GO_SHA256="$GO_SHA256_AMD64" ;; \
@@ -198,9 +198,9 @@ COPY required-tools.txt bundled-tools.json ./
 # daily; the pin means the baked fallback is a REVIEWED catalog, while
 # the runtime refresh keeps a running container current.
 # renovate: datasource=github-releases depName=cplieger/tool-catalog
-ARG TOOL_CATALOG_VERSION=v2026.11.06
+ARG TOOL_CATALOG_VERSION=v2026.11.13
 # repin: dep=cplieger/tool-catalog url=https://github.com/cplieger/tool-catalog/releases/download/{version}/tool-catalog.json
-ARG TOOL_CATALOG_SHA256=9a82830c6259c115fb61762ff21b091f53d5e867b07eebd8969f13cbd967b3bc # tool-catalog v2026.07.24.1907
+ARG TOOL_CATALOG_SHA256=a8e7e4e584115cf6345b456f31a89ea5529e0a28edb389b630a39014449c962f # tool-catalog v2026.07.24.1907
 ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/download/${TOOL_CATALOG_VERSION}/tool-catalog.json
 # The build-time verifier is the SAME module go.mod requires (the runtime engine
 # that re-verifies required-tools.txt before every catalog swap), and that is now
@@ -276,15 +276,15 @@ RUN set -e; mkdir -p static/vendor/fonts; \
 # Both packages ship TS source only; they are extracted side by side under
 # static-src/node_modules/@cplieger so tsc resolves the UI's engine import.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.4.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.5.0
 # sha256 of the tarball: npm's dist.integrity is SHA-512, so this digest cannot be
 # copied from the registry; a hand bump of the version re-runs scripts/repin-sha.sh.
 # repin: dep=@cplieger/web-terminal-engine url=https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=549ef58cd29acfe05cc1c4aad6b16436ed75719fc217039ae4db4a10d457fe28
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=432d761dbb9ed6d08ced5be926cfc1c4f0936af2b46e6eceef93ed7c92579e1a
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.6.0
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=9.0.0
 # repin: dep=@cplieger/web-terminal-ui url=https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=dcc4eebe1ad1edf08d0473f9fcd40b537221a687fcf4b90562241317c0d282a2
+ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=e1733e7e64b49db36674b7a909e1cd5fb32055b2ac3fb5293cd20ee7ce42559a
 # The served bundle is built from the ARG pins while local dev compiles against
 # static-src/package.json, and nothing else fails when the two disagree. go.mod
 # is deliberately not compared: the engine's Go module and npm package version
@@ -327,7 +327,7 @@ COPY . ./
 # so their pairing is governed by the engine's exported wire-compatibility
 # floors, not version strings. Assert both directional floors at build time —
 # a declared-incompatible pairing would refuse every session at first connect
-# (close code 4002) while /api/health stays green, so fail HERE instead.
+# (close code 4002) while /healthz stays green, so fail HERE instead.
 # Client constants come from the vendored artifact's own language-neutral
 # manifest (`wire-compatibility.json` at its package root, published via the
 # npm `files` list and the `./wire-compatibility.json` export subpath — the
@@ -420,7 +420,7 @@ RUN sh scripts/css-bundle.sh static-src/node_modules/@cplieger/web-terminal-ui/c
 # the released cell.json rather than by version strings, and a bump on either
 # side that moves the cell must fail HERE: the alternative is a silently
 # reflowed terminal, or an emboldened stand-in drawn over box drawing, behind a
-# green build and a healthy /api/health. It runs after the fonts AND after the
+# green build and a healthy /healthz. It runs after the fonts AND after the
 # CSS bundle above, because what it compares is the bundle this build just
 # served plus the assets beside it.
 #
@@ -458,17 +458,17 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Baked-in dependencies. kiro-cli itself is NOT one of them: it is
 # proprietary and cannot be redistributed in the image, so the Go server's
-# pinstall manager downloads and verifies it after the listener binds.
+# install manager (toolbelt's pin) downloads and verifies it after the
+# listener binds.
 # Everything else here is stable utility surface web-terminal-kiro or the
 # interactive user needs:
 #   - bash: the entrypoint interpreter (entrypoint.sh is a bash
 #     script; Debian's /bin/sh is dash)
-#   - ca-certificates + curl: HTTPS trust, the baked HEALTHCHECK probe, and the
-#     archive/catalog fetches the server and the toolbelt engine make
-#   - unzip: `.zip` extraction for tools the toolbelt engine installs at runtime
-#     (toolbelt extract.go shells out to it), the same reason xz-utils is here.
-#     NOT the kiro-cli install -- the pinstall library unpacks that archive with
-#     Go's archive/zip, so this package looks droppable and is not.
+#   - ca-certificates + curl: HTTPS trust, the archive/catalog fetches the
+#     server and the toolbelt engine make, and the in-container API calls
+#     the docs give
+#   - unzip: `.zip` extraction from inside the terminal. Neither the toolbelt
+#     engine nor its pin package needs it: both unpack zip archives in Go.
 #   - git: source control from inside the terminal (gh is NOT baked; it
 #     is opt-in via /config/tools/tools.json)
 #   - openssh-client: git over ssh (and gh over ssh once gh is enabled)
@@ -546,10 +546,12 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
 # container recreation. It does NOT hold the kiro-cli install: server-managed
 # versions live separately under /config/tools/kiro-cli-versions.
 # Those paths are fixed and version-addressed, so kiro-cli's per-session binary
-# pin (a copy under the data dir) protects nothing; entrypoint.sh purges old ones.
+# pin (a copy under the data dir) protects nothing; the server purges old ones.
 ENV HOME=/config/home
 ENV KIRO_SKIP_BINARY_PINNING=1
-# PATH leads with the engine-managed bin dir. runtimes/{go,node}/bin stay off
+# PATH leads with the kiro-cli install manager's link dir, so the pinned kiro-cli
+# keeps its bare name over a tools-engine tool of that name, then the
+# engine-managed bin dir. runtimes/{go,node}/bin stay off
 # it: they would sit ahead of /usr/bin, this entrypoint never creates or repairs
 # them, and a binary planted while a tree was group/other-writable stays
 # executable after the mode is tightened. A restored pre-toolbelt volume needs
@@ -557,7 +559,7 @@ ENV KIRO_SKIP_BINARY_PINNING=1
 # tools/go/bin stays: it is GOPATH/bin, where `go install` lands without the
 # engine's GOBIN. Deleting a user's own go-installed tools would break the dev
 # box, and anyone able to plant there already holds /config/home/.ssh.
-ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PATH="/config/tools/kiro-cli-bin:/config/tools/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # No GOROOT/GOBIN: the engine installs Go under versioned opt/go/<ver>/ trees
 # and sets GOBIN itself at install time; the toolchain derives GOROOT.
 ENV GOPATH="/config/tools/go"
@@ -579,6 +581,11 @@ COPY --from=builder /tmp/tool-catalog.json /app/tool-catalog.json
 # runtime catalog refresh. It is the same file the verify step above gates
 # against, so the build cannot ship a catalog its own required set fails.
 COPY bundled-tools.json /app/bundled-tools.json
+# kiro-cli layers KIRO_DEFAULT_SETTINGS under cli.json only for a root-owned file
+# no group or other can write; no --chmod, which would also make /etc/kiro-cli
+# 0644 and untraversable for a non-root container user (docker/docs#20660).
+COPY kiro-cli-defaults.json /etc/kiro-cli/default-settings.json
+ENV KIRO_DEFAULT_SETTINGS=/etc/kiro-cli/default-settings.json
 COPY --chmod=755 entrypoint.sh /opt/web-terminal-kiro/entrypoint.sh
 # The kiro-cli hook that reports which kiro session a tab is running. Executed by
 # kiro-cli (not by this image's entrypoint), which is why it ships as its own
@@ -589,17 +596,19 @@ COPY --chmod=755 hooks/session-title.sh /opt/web-terminal-kiro/hooks/session-tit
 # bwrap kiro-cli resolves is the checked shim or one that refuses (sandbox.go).
 COPY --chmod=755 sandbox/bwrap.sh /opt/web-terminal-kiro/sandbox/bin/bwrap
 COPY --chmod=755 sandbox/bwrap-unavailable.sh /opt/web-terminal-kiro/sandbox/unavailable/bwrap
-
 # Where a pasted image lands (upload.go). Made at build time because the container
 # may run as a non-root user, and sticky world-writable like /tmp for the same reason.
 # A volume mounted here hides it and must be writable by that user.
-RUN mkdir -p /uploads && chmod 1777 /uploads
+# The kas-node link makes the server binary kiro-cli's agent-engine node launcher
+# when KIRO_CLI_HIGH_THROUGHPUT is on (enginetuning.go kasNodeLauncher).
+RUN mkdir -p /uploads /opt/web-terminal-kiro/engine && chmod 1777 /uploads && \
+    ln -s /app/web-terminal-kiro /opt/web-terminal-kiro/engine/kas-node
 
 WORKDIR /workspace
 EXPOSE 9848
 
 # start-period is the SELECTED startup tolerance for reaching a HEALTHY
-# /api/health, which means a completed kiro-cli install; it satisfies the
+# /healthz, which means a completed kiro-cli install; it satisfies the
 # smoke-harness sizing rule (tests/image-smoke.conf SMOKE_TIMEOUT 1260 = 1200 +
 # two 30s probe intervals). KEPT AT 20m across the move of the installer into the
 # server: the work the budget has to cover is the same ~528MB download plus
@@ -640,15 +649,15 @@ EXPOSE 9848
 # off), local unzip and streaming SHA-256 (untimed, ~528MB), install.sh (120s),
 # one --version probe on the staged binary plus one per selection candidate (10s
 # each), and the settings calls (10s each: one required before publication, then
-# five against the active binary). The manager then retries a failed attempt up to
+# four against the active binary). The manager then retries a failed attempt up to
 # 4 times with 30s/60s/120s backoff, so a persistently failing install keeps the
-# server up for the container's lifetime and reports the reason on /api/health.
+# server up for the container's lifetime and reports the reason on /healthz.
 #
 # THE BUDGET IS DELIBERATELY BELOW THE WORST CASE (decided 2026-07, unchanged by
 # the move). The two budgets protect different things and only one has teeth:
 #   - At RUNTIME `unhealthy` is cosmetic. The restart policy acts on process exit,
 #     not health status, so a very slow first boot shows unhealthy, keeps
-#     downloading, and converges once a version is active. /api/health is
+#     downloading, and converges once a version is active. /healthz is
 #     reachable throughout and names the phase, so the state is diagnosable while
 #     it lasts. Tool installs converge in the BACKGROUND alongside it (only
 #     session creation waits on them) and report through the informational "tools"
@@ -672,16 +681,9 @@ EXPOSE 9848
 # timeout on either side of the exec changes.
 # Under `restart: unless-stopped`, health failures are reported
 # but do not restart the container (restart policies react to process exit,
-# not health status); under a liveness-acting orchestrator, wire /api/health
-# to a readinessProbe.
-# DL3025 wants JSON notation, which cannot express this: the URL is built with
-# the shell parameter expansion ${LISTEN_ADDR##*:} to read the port out of the
-# runtime listen address, and exec form performs no expansion at all -- it would
-# probe a literal. This image also runs as root with a shell for git/gh, so it
-# will never be shell-less, and the distroless case the rule guards does not
-# arise here.
-# hadolint ignore=DL3025
+# not health status); under a liveness-acting orchestrator, wire /healthz
+# to a readinessProbe and a tcpSocket probe on the port for liveness.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20m \
-    CMD curl -sfS --max-time 4 "http://127.0.0.1:${LISTEN_ADDR##*:}/api/health"
+    CMD ["/app/web-terminal-kiro", "health"]
 
 ENTRYPOINT ["/opt/web-terminal-kiro/entrypoint.sh"]

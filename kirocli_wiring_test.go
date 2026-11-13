@@ -13,13 +13,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
 // This file covers the SEAM between the install manager and the server: the
 // per-session argv, the per-session PATH, the session-create gate and the
-// loopback repair hook. The pinstall library's own suite covers the manager;
+// loopback repair hook. toolbelt's pin suite covers the manager;
 // nothing there can see whether main.go and routes.go actually consume it.
 
 // TestSessionEnv_reachesSpawnedPTY proves the PATH overlay survives the whole
@@ -33,7 +33,7 @@ func TestSessionEnv_reachesSpawnedPTY(t *testing.T) {
 	versionDir := t.TempDir()
 	marker := filepath.Join(t.TempDir(), "path")
 	deps := newTestDeps(true)
-	// A literal overlay, not pinstall.Manager.PathEnv: the subject here is
+	// A literal overlay, not pin.Manager.PathEnv: the subject here is
 	// that whatever deps.sessionEnv returns reaches the child and wins over
 	// the engine's own entries. Composing it is the library's rule, owned by
 	// the library's own tests -- production reads mgr.PathEnv.
@@ -86,9 +86,9 @@ func TestSessionCommand_pathReachesArgvOnlyAsDollarZero(t *testing.T) {
 
 // TestKiroReasonTextIsTheClientContract pins the four 503 reason literals and
 // the mapping that produces them. The install manager reports a TYPED
-// reason (pinstall.Reason) because the wording a consumer shows its own
+// reason (pin.Reason) because the wording a consumer shows its own
 // users is the consumer's; these strings are a published contract in three
-// directions: /api/health's reason field, the 503 body of POST
+// directions: /healthz's reasons list, the 503 body of POST
 // /api/sessions, and the repair hook's verdict -- all read by an operator
 // and by a monitoring probe.
 //
@@ -100,20 +100,20 @@ func TestSessionCommand_pathReachesArgvOnlyAsDollarZero(t *testing.T) {
 // wording rather than to "".
 func TestKiroReasonTextIsTheClientContract(t *testing.T) {
 	cases := []struct {
-		why  pinstall.Reason
+		why  pin.Reason
 		want string
 	}{
 		// Only ready renders empty; every withheld verdict below must carry text,
-		// because /api/health and the create gate both key on a non-empty reason to
+		// because /healthz and the create gate both key on a non-empty reason to
 		// report the fault.
-		{pinstall.ReasonReady, ""},
-		{pinstall.ReasonInstalling, "kiro-cli installing"},
-		{pinstall.ReasonRetrying, "kiro-cli install retrying"},
-		{pinstall.ReasonUnavailable, "kiro-cli unavailable"},
-		{pinstall.ReasonAssertion, "kiro-cli required settings not enforced"},
+		{pin.ReasonReady, ""},
+		{pin.ReasonInstalling, "kiro-cli installing"},
+		{pin.ReasonRetrying, "kiro-cli install retrying"},
+		{pin.ReasonUnavailable, "kiro-cli unavailable"},
+		{pin.ReasonAssertion, "kiro-cli required settings not enforced"},
 		// Not a reason the library defines today. A state we cannot name still
 		// blocks sessions, so it must read as terminal rather than as ready.
-		{pinstall.Reason(200), "kiro-cli unavailable"},
+		{pin.Reason(200), "kiro-cli unavailable"},
 	}
 	for _, tc := range cases {
 		if got := kiroReasonText(tc.why); got != tc.want {
@@ -294,7 +294,7 @@ func TestKiroRescan_loopbackOnlyAndPostOnly(t *testing.T) {
 // TestKiroRescan_reportsVerdictNotErrorText pins the repair hook's two
 // outcomes: 200 when a version is active afterwards, and 503 carrying the
 // manager's own readiness reason when none is -- the same verdict
-// /api/health serves. The error text deliberately stays out of the body:
+// /healthz serves. The error text deliberately stays out of the body:
 // it can name a filesystem path, and this response is not the place to
 // widen what an unauthenticated-port caller learns about the volume.
 func TestKiroRescan_reportsVerdictNotErrorText(t *testing.T) {
@@ -351,7 +351,7 @@ func TestKiroRescan_absentWithoutManager(t *testing.T) {
 // serve a session at all.
 func TestStartKiroCLI_shapes(t *testing.T) {
 	t.Run("no pins falls back to the bare name", func(t *testing.T) {
-		rt := startKiroCLI(&baseKiro{chatArgs: []string{"--v3"}})
+		rt := startKiroCLI(&baseKiro{chatArgs: []string{"--tui"}})
 		t.Cleanup(rt.stop)
 		if rt.ready == nil {
 			t.Fatal("a pin-less run left the readiness policy nil; the route layer's contract is total, so a nil policy panics on first call")
@@ -365,8 +365,8 @@ func TestStartKiroCLI_shapes(t *testing.T) {
 		if got := rt.cmd()[3]; got != "kiro-cli" {
 			t.Errorf("pin-less argv cli path = %q, want the bare name for PATH resolution", got)
 		}
-		if got := strings.Join(rt.cmd()[4:], " "); got != "--v3" {
-			t.Errorf("pin-less argv chat args = %q, want --v3", got)
+		if got := strings.Join(rt.cmd()[4:], " "); got != "--tui" {
+			t.Errorf("pin-less argv chat args = %q, want --tui", got)
 		}
 		if rt.env == nil {
 			t.Fatal("a pin-less run left the session-env policy nil; the route layer's contract is total, so a nil policy panics on first call")
@@ -454,9 +454,9 @@ func TestStartKiroCLI_managedWiringActivatesAnInstalledVersion(t *testing.T) {
 
 // TestStartKiroCLI_readinessReasonIsThisAppsWording pins the last unguarded
 // step of the reason contract: the MANAGED runtime renders the library's
-// typed reason through kiroReasonText rather than serving pinstall's own
+// typed reason through kiroReasonText rather than serving pin's own
 // wording. Replacing the managed closure's kiroReasonText(why) with
-// why.String() changes what /api/health, the 503 body of POST
+// why.String() changes what /healthz, the 503 body of POST
 // /api/sessions, and the repair hook all serve, with the whole suite
 // green.
 //

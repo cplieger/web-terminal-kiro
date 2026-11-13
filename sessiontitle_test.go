@@ -12,9 +12,10 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
@@ -65,12 +66,13 @@ func (f *fakeSetter) List() []terminal.SessionInfo {
 }
 
 // titleFixture builds a syncer over temp dirs plus helpers to plant the two
-// inputs the real system produces: the hook's mapping file and kiro-cli's
+// inputs the real system produces: the hook's session reports and kiro-cli's
 // session record.
 type titleFixture struct {
-	t    *testing.T
-	sync *sessionTitleSync
-	home string
+	clock time.Time
+	t     *testing.T
+	sync  *sessionTitleSync
+	home  string
 }
 
 func newTitleFixture(t *testing.T) *titleFixture {
@@ -85,22 +87,55 @@ func newTitleFixture(t *testing.T) *titleFixture {
 	if err := s.ensureStateDir(); err != nil {
 		t.Fatalf("ensureStateDir: %v", err)
 	}
-	return &titleFixture{t: t, sync: s, home: home}
+	return &titleFixture{t: t, sync: s, home: home, clock: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)}
 }
 
-// mapping plants what the hook writes: a file named for the tab's TITLE
-// HANDLE, holding kiro's id. The handle comes from the real minting path,
-// so a test joins the two identities the same way the poller does.
+// mapping is the hook reporting kiroID, a conversation, in tabID: a report plus,
+// when the test planted no record for kiroID, a minimal conversation record under
+// the last-sorting hash dir "zz", so a record the test plants later wins the scan.
 func (f *titleFixture) mapping(tabID terminal.SessionID, kiroID string) {
 	f.t.Helper()
-	path := filepath.Join(f.sync.stateDir, f.handle(tabID))
-	if err := os.WriteFile(path, []byte(kiroID+"\n"), 0o600); err != nil {
-		f.t.Fatalf("write mapping %s: %v", tabID, err)
+	f.report(tabID, kiroID)
+	if !validKiroSessionID(kiroID) {
+		return
+	}
+	held, err := filepath.Glob(filepath.Join(f.home, ".kiro", "sessions", "*", kiroID, "session.json"))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if len(held) == 0 {
+		f.session("zz", kiroID, `{"id":`+quote(kiroID)+`}`)
 	}
 }
 
+// report plants what the hook writes: an empty file named for kiroID in the
+// report directory named for the tab's TITLE HANDLE, its mtime one second after
+// the fixture's previous report. The handle comes from the real minting path, so
+// a test joins the two identities the same way the poller does.
+func (f *titleFixture) report(tabID terminal.SessionID, kiroID string) {
+	f.t.Helper()
+	dir := f.reportDir(tabID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		f.t.Fatalf("mkdir the report dir of %s: %v", tabID, err)
+	}
+	path := filepath.Join(dir, kiroID)
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		f.t.Fatalf("write report %s: %v", tabID, err)
+	}
+	f.clock = f.clock.Add(time.Second)
+	if err := os.Chtimes(path, f.clock, f.clock); err != nil {
+		f.t.Fatalf("date report %s: %v", tabID, err)
+	}
+}
+
+// reportDir is where the hook reports tabID's kiro sessions.
+func (f *titleFixture) reportDir(tabID terminal.SessionID) string {
+	f.t.Helper()
+	return filepath.Join(f.sync.stateDir, f.handle(tabID)+reportDirSuffix)
+}
+
 // handle mints (or returns) one tab's title handle, which is what a test
-// must use to name anything in the state directory: the mapping file is
+// must use to name anything in the state directory: the report directory is
 // named for the handle and never for the tab, because a tab id is the /ws
 // capability token.
 func (f *titleFixture) handle(tabID terminal.SessionID) string {
@@ -498,8 +533,8 @@ func TestSessionTitleNoMappingIsSilent(t *testing.T) {
 }
 
 // TestSessionTitleForgetsClosedTabs pins the cleanup: a tab closed while
-// the poller was reading returns false from the manager, and its mapping
-// file must go so a long-lived container does not accumulate dead
+// the poller was reading returns false from the manager, and its report
+// directory must go so a long-lived container does not accumulate dead
 // pairings.
 func TestSessionTitleForgetsClosedTabs(t *testing.T) {
 	f := newTitleFixture(t)
@@ -509,7 +544,7 @@ func TestSessionTitleForgetsClosedTabs(t *testing.T) {
 	// Capture the handle BEFORE the sweep: forget drops it from the index,
 	// so asking afterwards would mint a fresh one and stat a name that was
 	// never written.
-	mappingPath := filepath.Join(f.sync.stateDir, f.handle("gonetab"))
+	mappingPath := f.reportDir("gonetab")
 
 	// The tab is still in the manager's list at snapshot time and
 	// disappears at the push -- the within-sweep race this arm exists
@@ -519,7 +554,7 @@ func TestSessionTitleForgetsClosedTabs(t *testing.T) {
 	f.sync.pass(t.Context(), set)
 
 	if _, err := os.Stat(mappingPath); !os.IsNotExist(err) {
-		t.Errorf("mapping for a closed tab still present (stat err = %v), want it removed", err)
+		t.Errorf("reports of a closed tab still present (stat err = %v), want them removed", err)
 	}
 }
 
@@ -537,8 +572,8 @@ func TestSessionTitleReclaimsAMappingWhoseTabIsGone(t *testing.T) {
 	f.mapping("closedtab", id)
 	f.session("hash0", id, titleJSON("a real title"))
 	// Captured before the reclaim: the handle leaves the index with the
-	// mapping, so resolving it afterwards would mint a new one.
-	mappingPath := filepath.Join(f.sync.stateDir, f.handle("closedtab"))
+	// reports, so resolving it afterwards would mint a new one.
+	mappingPath := f.reportDir("closedtab")
 
 	// First sweep with the tab live: the title is pushed and memoized,
 	// which is the state that used to hide the dead tab from the reclaim.
@@ -549,13 +584,13 @@ func TestSessionTitleReclaimsAMappingWhoseTabIsGone(t *testing.T) {
 	}
 
 	// The tab closes. The title never changes again, so only the
-	// manager's list can report it: the mapping file must go, and no
+	// manager's list can report it: the reports must go, and no
 	// further push may be attempted.
 	set.live = nil
 	f.sync.pass(t.Context(), set)
 
 	if _, err := os.Stat(mappingPath); !os.IsNotExist(err) {
-		t.Errorf("mapping for a tab the manager no longer lists is still present (stat err = %v), want it reclaimed", err)
+		t.Errorf("reports of a tab the manager no longer lists are still present (stat err = %v), want them reclaimed", err)
 	}
 	if len(set.calls) != 1 {
 		t.Errorf("pushed %v after the tab left the manager's list, want no second push: the sweep must reclaim before syncOne runs", set.calls)
@@ -577,63 +612,37 @@ func TestSessionTitleReclaimsAMappingWhoseHandleThisProcessNeverMinted(t *testin
 	// A well-formed handle from a previous run: the right alphabet and
 	// length, just not in this process's index.
 	const stale = "0123456789abcdef0123456789abcdef"
-	stalePath := filepath.Join(f.sync.stateDir, stale)
-	if err := os.WriteFile(stalePath, []byte("sess_11111111-2222-3333-4444-555555555555\n"), 0o600); err != nil {
-		t.Fatalf("plant a previous run's mapping: %v", err)
-	}
+	stalePath := filepath.Join(f.sync.stateDir, stale+reportDirSuffix)
+	plantFile(t, filepath.Join(stalePath, "sess_11111111-2222-3333-4444-555555555555"), "")
 	// A live tab whose own handle IS known, so the sweep is not trivially
 	// empty and an over-broad reclaim shows up as a missing push.
 	kiroID := "sess_22222222-3333-4444-5555-666666666666"
 	f.mapping("tab1", kiroID)
 	f.session("hash0", kiroID, titleJSON("a real title"))
-	own := filepath.Join(f.sync.stateDir, f.handle("tab1"))
+	own := f.reportDir("tab1")
 
 	set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
 	f.sync.pass(t.Context(), set)
 
 	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
-		t.Errorf("a mapping named for a handle this process never minted survives (stat err = %v); every previous run's files would stay on disk for the container's life, growing the per-tick ReadDir", err)
+		t.Errorf("reports named for a handle this process never minted survive (stat err = %v); every previous run's files would stay on disk for the container's life, growing the per-tick ReadDir", err)
 	}
 	if _, err := os.Stat(own); err != nil {
-		t.Errorf("stat the live tab's own mapping = %v, want the unknown-handle reclaim to leave it alone", err)
+		t.Errorf("stat the live tab's own reports = %v, want the unknown-handle reclaim to leave them alone", err)
 	}
 	if len(set.calls) != 1 {
 		t.Errorf("pushes = %v, want exactly the live tab's title: an unknown handle resolves to no tab, so nothing may be pushed for it", set.calls)
 	}
 }
 
-// TestSessionTitleKeepsTheHooksInFlightTemps pins the reclaim's
-// POPULATION: the hook writes each mapping through a dot-prefixed temp
-// (".<handle>.$$" in hooks/session-title.sh) and renames it into place,
-// so a temp caught mid-write by a sweep has to survive. Without the dot
-// skip the reclaim deletes it, the hook's mv then fails, `|| rm -f` runs,
-// and that prompt's re-point is lost with no record anywhere.
-func TestSessionTitleKeepsTheHooksInFlightTemps(t *testing.T) {
-	f := newTitleFixture(t)
-	tmp := filepath.Join(f.sync.stateDir, "."+f.handle("tab1")+".4242")
-	if err := os.WriteFile(tmp, []byte("sess_11111111-2222-3333-4444-555555555555\n"), 0o600); err != nil {
-		t.Fatalf("plant an in-flight hook temp: %v", err)
-	}
-
-	set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
-	f.sync.pass(t.Context(), set)
-
-	if _, err := os.Stat(tmp); err != nil {
-		t.Errorf("stat the hook's in-flight temp = %v, want it left in place: the reclaim must not race the hook's rename", err)
-	}
-	if len(set.calls) != 0 {
-		t.Errorf("pushed %v from a temp file, want nothing: a temp is not a tab mapping", set.calls)
-	}
-}
-
 // TestSessionTitleRejectsHostileIdentifiers is the security half for the
-// one identifier this package validates: the kiro session id read OUT of
-// a mapping file, chosen freely by a hostile writer and becoming a path
-// component under the kiro session store. The mapping file's NAME needs
-// no predicate -- since the handle reshape it is a title handle, every
-// production value is an os.ReadDir basename of the state dir, and
-// pass() resolves it through tabForHandle before anything reads it -- so
-// only the kiro id is gated at the Go boundary.
+// one identifier this package validates: the kiro session id a report is
+// named for, chosen freely by a hostile writer and becoming a path
+// component under the kiro session store. The report directory's NAME needs
+// no predicate -- it is a title handle, every production value is an
+// os.ReadDir basename of the state dir, and pass() resolves it through
+// tabForHandle before anything reads it -- so only the kiro id is gated at
+// the Go boundary.
 func TestSessionTitleRejectsHostileIdentifiers(t *testing.T) {
 	t.Run("kiro id must look like a kiro session id", func(t *testing.T) {
 		for _, bad := range []string{
@@ -673,33 +682,37 @@ func TestSessionTitleRejectsHostileIdentifiers(t *testing.T) {
 			t.Errorf("validKiroSessionID(a %d-character id) = true, want false", len(pastLimit))
 		}
 	})
-	t.Run("traversal in a mapping file reads nothing", func(t *testing.T) {
+	t.Run("a report not named like a session id reads nothing", func(t *testing.T) {
 		f := newTitleFixture(t)
-		f.mapping("tab1", "../../../../etc")
+		f.session("hash0", "..", titleJSON("outside the store"))
+		f.report("tab1", "notasession")
+		plantFile(t, filepath.Join(f.reportDir("tab1"), "sess_aaaaaaaa-0000-1111-2222-333333333333", "inner"), "")
+		f.session("hash0", "sess_aaaaaaaa-0000-1111-2222-333333333333", titleJSON("a directory is not a report"))
 		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
 		f.sync.pass(t.Context(), set)
 		if len(set.calls) != 0 {
-			t.Errorf("pushed %v from a traversal mapping, want nothing", set.calls)
+			t.Errorf("pushed %v from a report that names no session, want nothing", set.calls)
 		}
 	})
 }
 
-// TestSessionTitleBoundsFileReads pins that neither state file can make the server
-// allocate without bound: an oversized mapping file is REFUSED at the read
-// (atomicfile.ErrFileTooLarge) rather than truncated, and nothing is pushed.
+// TestSessionTitleBoundsFileReads pins that a session record cannot make the
+// server allocate without bound: an oversized session.json is REFUSED at the
+// read (filesafe.ErrFileTooLarge) rather than truncated, so it proves nothing
+// and the tab it was reported in is not mapped to it.
 func TestSessionTitleBoundsFileReads(t *testing.T) {
 	f := newTitleFixture(t)
-	huge := filepath.Join(f.sync.stateDir, f.handle("tab1"))
-	if err := os.WriteFile(huge, []byte(strings.Repeat("a", maxTitleFileBytes*3)), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if _, err := readSmallFile(t.Context(), huge, maxTitleFileBytes); !errors.Is(err, atomicfile.ErrFileTooLarge) {
+	const id = "sess_11111111-2222-3333-4444-555555555555"
+	f.session("hash0", id, `{"title":"`+strings.Repeat("a", maxTitleFileBytes*3)+`"}`)
+	huge := filepath.Join(f.home, ".kiro", "sessions", "hash0", id, "session.json")
+	if _, err := readSmallFile(t.Context(), huge, maxTitleFileBytes); !errors.Is(err, filesafe.ErrFileTooLarge) {
 		t.Fatalf("readSmallFile(t.Context(), oversized, maxTitleFileBytes) = %v, want ErrFileTooLarge", err)
 	}
+	f.report("tab1", id)
 	set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
 	f.sync.pass(t.Context(), set)
-	if len(set.calls) != 0 {
-		t.Errorf("pushed %v from an oversized mapping, want nothing", set.calls)
+	if len(set.calls) != 0 || len(f.sync.mappedSessions()) != 0 {
+		t.Errorf("pushed %v and mapped %v from an oversized record, want neither", set.calls, f.sync.mappedSessions())
 	}
 }
 
@@ -755,10 +768,10 @@ func TestSessionTitleEnvNamesWhatTheHookReads(t *testing.T) {
 
 // TestSessionTitleHookWriteFormatReachesThePoller is the OTHER half of
 // the cross-language contract: TestSessionTitleEnvNamesWhatTheHookReads
-// pins the two variable NAMES, this one pins the FILE FORMAT by running
+// pins the two variable NAMES, this one pins the REPORT LAYOUT by running
 // the shipped script and letting the real poller consume what it wrote.
 // Nothing else executes hooks/session-title.sh -- every other test
-// fabricates the mapping file itself. Both sides fail SILENTLY by
+// fabricates the report itself. Both sides fail SILENTLY by
 // construction (the hook exits 0 on every failure path since a non-zero
 // exit can block the user's prompt, and the poller says nothing when the
 // name or location is wrong), so a drift would surface only as tabs
@@ -781,27 +794,59 @@ func TestSessionTitleHookWriteFormatReachesThePoller(t *testing.T) {
 		t.Fatalf("hook: %v (output %q)", err, out)
 	}
 
-	// The hook chose the filename from its environment; assert it chose
-	// the handle, because a poller that scans by handle and a hook that
-	// writes by anything else agree on nothing.
-	if _, err := os.Stat(filepath.Join(f.sync.stateDir, f.handle("tab42"))); err != nil {
-		t.Fatalf("stat the mapping the hook wrote = %v, want it named for the tab's title handle", err)
+	// The hook chose the path from its environment; assert it chose the
+	// handle, because a poller that scans by handle and a hook that writes by
+	// anything else agree on nothing.
+	if _, err := os.Stat(filepath.Join(f.reportDir("tab42"), kiroID)); err != nil {
+		t.Fatalf("stat the report the hook wrote = %v, want it in the tab's title handle's report directory", err)
 	}
 
 	// Seed the kiro session record the poller resolves, then assert the pairing
-	// lands: the mapping file the hook chose to write is one the poller finds,
-	// reads and believes.
+	// lands: the report the hook chose to write is one the poller finds and
+	// believes.
 	f.session("hash0", kiroID, titleJSON(title))
 	set := &fakeSetter{live: []terminal.SessionID{"tab42"}}
 	f.sync.pass(t.Context(), set)
 	if len(set.calls) != 1 || set.calls[0] != "tab42="+title {
-		t.Errorf("the hook's mapping did not reach the poller: got %v, want [%q]", set.calls, "tab42="+title)
+		t.Errorf("the hook's report did not reach the poller: got %v, want [%q]", set.calls, "tab42="+title)
+	}
+}
+
+// TestSessionTitleHookRefusesANameOutsideItsAlphabet pins the hook's path guard:
+// both the session id and the handle become path components under the state dir.
+func TestSessionTitleHookRefusesANameOutsideItsAlphabet(t *testing.T) {
+	sh, err := exec.LookPath("/bin/sh")
+	if err != nil {
+		t.Skipf("no /bin/sh on this host: %v", err)
+	}
+	for name, tc := range map[string]struct{ id, handle string }{
+		"a session id holding a slash": {id: "sess_../../escape", handle: "abc"},
+		"a handle holding a slash":     {id: "sess_0f8fad5b-d9cb-469f-a165-70867728950e", handle: "../escape"},
+		"an id that is not a session":  {id: "notes", handle: "abc"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			state := filepath.Join(root, "state")
+			cmd := exec.Command(sh, "hooks/session-title.sh")
+			cmd.Env = append(os.Environ(), "WT_TITLE_HANDLE="+tc.handle, "WT_TITLE_STATE_DIR="+state)
+			cmd.Stdin = strings.NewReader(`{"session_id":"` + tc.id + `"}`)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("hook: %v (output %q)", err, out)
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Errorf("the hook wrote %d entries under %s, want none", len(entries), root)
+			}
+		})
 	}
 }
 
 // TestSessionTitleNeverExposesTheTabIDAsTheJoinKey pins the invariant the
 // whole handle mechanism exists for, in all three places this feature
-// writes an identifier: the hook's environment, the mapping FILENAME (a
+// writes an identifier: the hook's environment, the report directory NAME (a
 // directory under world-writable /tmp that neither this app nor kiro-cli
 // owns), and every log attribute. A tab id is the /ws attach+resume
 // capability token, so none of the three may carry it, whole or
@@ -837,23 +882,23 @@ func TestSessionTitleNeverExposesTheTabIDAsTheJoinKey(t *testing.T) {
 		t.Errorf("handle %q decoded to %d bytes (err %v), want 16 bytes of hex", handle, len(raw), err)
 	}
 
-	// 2. The mapping filename.
-	f.mapping(tabID, kiroID)
+	// 2. The report directory's name.
 	f.session("hash0", kiroID, titleJSON("Kopia audit: landed"))
+	f.mapping(tabID, kiroID)
 	entries, err := os.ReadDir(f.sync.stateDir)
 	if err != nil {
 		t.Fatalf("read the state dir: %v", err)
 	}
 	if len(entries) != 1 {
-		t.Fatalf("state dir holds %d entries, want exactly the one mapping", len(entries))
+		t.Fatalf("state dir holds %d entries, want exactly the one report directory", len(entries))
 	}
-	if name := entries[0].Name(); name != handle {
-		t.Errorf("mapping file is named %q, want the title handle %q: a filename in this directory must not be a capability token", name, handle)
+	if name := entries[0].Name(); name != handle+reportDirSuffix {
+		t.Errorf("report directory is named %q, want the title handle %q plus %q: a name in this directory must not be a capability token", name, handle, reportDirSuffix)
 	}
 
 	// 3. Every log attribute. The sync path emits TWO records about a
-	// mapping -- the adopted title and an unusable mapping -- and the
-	// reclaim emits none, since forget logs only when os.Remove fails.
+	// tab's reports -- the adopted title and an unusable report -- and the
+	// reclaim emits none, since forget logs only when os.RemoveAll fails.
 	// The third pass below proves the reclaim adds no record naming the
 	// tab id.
 	logged := capturedLog(t)
@@ -876,7 +921,7 @@ func TestSessionTitleNeverExposesTheTabIDAsTheJoinKey(t *testing.T) {
 		t.Errorf("the tab id reached a log attribute as %q; the handle is the diagnostic identifier for this feature, output was:\n%s", truncated, out)
 	}
 	if !strings.Contains(out, handle) {
-		t.Errorf("no log record named the title handle, so a mapping is undiagnosable; output was:\n%s", out)
+		t.Errorf("no log record named the title handle, so a tab's reports are undiagnosable; output was:\n%s", out)
 	}
 }
 
@@ -1026,9 +1071,8 @@ func capturedLog(t *testing.T) *strings.Builder {
 // TestSessionTitleZeroMappingRecordNamesItsDiscriminator pins the sweep's
 // no-mapping diagnosis: which sweeps produce it, and the attribute that
 // tells its two causes apart. state_entries is what sends the reader to
-// the right half -- 0 means no mapping-shaped name was in the directory
-// at all (the hook never ran), while non-zero means names were there and
-// every one belonged to a tab that is gone.
+// the right half -- 0 means no report directory was there at all (the hook
+// never ran), while non-zero means there were and none decided a live tab.
 func TestSessionTitleZeroMappingRecordNamesItsDiscriminator(t *testing.T) {
 	// A fragment of the message, not all of it: the hint attribute beside
 	// it carries prose a whole-message match would make brittle.
@@ -1054,10 +1098,8 @@ func TestSessionTitleZeroMappingRecordNamesItsDiscriminator(t *testing.T) {
 		// A well-formed handle from a previous run: the right alphabet
 		// and length, but no tab in this process answers to it, so the
 		// sweep reclaims it and leaves the live tab unmapped.
-		if err := os.WriteFile(filepath.Join(f.sync.stateDir, "0123456789abcdef0123456789abcdef"),
-			[]byte("sess_11111111-2222-3333-4444-555555555555\n"), 0o600); err != nil {
-			t.Fatalf("plant a previous run's mapping: %v", err)
-		}
+		plantFile(t, filepath.Join(f.sync.stateDir, "0123456789abcdef0123456789abcdef"+reportDirSuffix,
+			"sess_11111111-2222-3333-4444-555555555555"), "")
 		logged := capturedLog(t)
 
 		f.sync.pass(t.Context(), &fakeSetter{live: []terminal.SessionID{"tab1"}})
@@ -1097,38 +1139,36 @@ func TestSessionTitleZeroMappingRecordNamesItsDiscriminator(t *testing.T) {
 	})
 }
 
-// TestSessionTitleUnusableMappingRecordSkipsAnEmptyFile pins the gate on
-// the unusable-mapping record. A mapping file the hook has created but
-// not yet filled is the ordinary shape of a tab between spawn and first
-// prompt, and the sweep re-reads it every two seconds for as long as that
-// lasts -- so a record for an EMPTY file is a per-tick line about a state
-// that is not a fault, while a record for a file holding something that
-// is not a kiro session id is the only signal that a hook is writing
-// garbage.
-func TestSessionTitleUnusableMappingRecordSkipsAnEmptyFile(t *testing.T) {
-	const record = "mapping file holds no usable session id"
+// TestSessionTitleUnusableReportRecordSkipsAnEmptyDirectory pins the gate on
+// the unusable-report record: a report directory the hook has created but not
+// yet filled is a transient of every first report, while a report not named
+// for a kiro session is the only signal that something else writes there.
+func TestSessionTitleUnusableReportRecordSkipsAnEmptyDirectory(t *testing.T) {
+	const record = "report names no usable session id"
 
-	t.Run("a value that is not a session id is reported", func(t *testing.T) {
+	t.Run("a report not named for a session id is logged", func(t *testing.T) {
 		f := newTitleFixture(t)
-		f.mapping("tab1", "not-a-session-id")
+		f.report("tab1", "not-a-session-id")
 		logged := capturedLog(t)
 
 		f.sync.pass(t.Context(), &fakeSetter{live: []terminal.SessionID{"tab1"}})
 
 		if out := logged.String(); !strings.Contains(out, record) {
-			t.Errorf("pass() over a mapping holding %q logged %q, want a record naming %q", "not-a-session-id", out, record)
+			t.Errorf("pass() over a report named %q logged %q, want a record naming %q", "not-a-session-id", out, record)
 		}
 	})
 
-	t.Run("a file the hook has not filled yet is silent", func(t *testing.T) {
+	t.Run("a report directory the hook has not filled yet is silent", func(t *testing.T) {
 		f := newTitleFixture(t)
-		f.mapping("tab1", "")
+		if err := os.MkdirAll(f.reportDir("tab1"), 0o700); err != nil {
+			t.Fatal(err)
+		}
 		logged := capturedLog(t)
 
 		f.sync.pass(t.Context(), &fakeSetter{live: []terminal.SessionID{"tab1"}})
 
 		if out := logged.String(); strings.Contains(out, record) {
-			t.Errorf("pass() over an empty mapping logged %q, want no record naming %q: an unfilled file is the ordinary state before a tab's first prompt", out, record)
+			t.Errorf("pass() over an empty report directory logged %q, want no record naming %q", out, record)
 		}
 	})
 }
@@ -1140,7 +1180,7 @@ func TestSessionTitleUnusableMappingRecordSkipsAnEmptyFile(t *testing.T) {
 // buries the case the record exists for: a mapping the sweep cannot
 // remove, which it then re-reads and re-reclaims on every tick forever.
 func TestSessionTitleReclaimIsSilentWhenItSucceeds(t *testing.T) {
-	const record = "could not drop a stale mapping"
+	const record = "could not drop a closed tab's session reports"
 
 	f := newTitleFixture(t)
 	id := "sess_11111111-2222-3333-4444-555555555555"
@@ -1149,7 +1189,7 @@ func TestSessionTitleReclaimIsSilentWhenItSucceeds(t *testing.T) {
 	logged := capturedLog(t)
 
 	// The manager no longer lists closedtab, so the sweep reclaims its
-	// mapping, and the file is present and removable -- the ordinary close.
+	// reports, which are present and removable -- the ordinary close.
 	f.sync.pass(t.Context(), &fakeSetter{live: []terminal.SessionID{"othertab"}})
 
 	if out := logged.String(); strings.Contains(out, record) {
@@ -1209,51 +1249,52 @@ func TestSessionTitlePublishesTheMappingItResolved(t *testing.T) {
 		}
 	})
 
-	t.Run("a tab whose mapping file is gone drops out on the next sweep", func(t *testing.T) {
+	t.Run("a decision stands while the tab's reports or the state dir are gone", func(t *testing.T) {
 		f := newTitleFixture(t)
 		const id = "sess_11111111-2222-3333-4444-555555555555"
-		f.mapping("tab1", id)
 		f.session("hash0", id, titleJSON("a conversation"))
+		f.mapping("tab1", id)
 		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
 
 		f.sync.pass(t.Context(), set)
-		if got := f.sync.mappedSessions(); len(got) != 1 {
-			t.Fatalf("first sweep published %v, want one entry", got)
-		}
-		if err := os.Remove(filepath.Join(f.sync.stateDir, f.handle("tab1"))); err != nil {
-			t.Fatalf("remove the mapping file: %v", err)
+		if err := os.RemoveAll(f.reportDir("tab1")); err != nil {
+			t.Fatal(err)
 		}
 		f.sync.pass(t.Context(), set)
-
-		if got := f.sync.mappedSessions(); len(got) != 0 {
-			t.Errorf("second sweep published %v, want nothing: the map is rebuilt per sweep, so it cannot outlive its mapping file", got)
+		want := map[terminal.SessionID]string{"tab1": id}
+		if got := f.sync.mappedSessions(); !maps.Equal(got, want) {
+			t.Errorf("after the reports vanished mappedSessions() = %v, want %v: the server owns the decision, the hook only reports", got, want)
 		}
-	})
 
-	t.Run("an unreadable state dir publishes an empty map", func(t *testing.T) {
-		f := newTitleFixture(t)
-		const id = "sess_11111111-2222-3333-4444-555555555555"
-		f.mapping("tab1", id)
-		f.session("hash0", id, titleJSON("a conversation"))
-		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
-
-		f.sync.pass(t.Context(), set)
-		if got := f.sync.mappedSessions(); len(got) != 1 {
-			t.Fatalf("first sweep published %v, want one entry", got)
-		}
 		// A regular file where the directory was, rather than a chmod: this
 		// suite runs as root in the image, where a mode of 0 still reads.
 		if err := os.RemoveAll(f.sync.stateDir); err != nil {
-			t.Fatalf("remove the state dir: %v", err)
+			t.Fatal(err)
 		}
 		if err := os.WriteFile(f.sync.stateDir, []byte("not a directory"), 0o600); err != nil {
-			t.Fatalf("plant a regular file at the state dir: %v", err)
+			t.Fatal(err)
 		}
 		f.sync.pass(t.Context(), set)
+		if got := f.sync.mappedSessions(); !maps.Equal(got, want) {
+			t.Errorf("with the state dir unreadable mappedSessions() = %v, want %v", got, want)
+		}
+	})
 
-		got := f.sync.mappedSessions()
-		if got == nil || len(got) != 0 {
-			t.Errorf("mappedSessions() = %v, want an empty non-nil map: a stale pairing must not outlive the directory that refreshes it", got)
+	t.Run("a closed tab's decision is dropped", func(t *testing.T) {
+		f := newTitleFixture(t)
+		const id = "sess_11111111-2222-3333-4444-555555555555"
+		f.mapping("tab1", id)
+		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
+		f.sync.pass(t.Context(), set)
+
+		set.live = nil
+		f.sync.pass(t.Context(), set)
+
+		if got := f.sync.mappedSessions(); len(got) != 0 {
+			t.Errorf("mappedSessions() = %v after the tab closed, want none", got)
+		}
+		if _, ok := f.sync.decided["tab1"]; ok {
+			t.Error("the closed tab's decision is still held")
 		}
 	})
 
@@ -1292,18 +1333,19 @@ func stepJSON(id, owner, title string) string {
 }
 
 // A workflow step's session runs inside the launching tab's kiro-cli process, so its hooks
-// inherit the tab's title handle and write the step's id into the tab's mapping. The tab
-// still holds the launching conversation: that is what its title, URL and saved tab set
-// must name, or a restart resumes the step's thread in the tab.
+// inherit the tab's title handle and report the step in the tab. The tab still holds the
+// launching conversation: that is what its title, URL and saved tab set must name, or a
+// restart resumes the step's thread in the tab.
 func TestSessionTitleMapsAWorkflowStepToTheTabsConversation(t *testing.T) {
 	const tab = "sess_11111111-2222-3333-4444-555555555555"
 	const step = "sess_99999999-8888-7777-6666-555555555555"
 
 	t.Run("a step written by the current KAS", func(t *testing.T) {
 		f := newTitleFixture(t)
-		f.mapping("tab1", step)
 		f.session("hash0", tab, `{"id":`+quote(tab)+`,"title":"the tab's conversation"}`)
 		f.session("hash0", step, stepJSON(step, tab, "run · review #1"))
+		f.mapping("tab1", tab)
+		f.report("tab1", step)
 		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
 
 		f.sync.pass(t.Context(), set)
@@ -1322,10 +1364,11 @@ func TestSessionTitleMapsAWorkflowStepToTheTabsConversation(t *testing.T) {
 
 	t.Run("an older step record with no serverSession", func(t *testing.T) {
 		f := newTitleFixture(t)
-		f.mapping("tab1", step)
 		f.session("hash0", tab, `{"id":`+quote(tab)+`,"title":"the tab's conversation"}`)
 		f.session("hash1", step, `{"id":`+quote(step)+`,"title":"run · build #1","rootConversationId":`+quote(tab)+
 			`,"_meta":{"kiro":{"workflow":{"type":"step"}}}}`)
+		f.mapping("tab1", tab)
+		f.report("tab1", step)
 
 		f.sync.pass(t.Context(), &fakeSetter{live: []terminal.SessionID{"tab1"}})
 
@@ -1334,31 +1377,109 @@ func TestSessionTitleMapsAWorkflowStepToTheTabsConversation(t *testing.T) {
 		}
 	})
 
-	t.Run("a top-level session with a root conversation stays itself", func(t *testing.T) {
+	t.Run("a top-level session with a root conversation is a conversation", func(t *testing.T) {
 		f := newTitleFixture(t)
-		f.mapping("tab1", step)
 		f.session("hash0", step, `{"id":`+quote(step)+`,"title":"a fork","rootConversationId":`+quote(tab)+`}`)
+		f.mapping("tab1", tab)
+		f.report("tab1", step)
 
 		f.sync.pass(t.Context(), &fakeSetter{live: []terminal.SessionID{"tab1"}})
 
 		if got := f.sync.mappedSessions()["tab1"]; got != step {
-			t.Errorf("mapped %q, want %q: only a workflow step reports to another session", got, step)
+			t.Errorf("mapped %q, want %q: only a workflow step marker keeps a session from being the tab's", got, step)
 		}
 	})
 
-	t.Run("a step naming a malformed or circular owner stays itself", func(t *testing.T) {
+	t.Run("a step naming a malformed or circular owner is still a step", func(t *testing.T) {
 		for name, owner := range map[string]string{"malformed": "../../etc", "itself": step} {
 			t.Run(name, func(t *testing.T) {
 				f := newTitleFixture(t)
-				f.mapping("tab1", step)
+				f.mapping("tab1", tab)
 				f.session("hash0", step, stepJSON(step, owner, "run · review #1"))
+				f.report("tab1", step)
 
 				f.sync.pass(t.Context(), &fakeSetter{live: []terminal.SessionID{"tab1"}})
 
-				if got := f.sync.mappedSessions()["tab1"]; got != step {
-					t.Errorf("mapped %q, want %q", got, step)
+				if got := f.sync.mappedSessions()["tab1"]; got != tab {
+					t.Errorf("mapped %q, want %q", got, tab)
 				}
 			})
+		}
+	})
+
+	t.Run("a step whose record cannot be read never becomes the tab's conversation", func(t *testing.T) {
+		f := newTitleFixture(t)
+		f.session("hash0", tab, `{"id":`+quote(tab)+`,"title":"the tab's conversation"}`)
+		f.mapping("tab1", tab)
+		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
+		f.sync.pass(t.Context(), set)
+		// The step's record is over the read bound, so nothing proves what it is.
+		f.session("hash0", step, `{"id":`+quote(step)+`,"title":"`+strings.Repeat("x", maxTitleFileBytes)+`"}`)
+		f.report("tab1", step)
+
+		f.sync.pass(t.Context(), set)
+
+		if got := f.sync.mappedSessions()["tab1"]; got != tab {
+			t.Errorf("mapped %q, want the tab's own conversation %q", got, tab)
+		}
+		if got := set.aliases["tab1"]; got != tab {
+			t.Errorf("alias = %q, want %q", got, tab)
+		}
+	})
+
+	t.Run("a step reported first leaves the tab undecided until its conversation reports", func(t *testing.T) {
+		f := newTitleFixture(t)
+		f.session("hash0", step, stepJSON(step, tab, "run · review #1"))
+		f.report("tab1", step)
+		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
+
+		f.sync.pass(t.Context(), set)
+		if got, ok := f.sync.mappedSessions()["tab1"]; ok {
+			t.Fatalf("mapped %q from a step alone, want no decision", got)
+		}
+
+		f.mapping("tab1", tab)
+		f.sync.pass(t.Context(), set)
+		if got := f.sync.mappedSessions()["tab1"]; got != tab {
+			t.Errorf("mapped %q, want %q", got, tab)
+		}
+	})
+
+	t.Run("a report older than the decision does not move it", func(t *testing.T) {
+		f := newTitleFixture(t)
+		const other = "sess_44444444-3333-2222-1111-000000000000"
+		f.mapping("tab1", other)
+		f.mapping("tab1", tab)
+		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
+		f.sync.pass(t.Context(), set)
+		// other's record was unreadable at its report, then becomes readable: its report
+		// is older than the decision, so the decision stands.
+		if got := f.sync.mappedSessions()["tab1"]; got != tab {
+			t.Fatalf("mapped %q, want the newest report %q", got, tab)
+		}
+		f.sync.pass(t.Context(), set)
+		if got := f.sync.mappedSessions()["tab1"]; got != tab {
+			t.Errorf("mapped %q on the next pass, want %q", got, tab)
+		}
+	})
+
+	t.Run("a seed holds until the hook reports", func(t *testing.T) {
+		f := newTitleFixture(t)
+		f.session("hash0", tab, `{"id":`+quote(tab)+`,"title":"restored"}`)
+		f.handle("tab1")
+		f.sync.seedConversation("tab1", tab)
+		set := &fakeSetter{live: []terminal.SessionID{"tab1"}}
+
+		f.sync.pass(t.Context(), set)
+		if got := f.sync.mappedSessions()["tab1"]; got != tab {
+			t.Fatalf("mapped %q from the seed, want %q", got, tab)
+		}
+
+		const next = "sess_44444444-3333-2222-1111-000000000000"
+		f.mapping("tab1", next)
+		f.sync.pass(t.Context(), set)
+		if got := f.sync.mappedSessions()["tab1"]; got != next {
+			t.Errorf("mapped %q after /chat reported %q, want the report to win", got, next)
 		}
 	})
 }

@@ -78,11 +78,11 @@ done
 
 # --- KIRO_CLI_PATH is GONE, on both surfaces --------------------------------
 # It was an operator env var that stood the install manager down and dropped
-# kiro-cli readiness from /api/health; re-adding a READ brings that mode back
+# kiro-cli readiness from /healthz; re-adding a READ brings that mode back
 # silently, so its absence is asserted on both surfaces a developer or operator
 # would touch: the Go sources, and the README table.
 if grep -rq --include='*.go' --exclude-dir='.*' 'KIRO_CLI_PATH' "$GO_SOURCE_ROOT"; then
-  no "KIRO_CLI_PATH in Go sources" "a Go source still mentions KIRO_CLI_PATH; reading it stands the install manager down and takes kiro-cli readiness off /api/health"
+  no "KIRO_CLI_PATH in Go sources" "a Go source still mentions KIRO_CLI_PATH; reading it stands the install manager down and takes kiro-cli readiness off /healthz"
 else
   ok "no Go source mentions KIRO_CLI_PATH: the install manager is the only source of the binary path"
 fi
@@ -183,7 +183,7 @@ taint_export_writes=$(grep -cE '^[[:space:]]*(local|declare|export|readonly)?[[:
   || no "taint flag assignment count" "KIRO_CLI_TOOLS_TAINTED is assigned $taint_export_writes times; the last one wins at exec, so the observation this script proved can be overwritten by a value nothing checked"
 
 # --- the image default that gates the pinned-binary purge ---------------------
-# purge_pinned_chat_cli_copies acts only on KIRO_SKIP_BINARY_PINNING=1, so the
+# kirodata.go purges the pinned copies only on KIRO_SKIP_BINARY_PINNING=1, so the
 # runtime stage must set exactly that, once, or the purge silently never runs.
 DOCKERFILE="${WT_DOCKERFILE:-$REPO/Dockerfile}"
 pinning_env=$(awk '/^FROM /{n=0} /^ENV KIRO_SKIP_BINARY_PINNING=/{n++; v=$0} END{print n "|" v}' "$DOCKERFILE")
@@ -191,9 +191,10 @@ any_pinning=$(grep -c 'KIRO_SKIP_BINARY_PINNING' "$DOCKERFILE")
 [ "$pinning_env" = "1|ENV KIRO_SKIP_BINARY_PINNING=1" ] && [ "$any_pinning" -eq 1 ] \
   && ok "the runtime stage sets ENV KIRO_SKIP_BINARY_PINNING=1 exactly once" \
   || no "binary pinning ENV" "final stage reads '$pinning_env' ($any_pinning mentions); the purge's gate and the image default disagree"
-grep -q '"${KIRO_SKIP_BINARY_PINNING:-}" = 1 ]' "$ENTRYPOINT" \
+grep -q 'skipBinaryPinningKey = "KIRO_SKIP_BINARY_PINNING"' "$GO_SOURCE_ROOT/kirodata.go" \
+  && grep -q 'envx.String(skipBinaryPinningKey) == "1"' "$GO_SOURCE_ROOT/kirodata.go" \
   && ok "the purge is gated on the same exact value" \
-  || no "purge gate" "entrypoint.sh no longer gates the purge on KIRO_SKIP_BINARY_PINNING = 1"
+  || no "purge gate" "kirodata.go no longer gates the purge on KIRO_SKIP_BINARY_PINNING = 1"
 
 # --- every GitHub token variable the server reads reaches it from compose -----
 # githubtoken.go reads GH_TOKEN, else GITHUB_TOKEN, from its own environment, and
@@ -214,5 +215,32 @@ for var in GH_TOKEN GITHUB_TOKEN; do
     && ok "the README settings table has a $var row" \
     || no "$var README row" "the README settings table does not document $var"
 done
+
+# --- the Node.js the high-throughput flags were validated on -----------------
+# The image smoke test compares this literal with the pinned kiro-cli's own
+# Node.js and enginetuning.go compares it at every tab, so both read it by name.
+grep -qE '^KIRO_CLI_NODE_VALIDATED="[0-9]+\.[0-9]+\.[0-9]+"$' "$ENTRYPOINT" \
+  && ok "KIRO_CLI_NODE_VALIDATED is a bare major.minor.patch literal" \
+  || no "KIRO_CLI_NODE_VALIDATED literal" "no 'KIRO_CLI_NODE_VALIDATED=\"x.y.z\"' line; the smoke test's Node.js check and the per-tab guard have nothing to compare with"
+grep -qE '^export ([A-Z0-9_]+ )*KIRO_CLI_NODE_VALIDATED( |$)' "$ENTRYPOINT" \
+  && ok "KIRO_CLI_NODE_VALIDATED is exported to the server" \
+  || no "KIRO_CLI_NODE_VALIDATED export" "entrypoint.sh never exports it, so KIRO_CLI_HIGH_THROUGHPUT applies to no tab"
+grep -q '"KIRO_CLI_NODE_VALIDATED"' "$GO_SOURCE_ROOT/enginetuning.go" \
+  && ok "enginetuning.go reads KIRO_CLI_NODE_VALIDATED under that exact name" \
+  || no "KIRO_CLI_NODE_VALIDATED read" "enginetuning.go does not mention \"KIRO_CLI_NODE_VALIDATED\"; the exported version reaches nothing"
+grep -q 'KIRO_CLI_NODE_VALIDATED=' "$REPO/tests/image-smoke.conf" \
+  && ok "the image smoke test reads KIRO_CLI_NODE_VALIDATED" \
+  || no "KIRO_CLI_NODE_VALIDATED smoke check" "tests/image-smoke.conf no longer compares the pinned kiro-cli's Node.js with the validated version"
+
+# --- KIRO_CLI_HIGH_THROUGHPUT is documented, and off in the example ----------
+grep -q '"KIRO_CLI_HIGH_THROUGHPUT"' "$GO_SOURCE_ROOT/enginetuning.go" \
+  && ok "enginetuning.go reads KIRO_CLI_HIGH_THROUGHPUT" \
+  || no "KIRO_CLI_HIGH_THROUGHPUT read" "enginetuning.go does not mention \"KIRO_CLI_HIGH_THROUGHPUT\""
+grep -q '^| `KIRO_CLI_HIGH_THROUGHPUT` |' "$README" \
+  && ok "the README settings table has a KIRO_CLI_HIGH_THROUGHPUT row" \
+  || no "KIRO_CLI_HIGH_THROUGHPUT README row" "the README settings table does not document KIRO_CLI_HIGH_THROUGHPUT"
+grep -q 'KIRO_CLI_HIGH_THROUGHPUT' "$COMPOSE" \
+  && no "KIRO_CLI_HIGH_THROUGHPUT in compose.yaml" "the example compose turns the experimental flags on for everyone who copies it; it stays off unless an operator sets it" \
+  || ok "the example compose.yaml leaves KIRO_CLI_HIGH_THROUGHPUT unset"
 
 report

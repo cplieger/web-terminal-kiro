@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 

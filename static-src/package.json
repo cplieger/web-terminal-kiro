@@ -16,29 +16,29 @@
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",
     "@eslint/js": "10.0.1",
-    "@playwright/test": "1.64.1",
+    "@playwright/test": "1.65.0",
     "@stryker-mutator/core": "10.1.1",
     "@stryker-mutator/typescript-checker": "10.1.1",
     "@stryker-mutator/vitest-runner": "10.1.1",
     "@types/node": "26.6.6",
     "@typescript/native": "npm:typescript@7.0.2",
-    "@vitest/browser": "5.0.5",
-    "@vitest/browser-playwright": "5.0.5",
-    "@vitest/coverage-v8": "5.0.5",
-    "eslint": "10.13.0",
-    "knip": "6.44.0",
-    "playwright": "1.64.1",
+    "@vitest/browser": "5.1.0",
+    "@vitest/browser-playwright": "5.1.0",
+    "@vitest/coverage-v8": "5.1.0",
+    "eslint": "10.14.0",
+    "knip": "6.44.2",
+    "playwright": "1.65.0",
     "postcss-html": "2.0.0",
     "prettier": "3.9.10",
     "stylelint": "17.16.0",
     "stylelint-config-standard": "40.0.0",
     "typescript": "npm:@typescript/typescript6@6.0.2",
-    "typescript-eslint": "8.72.1",
-    "vitest": "5.0.5"
+    "typescript-eslint": "8.72.2",
+    "vitest": "5.1.0"
   },
   "dependencies": {
-    "@cplieger/web-terminal-engine": "6.4.0",
-    "@cplieger/web-terminal-ui": "8.6.0"
+    "@cplieger/web-terminal-engine": "6.5.0",
+    "@cplieger/web-terminal-ui": "9.0.0"
   },
   "overrides": {
     "qs": "^6.15.2",

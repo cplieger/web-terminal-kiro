@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,11 +21,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/toolbelt/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v3"
 )
 
 // fakeCLI writes an executable shell stub standing in for kiro-cli. Its whoami
@@ -104,7 +106,7 @@ func TestSessionCommand_loginGuard(t *testing.T) {
 }
 
 // TestSessionCommand_extraChatArgs pins the KIRO_CLI_CHAT_ARGS contract: extra
-// launch flags (e.g. --v3) are appended to the chat invocation as separate,
+// launch flags (e.g. --tui) are appended to the chat invocation as separate,
 // LITERAL argv entries — an arg carrying shell metacharacters or spaces must
 // arrive verbatim (positional-param passing, not string splicing into the
 // script) — and they never leak into the login call. Without extra args, chat
@@ -115,7 +117,7 @@ func TestSessionCommand_extraChatArgs(t *testing.T) {
 		cliPath, loginMarker, chatMarker := fakeCLI(t, dir, 1) // logged out: login runs too
 
 		injection := `$(touch ` + filepath.Join(dir, "pwned") + `); two words`
-		argv := sessionCommand(cliPath, "--v3", "--effort", "high", injection)
+		argv := sessionCommand(cliPath, "--tui", "--effort", "high", injection)
 		out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput() // #nosec G204 -- test executes its own wrapper
 		if err != nil {
 			t.Fatalf("wrapper run: %v\noutput: %s", err, out)
@@ -125,7 +127,7 @@ func TestSessionCommand_extraChatArgs(t *testing.T) {
 		if readErr != nil {
 			t.Fatalf("chat was not invoked (marker missing): %v", readErr)
 		}
-		want := "--v3\n--effort\nhigh\n" + injection + "\n"
+		want := "--tui\n--effort\nhigh\n" + injection + "\n"
 		if string(got) != want {
 			t.Errorf("chat argv = %q, want %q (args must pass as literal positional params)", got, want)
 		}
@@ -208,7 +210,7 @@ func writeToolsManifest(t *testing.T, configDir, manifest string) {
 	// and, on a filesystem carrying an inheritable group-write ACL, the
 	// directory is born group-writable whatever was asked for (measured on a
 	// ZFS nfs4acl dataset: 0770 from a 0o700 MkdirAll -- the same condition
-	// this app's own docs record for pinstall's install root, where
+	// this app's own docs record for pin's install root, where
 	// "os.MkdirAll with dirMode = 0o755 cannot beat a ZFS inheritable ACL").
 	// toolbelt's VerifyRootIntegrity then refuses to construct the engine over
 	// a group-writable managed root, so every test below reaches the
@@ -262,7 +264,7 @@ func TestStartTools_configDirMissing(t *testing.T) {
 // of a production subsystem, not the deliberate out-of-container disable, so
 // they follow degraded-not-dead: the engine stays nil (no /api/tools mount) and
 // syncing reports false (sessions ungated) but state() reports "degraded" so
-// /api/health carries the informational tools field instead of omitting it and
+// /healthz carries the informational tools field instead of omitting it and
 // presenting a failed subsystem as intentionally off. Serial: mutates the global
 // default logger.
 func TestStartTools_configDirUnusable(t *testing.T) {
@@ -319,7 +321,7 @@ func TestStartTools_configDirUnusable(t *testing.T) {
 // instead of taking the server down. Unlike the missing-config-dir path (an
 // intentionally disabled subsystem: no engine, empty state, health omits the
 // tools field entirely), a FAILED production subsystem must stay visible: the
-// returned runtime carries state "degraded" so /api/health reports
+// returned runtime carries state "degraded" so /healthz reports
 // {"status":"ok","tools":"degraded"} per the documented
 // tools=syncing|ok|degraded contract, while the engine stays nil and syncing
 // reports false so sessions remain ungated.
@@ -370,7 +372,7 @@ func TestStartTools_engineStartFailure(t *testing.T) {
 	deps.toolsState = rt.state
 	mux, _, _ := mustRegisterRoutes(t, deps)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tools":"degraded"`) {
 		t.Errorf("health after failed engine start = %d %s, want 200 with tools:degraded", rec.Code, rec.Body.String())
 	}
@@ -499,7 +501,7 @@ func TestStartTools_rootIntegrityRefusalDegrades(t *testing.T) {
 					t.Fatalf("loosen tools root: %v", err)
 				}
 			},
-			wantReason: "is group- or other-writable",
+			wantReason: "can be modified by",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -524,7 +526,7 @@ func TestStartTools_rootIntegrityRefusalDegrades(t *testing.T) {
 				t.Error("syncing reports true after a refusal; sessions must remain ungated (degraded-not-dead)")
 			}
 			if got := rt.state(); got != toolsStateDegraded {
-				t.Errorf("state = %q, want %q so /api/health reports the failed subsystem instead of omitting the field", got, toolsStateDegraded)
+				t.Errorf("state = %q, want %q so /healthz reports the failed subsystem instead of omitting the field", got, toolsStateDegraded)
 			}
 			// The check runs before anything is written: no seeded manifest, no
 			// bin/ inside the tree it refused.
@@ -730,7 +732,7 @@ func TestHostAllowlist_loopbackCarveOut(t *testing.T) {
 // TestHostAllowlist_blankConfigurationStaysPermissive drives a configured but
 // blank ALLOWED_HOSTS (only commas and whitespace) through the real
 // parseAllowedHosts into the middleware: blank entries never engage the gate
-// (webhttp.ParseHostList leaves the policy INACTIVE), so the documented
+// (httpserver.ParseHostList leaves the policy INACTIVE), so the documented
 // permissive state must hold. Accidentally treating a blank entry as
 // non-blank would turn a blank configuration into a deny-all outage.
 func TestHostAllowlist_blankConfigurationStaysPermissive(t *testing.T) {
@@ -813,7 +815,7 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 
 	// Returns the engine and the RESOLVED manifest path, which is both what
 	// warnIfNoLSPEnabled must echo in its `manifest` field and the file the
-	// inventory-failure subtest corrupts.
+	// held-manifest subtest corrupts.
 	newEngine := func(t *testing.T, manifest, catalog string) (*toolbelt.Engine, string) {
 		t.Helper()
 		dir := t.TempDir()
@@ -872,30 +874,24 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 		}
 	})
 
-	t.Run("inventory failure reports itself, not the nudge", func(t *testing.T) {
-		eng, manifestPath := newEngine(t, `{"version":2,"tools":{}}`, "")
-		// Corrupt the manifest AFTER engine start: Inventory re-reads it from
-		// disk, so the read now fails. The property pinned here is that the
-		// failure must NOT surface as the LSP nudge Warn (the nudge's absence
-		// would otherwise be read as "a language server is enabled"); it
-		// reports itself under its own message instead.
+	t.Run("a manifest broken after start reads as the last good one", func(t *testing.T) {
+		eng, manifestPath := newEngine(t,
+			`{"version":2,"tools":{"gopls":{}}}`,
+			`{"entries":{"gopls":{"name":"gopls","source":"go:golang.org/x/tools/gopls","lsp":true}}}`)
+		// toolbelt holds the manifest it last applied while the file on disk is
+		// unreadable (until SyncManifest adopts a new read), so Inventory still
+		// answers the enabled gopls: neither the nudge nor the read-failure Warn.
 		if err := os.WriteFile(manifestPath, []byte("{not json"), 0o644); err != nil {
 			t.Fatalf("corrupt manifest: %v", err)
 		}
 		records := capture.Default(t)
 		warnIfNoLSPEnabled(eng, manifestPath)
 		if got := records.CountLevel(slog.LevelWarn, warnMsg); got != 0 {
-			t.Errorf("log = %q; an inventory failure must not produce the LSP Warn (got %d)", records.Messages(), got)
+			t.Errorf("log = %q; the held manifest enables gopls, so the nudge must stay silent (got %d)", records.Messages(), got)
 		}
 		const readFailMsg = "tools: manifest unreadable; cannot tell whether a language server is enabled"
-		if got := records.CountLevel(slog.LevelWarn, readFailMsg); got != 1 {
-			t.Errorf("log = %q, want exactly one %q Warn (the read failure must not regress to Debug; got %d)", records.Messages(), readFailMsg, got)
-		}
-		// Same regression pin as the nudge above: this record is the one telling
-		// an operator which file to repair, so it must name the resolved manifest
-		// rather than a path spelled into the hint.
-		if got, ok := records.AttrValueExact(readFailMsg, "manifest"); !ok || got != manifestPath {
-			t.Errorf("manifest attr = %q (present=%t), want %q; the unreadable-manifest Warn must name the file to repair", got, ok, manifestPath)
+		if got := records.CountLevel(slog.LevelWarn, readFailMsg); got != 0 {
+			t.Errorf("log = %q; Inventory answers the held manifest, so no read-failure Warn (got %d)", records.Messages(), got)
 		}
 	})
 }
@@ -907,12 +903,12 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 // URL-shaped entry (scheme/path/CIDR pasted where a bare hostname belongs)
 // must emit exactly one named Warn while being DROPPED per ParseHostList's
 // drop-and-report contract — the entry canonicalizes to a value no
-// browser-sent Host ever matches, so retaining it (the pre-webhttp behavior)
+// browser-sent Host ever matches, so retaining it (the behaviour before httpserver)
 // only created an unmatchable key an attacker-chosen Host like "http:9848"
 // could in principle collide with. The valid subset must keep working.
 // Serial: capture.Default mutates the process-global default logger.
 func TestParseAllowedHosts(t *testing.T) {
-	allows := func(t *testing.T, policy *webhttp.HostPolicy, host, remoteAddr string) bool {
+	allows := func(t *testing.T, policy *httpserver.HostPolicy, host, remoteAddr string) bool {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/probe", http.NoBody)
 		if remoteAddr != "" {
@@ -949,7 +945,7 @@ func TestParseAllowedHosts(t *testing.T) {
 		if !allows(t, policy, "localhost:9848", "192.168.1.50:44444") {
 			t.Error("valid entry localhost missing from the allowlist")
 		}
-		// The pre-webhttp parser RETAINED the malformed entry as the
+		// The parser before httpserver RETAINED the malformed entry as the
 		// unmatchable key "http"; the drop-and-report contract removes it, so
 		// a request whose Host canonicalizes to "http" must now be rejected.
 		if allows(t, policy, "http:9848", "192.168.1.50:44444") {
@@ -1023,7 +1019,7 @@ func TestParseAllowedHosts_allInvalidFailsClosed(t *testing.T) {
 // branch, which the fakeCLI-based tests never reach (their stub always
 // exists): when the configured kiro-cli path does not resolve (a failed
 // first-boot install on the persistent volume), the wrapper exits non-zero
-// with the operator-facing install hint -- naming /api/health -- and never
+// with the operator-facing install hint -- naming /healthz -- and never
 // falls through to the device-flow login or chat. Without this branch the
 // user would instead see the misleading "not signed in" explainer followed
 // by a shell command-not-found error (verified by running the script with
@@ -1039,8 +1035,8 @@ func TestSessionCommand_missingBinaryAborts(t *testing.T) {
 	if !strings.Contains(string(out), "kiro-cli is not installed or not on PATH") {
 		t.Errorf("missing the operator-facing install hint; output: %s", out)
 	}
-	if !strings.Contains(string(out), "/api/health") {
-		t.Errorf("hint does not point at /api/health; output: %s", out)
+	if !strings.Contains(string(out), "/healthz") {
+		t.Errorf("hint does not point at /healthz; output: %s", out)
 	}
 	if strings.Contains(string(out), "CHAT_STARTED") || strings.Contains(string(out), "device-flow sign-in") {
 		t.Errorf("guard fell through to login/chat despite a missing binary; output: %s", out)
@@ -1104,7 +1100,7 @@ func jobEvent(kind, state string) *toolbelt.Job {
 }
 
 // TestToolsStatus_reducerTransitions pins the whole documented state machine of
-// the /api/health tools field, one row per transition the reducer must or must
+// the /healthz tools field, one row per transition the reducer must or must
 // NOT make. Two properties carry the finding this reducer exists for:
 //
 //   - degraded -> ok is REACHABLE. The field used to latch the boot verdict, so
@@ -1340,6 +1336,11 @@ func TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates(t *testing.T) {
 
 	assertStage := func(stage, wantTools string) {
 		t.Helper()
+		// toolbelt releases Wait before it calls OnJobChanged with the terminal
+		// state, so the reducer's store can land just after Wait returns.
+		for deadline := time.Now().Add(10 * time.Second); rt.state() != wantTools && time.Now().Before(deadline); {
+			time.Sleep(5 * time.Millisecond)
+		}
 		if got := rt.state(); got != wantTools {
 			t.Fatalf("%s: tools state = %q, want %q", stage, got, wantTools)
 		}
@@ -1354,7 +1355,7 @@ func TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates(t *testing.T) {
 				stage, rec.Code, rec.Body.String())
 		}
 		hrec := httptest.NewRecorder()
-		health(hrec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+		health(hrec, httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
 		if hrec.Code != http.StatusOK {
 			t.Fatalf("%s: health = %d (body %s), want 200; tool convergence never gates readiness",
 				stage, hrec.Code, hrec.Body.String())
@@ -1419,7 +1420,7 @@ func TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates(t *testing.T) {
 
 // TestToolsStatus_callbackAndHealthReadAreRaceClean pins the concurrency
 // contract the reducer was written for: OnJobChanged fires from toolbelt's job
-// worker (under its queue lock) while /api/health reads the field on request
+// worker (under its queue lock) while /healthz reads the field on request
 // goroutines. Meaningful under -race, which CI runs; without it the assertions
 // still catch a torn or unexpected value.
 func TestToolsStatus_callbackAndHealthReadAreRaceClean(t *testing.T) {
@@ -1452,7 +1453,7 @@ func TestToolsStatus_callbackAndHealthReadAreRaceClean(t *testing.T) {
 		wg.Go(func() {
 			for range rounds {
 				rec := httptest.NewRecorder()
-				health(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+				health(rec, httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
 				if rec.Code != http.StatusOK {
 					t.Errorf("health during concurrent job transitions = %d, want 200", rec.Code)
 					return
@@ -1477,12 +1478,12 @@ func TestToolsStatus_callbackAndHealthReadAreRaceClean(t *testing.T) {
 // tail. A deliberate rewording updates both sides; anything else is the
 // regression these pins exist to fail.
 const (
-	trustedUIDsBadMsg  = "dropping unusable TRUSTED_INSTALL_UIDS entries; the kiro-cli install keeps enforcing custody against those identities"
+	trustedUIDsBadMsg  = "dropping unusable TRUSTED_INSTALL_UIDS entries; the kiro-cli install and the tools engine keep enforcing custody against those identities"
 	trustedUIDsBadHint = "each entry is a single numeric uid greater than 0 (e.g. 1000,1001); root is trusted already, and every identity listed must be at least as privileged as this server"
 )
 
 // TestParseTrustedInstallUIDs pins the whole TRUSTED_INSTALL_UIDS contract:
-// the EMPTY default (no trust grant, so pinstall's custody check applies in
+// the EMPTY default (no trust grant, so pin's custody check applies in
 // full), the drop-the-unusable-keep-the-rest posture, the two numeric shapes that
 // are rejected as well as non-numeric text (0 is root, which the library trusts
 // anyway; a negative is not an identity), deduplication, first-seen order, and
@@ -1643,7 +1644,7 @@ func TestParseCatalogRefresh_warnsByNameOnly(t *testing.T) {
 // may arrive in a repeated field line or a comma list, matching is case- and
 // whitespace-insensitive, and a token SUBSTRING must not match. This is now the
 // app's ONLY upgrade-shaped predicate — the access log's skip is decided from
-// the response by webhttp.WithSkipUpgrades — and a divergence here is silent,
+// the response by httpserver.WithSkipUpgrades — and a divergence here is silent,
 // dropping the attach record for a request that presented a session capability
 // token.
 func TestIsWebSocketUpgrade_requiresBothListTokens(t *testing.T) {
@@ -1675,12 +1676,12 @@ func TestIsWebSocketUpgrade_requiresBothListTokens(t *testing.T) {
 	}
 }
 
-// accessLinesFor returns the webhttp access-log records captured for path, in
+// accessLinesFor returns the httpserver access-log records captured for path, in
 // order, as attribute maps. Pass "" to get every access line whatever its
 // recorded path — needed for requests under the /api/sessions/ subtree, whose
 // recorded path is the route template (or the "(unmatched)" marker) rather than
 // the raw one, because WithTemplatePathsUnder keeps session tokens out of the
-// log. The access line's message is webhttp's "http", so every other record the
+// log. The access line's message is httpserver's "http", so every other record the
 // server emits (the engine's session lines, wsAttachLog's attach record) is
 // filtered out. capture.Recorder is concurrency-safe, which is what makes it
 // usable while a real httptest server is serving.
@@ -1727,7 +1728,7 @@ func awaitAccessLines(t *testing.T, rec *capture.Recorder, path string, want int
 
 // TestAccessLogSkipsOnlyCompletedUpgrades is the payoff test for the access
 // log's move from a local willUpgrade predicate (a request-shaped PREDICTION of
-// what the engine's websocket.Accept would admit) to webhttp.WithSkipUpgrades (a
+// what the engine's websocket.Accept would admit) to httpserver.WithSkipUpgrades (a
 // response-shaped OUTCOME: a recorded 101 or a bare hijack). It drives a REAL
 // handshake against the engine over a real server, because that is the only way
 // the outcome exists at all: no fake mux can be skipped by this option, and a
@@ -1848,7 +1849,7 @@ func TestAccessLogSkipsOnlyCompletedUpgrades(t *testing.T) {
 
 // TestAccessLogKeepsStreamPathRefusals pins the half of the stream skip that the
 // SSE path skip could quietly break. The skip rules are evaluated BEFORE the
-// chain runs, so a BARE path skip (webhttp.WithSkipPaths) on the SSE route would
+// chain runs, so a BARE path skip (httpserver.WithSkipPaths) on the SSE route would
 // also swallow the 403 hostPolicy.Middleware writes — WriteError logs nothing
 // itself and the engine handler never runs — leaving a wrong-Host or DNS-rebound
 // attempt on this unauthenticated PTY with no record anywhere (CWE-778). That is
@@ -2019,7 +2020,10 @@ func TestWSAttachLog(t *testing.T) {
 		if wantID == sessionID {
 			t.Fatalf("terminal.LogID(%q) returned the id unchanged; pick a longer fixture or the redaction assertion below proves nothing", sessionID)
 		}
-		for _, tc := range []struct{ key, want string }{
+		for _, tc := range []struct {
+			key  capture.AttrName
+			want string
+		}{
 			{"session", wantID},
 			{"client_ip", "192.0.2.1"}, // httptest.NewRequest's RemoteAddr, host only
 		} {
@@ -2074,7 +2078,7 @@ func TestWSAttachLog(t *testing.T) {
 // because those are the engine's OTHER refusal reasons and this predicate
 // deliberately does not model them. Nothing in this app models them any more:
 // the access log stopped predicting admission when it adopted
-// webhttp.WithSkipUpgrades, and TestAccessLogSkipsOnlyCompletedUpgrades covers
+// httpserver.WithSkipUpgrades, and TestAccessLogSkipsOnlyCompletedUpgrades covers
 // each of those refusals from the outcome side.
 func TestIsWebSocketUpgrade_agreesWithTheEngineHandshake(t *testing.T) {
 	mux, _, csp, id := mustStartSession(t, newTestDeps(true))
@@ -2292,6 +2296,14 @@ func TestStartTools_logsTheGatedWindowOpening(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	// The convergence goroutine logs the language-server nudge after lifting the gate.
+	// Wait for it, or that record lands in a later test's log capture.
+	for records.CountLevel(slog.LevelWarn, "no language servers enabled") == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the post-convergence language-server nudge never logged")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // TestWarnIfToolsBinUnreachable pins the PATH-reachability nudge added for h-f1:
@@ -2303,7 +2315,7 @@ func TestStartTools_logsTheGatedWindowOpening(t *testing.T) {
 // Serial: capture.Default mutates the process-global default logger, and t.Setenv
 // forbids t.Parallel.
 func TestWarnIfToolsBinUnreachable(t *testing.T) {
-	const warnMsg = "the tools tree is not on PATH: every tool the manifest installs will be invisible to kiro-cli and to terminal sessions, even though /api/health will report tools=ok"
+	const warnMsg = "the tools tree is not on PATH: every tool the manifest installs will be invisible to kiro-cli and to terminal sessions, even though /healthz will report tools=ok"
 
 	t.Run("tools bin on PATH stays silent", func(t *testing.T) {
 		toolsDir := t.TempDir()
@@ -2892,21 +2904,93 @@ func TestSetupLoggingInstallsTheParsedLevelAndWarnsByNameOnly(t *testing.T) {
 	}
 }
 
-func TestKiroSettingsTurnsSettingsOff(t *testing.T) {
-	for _, key := range []string{
-		"chat.fullscreenCopyOnSelect",
-		"app.warnOnElevatedPrivileges",
-	} {
-		t.Run(key, func(t *testing.T) {
-			want := []string{"settings", key, "false"}
-			settings := kiroSettings()
-			i := slices.IndexFunc(settings, func(a pinstall.Assertion) bool { return a.Name == key })
-			if i < 0 {
-				t.Fatalf("kiroSettings() has no %q assertion", key)
-			}
-			if got := settings[i].Args; !slices.Equal(got, want) {
-				t.Errorf("kiroSettings() assertion %q = %q, want %q", key, got, want)
-			}
-		})
+// TestKiroSettingsRequiresOnlyTheAutoUpdateGate pins the integrity gate this app now
+// writes itself: app.disableAutoupdates set to true, once, and the only Required
+// assertion, so a kiro-cli that could replace its verified binary withholds readiness
+// while a failing best-effort setting only warns.
+func TestKiroSettingsRequiresOnlyTheAutoUpdateGate(t *testing.T) {
+	var required []pin.Assertion
+	gates := 0
+	for _, a := range kiroSettings() {
+		if a.Required {
+			required = append(required, a)
+		}
+		if a.Name == "app.disableAutoupdates" {
+			gates++
+		}
+	}
+	want := []string{"settings", "app.disableAutoupdates", "true"}
+	if gates != 1 || len(required) != 1 || required[0].Name != "app.disableAutoupdates" || !slices.Equal(required[0].Args, want) {
+		t.Errorf("Required assertions = %+v with %d auto-update entries, want exactly one Required %q", required, gates, want)
+	}
+}
+
+// TestToolsConfigCarriesTheTrustedInstallUIDs pins that TRUSTED_INSTALL_UIDS reaches the
+// tools engine's integrity check as well as the kiro-cli install.
+func TestToolsConfigCarriesTheTrustedInstallUIDs(t *testing.T) {
+	cfg := toolsConfig(&baseTools{trustedUIDs: []int{1000, 1001}}, t.TempDir(), nil)
+	if !slices.Equal(cfg.TrustedUIDs, []int{1000, 1001}) {
+		t.Errorf("toolsConfig().TrustedUIDs = %v, want [1000 1001]", cfg.TrustedUIDs)
+	}
+}
+
+// TestKiroInstallConfigCarriesTheReleaseShape pins the published kiro-cli release's
+// facts: a wrong host, archive name, arch token or archive directory breaks every
+// fresh install, and nothing else in the suite downloads one.
+func TestKiroInstallConfigCarriesTheReleaseShape(t *testing.T) {
+	cfg := kiroInstallConfig(&baseKiro{version: "2.0.0"})
+	wantTokens := map[string]string{"amd64": "x86_64-linux", "arm64": "aarch64-linux"}
+	switch {
+	case cfg.Name != "kiro-cli":
+		t.Errorf("Name = %q, want kiro-cli", cfg.Name)
+	case cfg.URLTemplate != "https://desktop-release.q.us-east-1.amazonaws.com/{version}/kirocli-{arch}.zip":
+		t.Errorf("URLTemplate = %q, want the desktop-release kirocli-{arch}.zip archive", cfg.URLTemplate)
+	case !maps.Equal(cfg.ArchTokens, wantTokens):
+		t.Errorf("ArchTokens = %v, want %v", cfg.ArchTokens, wantTokens)
+	case cfg.ArtifactDir != "kirocli/bin":
+		t.Errorf("ArtifactDir = %q, want kirocli/bin", cfg.ArtifactDir)
+	case !slices.Equal(cfg.ProbeArgs, []string{"--version"}):
+		t.Errorf("ProbeArgs = %q, want [--version]", cfg.ProbeArgs)
+	case !strings.Contains(cfg.Notice, "https://kiro.dev/license/"):
+		t.Errorf("Notice = %q, want the licence link", cfg.Notice)
+	case cfg.LinkDir != "kiro-cli-bin":
+		t.Errorf("LinkDir = %q, want kiro-cli-bin, a dir toolbelt never writes", cfg.LinkDir)
+	case cfg.Purge == nil || len(cfg.Purge.Names) != 0:
+		t.Errorf("Purge = %+v, want no Names: they sweep LinkDir, where the shell installer wrote nothing", cfg.Purge)
+	}
+	for _, d := range []string{"bin/kiro-cli", "bin/kiro-cli-chat", "bin/kiro-cli-term"} {
+		if cfg.Purge != nil && !slices.Contains(cfg.Purge.Artifacts, d) {
+			t.Errorf("Purge.Artifacts = %q, want the shell-era dispatcher %s", cfg.Purge.Artifacts, d)
+		}
+	}
+}
+
+// TestKiroDefaultSettingsFile pins the image's kiro-cli preferences file: kiro-cli
+// ignores a KIRO_DEFAULT_SETTINGS file over 1 MiB or that is not a JSON object, and a
+// key also asserted by kiroSettings would be reset every boot, so its default is dead.
+func TestKiroDefaultSettingsFile(t *testing.T) {
+	raw, err := os.ReadFile("kiro-cli-defaults.json")
+	if err != nil {
+		t.Fatalf("read kiro-cli-defaults.json: %v", err)
+	}
+	if len(raw) > 1<<20 {
+		t.Errorf("kiro-cli-defaults.json is %d bytes; kiro-cli ignores a defaults file over 1 MiB", len(raw))
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("kiro-cli-defaults.json is not a JSON object: %v", err)
+	}
+	want := map[string]any{
+		"telemetry.enabled":            false,
+		"chat.fullscreenCopyOnSelect":  false,
+		"app.warnOnElevatedPrivileges": false,
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("kiro-cli-defaults.json = %v, want %v", got, want)
+	}
+	for _, a := range kiroSettings() {
+		if _, ok := got[a.Name]; ok {
+			t.Errorf("%q is both a default and a boot-time assertion; the assertion would overwrite every user change", a.Name)
+		}
 	}
 }

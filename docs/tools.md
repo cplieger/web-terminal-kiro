@@ -50,6 +50,8 @@ These sources are supported:
 - `npm:`, `pip:`, `cargo:` and `go:` packages.
 - `manual` shell commands, with the `${VERSION}`, `${BIN}` and `${ARCH_*}` placeholders.
 
+Installed tools are linked into `/config/tools/bin`. The pinned kiro-cli has its own `/config/tools/kiro-cli-bin`, earlier on `PATH`, so a tool you name `kiro-cli` does not replace it.
+
 ## The catalog
 
 Download addresses, checksums and dependencies come from a catalog of about 700 tools, built from the mise and aqua registries by [tool-catalog](https://github.com/cplieger/tool-catalog). A template carries no install commands, so it never goes stale. Dependencies come along on their own. Enabling `typescript-language-server` also installs `node` and the `typescript` package. The server refreshes the catalog at start and then every `TOOL_CATALOG_REFRESH`, keeping the last good copy when a refresh fails. [Configuration](configuration.md) lists the catalog settings.
@@ -84,14 +86,16 @@ When GitHub refuses a request for its limit, the install or update that needed i
 
 ## When tabs open
 
-New tabs wait for the first install pass at start, so the first tab sees every enabled tool on `PATH`. The web page and the health check stay reachable while it runs. If the pass fails, tabs open anyway, the failure is logged, and `/api/health` reports `"tools": "degraded"`.
+New tabs wait for the first install pass at start, so the first tab sees every enabled tool on `PATH`. The web page and the health check stay reachable while it runs. If the pass fails, tabs open anyway, the failure is logged, and `/healthz` reports `"tools": "degraded"`.
 
-`/api/health` reports two tool fields, and neither changes the container's healthy or unhealthy state:
+The tools engine does not start over a tools folder it cannot trust: a folder it manages is a symlink, is not a folder, or can be changed by another account through its owner, its mode or an access-control list. The container's start script tightens modes, but it changes no owner and removes no access-control list. Fix an owner inside the container with `chown root:root <folder>`. Remove an access-control-list grant on the host, because the image has no ACL tools: `setfacl -b <folder>` for a POSIX list, or the host's NFSv4 ACL tool for an NFSv4 list, as on ZFS or NFS. Replace a symlink or a file with a real folder. For a user that owns a folder or holds a grant on it, you can list its uid in `TRUSTED_INSTALL_UIDS` instead. That never clears a group grant, or a managed folder that is itself a symlink or a file. Then restart the container. Until then the engine stays off, tabs still open, and `/healthz` reports `"tools": "degraded"`.
 
-- `tools` is `"syncing"` during the start pass, then `"ok"` or `"degraded"` after each install. A repair you make inside the container turns it back to `"ok"` without a restart.
+`/healthz` reports two tool fields, and neither changes the container's healthy or unhealthy state:
+
+- `tools` is `"syncing"` during the start pass, then `"ok"` or `"degraded"` after each install. A repair of a failed install, made inside the container, turns it back to `"ok"` without a restart; an engine refused at start needs one, as above.
 - `tools_missing` counts enabled entries that are not installed yet. Disabled templates never count, and an entry still installing does. The key is absent when the count is unknown, so `0` always means everything is installed.
 
-kiro-cli's own readiness is the separate `status` and `reason` keys.
+kiro-cli's own readiness is the separate `status` and `reasons` keys.
 
 ## From inside a session
 

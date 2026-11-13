@@ -9,8 +9,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/envx/v2"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/toolbelt/v3"
 )
 
@@ -271,7 +271,7 @@ func TestGitHubLimitReporter_reportSaysHowLongItWaitsWithoutAResetTime(t *testin
 	for name, tc := range map[string]struct {
 		tokenEnv      envx.Key
 		authenticated bool
-		msg           string
+		msg           capture.Message
 	}{
 		"with a token":    {tokenEnv: "GH_TOKEN", authenticated: true, msg: "tools: GitHub's rate limit for the configured token was reached"},
 		"without a token": {msg: "tools: GitHub's rate limit for requests without a token was reached"},

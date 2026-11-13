@@ -113,15 +113,16 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 | --- | --- | --- |
 | `ALLOWED_HOSTS` | Comma-separated hostnames and IPs you open the terminal at. Any other host name is refused. Unset accepts every host and logs a warning. | _(unset)_ |
 | `TRUSTED_PROXIES` | Reverse-proxy CIDRs or IPs whose `X-Forwarded-For` the access log trusts to name the real client. | _(unset)_ |
-| `LISTEN_ADDR` | Listen address as `host:port`. Keep the host part empty so the healthcheck can still reach it on `127.0.0.1`. | `:9848` |
-| `KIRO_CLI_CHAT_ARGS` | Extra flags added to every tab's `kiro-cli chat` command, separated by spaces, for example `--v3`. | _(unset)_ |
+| `LISTEN_ADDR` | Listen address as `host:port`. The healthcheck asks the same address, or `127.0.0.1` when the host part is empty. | `:9848` |
+| `KIRO_CLI_CHAT_ARGS` | Extra flags added to every tab's `kiro-cli chat` command, separated by spaces, for example `--effort high`. | _(unset)_ |
+| `KIRO_CLI_HIGH_THROUGHPUT` | Experimental. `true` starts each tab's kiro-cli agent engine with two Node.js flags, a larger young generation and AsyncLocalStorage without promise hooks, when kiro-cli's Node.js is the version they were tested on. They pay off when one tab runs many sessions at once, such as workflows and subagents. [Configuration](docs/configuration.md#kiro_cli_high_throughput) has the numbers. | `false` |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error`. An unknown value falls back to `info` with a warning. | `info` |
 | `WORK_DIR` | The folder each new tab starts in. It must exist. | `/workspace` |
 | `SCROLLBACK` | Lines of history kept per tab. kiro-cli wipes history when it redraws the whole screen, so in practice a tab keeps about 3000 lines. | `100000` |
 | `TOOL_CATALOG_REFRESH` | How often the tool catalog is refreshed, as a duration such as `24h`. `off` or `0` stops the schedule. | `24h` |
 | `GH_TOKEN` | A GitHub token for tool version checks, which raises GitHub's limit of 60 requests an hour. Every tab sees it. Takes precedence over `GITHUB_TOKEN`. | _(unset)_ |
 | `GITHUB_TOKEN` | Read in place of `GH_TOKEN` when that one is unset or empty. | _(unset)_ |
-| `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the kiro-cli install folder. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
+| `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the tools folder that holds kiro-cli and your installed tools. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
 
 [Configuration](docs/configuration.md) lists four more settings and the details of each one.
 
@@ -133,7 +134,7 @@ Settings are environment variables in `compose.yaml`, read once at start, so rec
 
 | Port | Description |
 | --- | --- |
-| `9848` | The web page and its terminal connections |
+| `9848` | The web page, its terminal connections and `GET /healthz` for an uptime prober |
 
 ## Security
 
@@ -148,7 +149,7 @@ Web Terminal for Kiro has no login. Anyone who reaches the port gets a root shel
 
 ## Troubleshooting
 
-The healthcheck asks `/api/health` every 30 seconds whether kiro-cli is ready, after a 20-minute grace period for the first download. Unhealthy means kiro-cli is not ready, because it is still installing or its install or setup failed. Docker does not restart the container for it, so `docker ps` shows `unhealthy` while the container keeps running.
+An unhealthy container means kiro-cli is not ready: it is still installing, or its install or setup failed. Docker does not restart the container for it, so it keeps running while `docker ps` shows `unhealthy`. The bullets below give the remedy for each cause.
 
 - A new tab keeps saying `kiro-cli installing`, or says `kiro-cli install retrying` or `kiro-cli unavailable`. The first download needs internet access. Fix the network, then restart the container to retry the download.
 - The log warns that the server runs as PID 1. Add `init: true` to the service.
@@ -159,6 +160,10 @@ The healthcheck asks `/api/health` every 30 seconds whether kiro-cli is ready, a
 
 [How it works](docs/how-it-works.md) explains startup failures and the install in more detail.
 
+## Monitoring
+
+Web Terminal for Kiro serves no metrics and ships no alert rules. The image has a Docker healthcheck, and [Knowing the app is alive](docs/monitoring.md#knowing-the-app-is-alive) says what it proves and who is told.
+
 ## Documentation
 
 - [Configuration](docs/configuration.md) lists every setting and what it changes.
@@ -166,11 +171,12 @@ The healthcheck asks `/api/health` every 30 seconds whether kiro-cli is ready, a
 - [Security](docs/hardening.md) covers the reverse proxy, stored scrollback and what the image contains.
 - [Command sandbox](docs/sandbox.md) explains the profile rules and the startup check.
 - [Features](docs/features.md) lists what the terminal supports, on desktop and on touch.
-- [How it works](docs/how-it-works.md) covers the kiro-cli install, health, logs and the projects this is built on.
+- [Monitoring and alerts](docs/monitoring.md) says how to know the terminal is up.
+- [How it works](docs/how-it-works.md) covers the kiro-cli install, startup failures and the projects this is built on.
 
 ## Credits
 
-Web Terminal for Kiro runs the [Kiro CLI](https://kiro.dev/cli/), and all credit for the agent goes to its makers at Kiro. Its terminal is [web-terminal-engine](https://github.com/cplieger/web-terminal-engine) and [web-terminal-ui](https://github.com/cplieger/web-terminal-ui), and [pinstall](https://github.com/cplieger/pinstall) downloads and checks kiro-cli. All three are by the same author.
+Web Terminal for Kiro runs the [Kiro CLI](https://kiro.dev/cli/), and all credit for the agent goes to its makers at Kiro. Its terminal is [web-terminal-engine](https://github.com/cplieger/web-terminal-engine) and [web-terminal-ui](https://github.com/cplieger/web-terminal-ui), and [toolbelt](https://github.com/cplieger/toolbelt) downloads and checks kiro-cli. All three are by the same author.
 
 ## Contributing
 
@@ -180,7 +186,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 This project is built with care and follows security best practices, but it is intended for personal / self-hosted use. No guarantees of fitness for production environments. Use at your own risk.
 
-This project was built with AI-assisted tooling using [Claude](https://claude.com), [GPT](https://openai.com), and [Kiro](https://kiro.dev). The human maintainer defines architecture, supervises implementation, and makes all final decisions.
+This project was built with AI assistance. The human maintainer defines architecture, supervises implementation, and makes all final decisions.
 
 ## License
 

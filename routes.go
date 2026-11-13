@@ -1,21 +1,26 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net/http"
 	"path"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/cplieger/go/health/v2"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v3"
 )
 
 // App-owned route paths. Every engine route comes from the engine's exported
@@ -24,10 +29,9 @@ import (
 // the same path cannot drift apart across files.
 const (
 	apiPrefix = "/api/"
-	// healthPath is the readiness route; buildHandler's ProbeLogLevel policy must name
-	// the same path the mux registers, or a healthy probe stops being demoted to Debug
-	// and a failing one stops being promoted.
-	healthPath = apiPrefix + "health"
+	// healthPath is the health route; buildHandler's WithProbeLogLevel policy must name
+	// the same path the mux registers, or its access lines stop being demoted to Debug.
+	healthPath = "/healthz"
 	// toolsPath is the loopback tools API mount; httpapi.Handler is told the same base
 	// path so its own routing matches where it is mounted.
 	toolsPath = apiPrefix + "tools"
@@ -43,7 +47,7 @@ type routeDeps struct {
 	// static is the embedded-static serving handler, built by the composition root
 	// together with the hash-pinned CSP the same tree produces.
 	static http.Handler
-	ready  *webhttp.Ready
+	ready  *atomic.Bool
 	// listenHint is "localhost[:port]" for THIS deployment; loopback refusals quote
 	// it so the remedy works on a server that did not keep the default port.
 	listenHint string
@@ -62,7 +66,7 @@ type routeDeps struct {
 	// holding 1.35 GB on a two-tab container).
 	containment *terminal.Containment
 	// kiroReady is the install manager's readiness verdict plus the reason to report
-	// when false; gates /api/health and session creation.
+	// when false; gates /healthz and session creation.
 	kiroReady func() (bool, string)
 	// restoring is true from boot until the tab restore finished; it holds session
 	// creation and the layout read (restorePendingGate).
@@ -77,6 +81,9 @@ type routeDeps struct {
 	// directory leading PATH). A nil result leaves the child with the server's own
 	// environment.
 	sessionEnv func() []string
+	// engineEnv returns the high-throughput overlay for kiro-cli's agent engine
+	// (engineTuning.env); nil, or a nil result, adds nothing.
+	engineEnv func() []string
 	// sessionTitleEnv returns the per-session variables a kiro-cli hook needs to
 	// report which kiro session this tab is running (the tab's TITLE HANDLE, not the
 	// session id — see sessiontitle.go). A nil function leaves tabs on the engine's
@@ -94,13 +101,13 @@ type routeDeps struct {
 	workDir    string
 	// uploadDir is where pasted images are written; empty leaves uploadsPath unmounted.
 	uploadDir string
-	// sandbox is the startup check's /api/health state; "" omits the field.
+	// sandbox is the startup check's /healthz state; "" omits the field.
 	sandbox string
 }
 
 // buildStaticSurface assembles the embedded-static serving surface: the static handler
 // and the hash-pinned CSP policy built from the same tree, fail-loud on a malformed
-// embed. webhttp.StaticHandler supplies content-hash ETags (embed.FS reports a zero
+// embed. httpserver.StaticHandler supplies content-hash ETags (embed.FS reports a zero
 // ModTime, so a bare http.FileServer emits no validator) plus precomputed gzip; the
 // per-path cache POLICY stays this app's (kiroCacheControl).
 func buildStaticSurface(staticFS fs.FS) (http.Handler, string, error) {
@@ -112,11 +119,24 @@ func buildStaticSurface(staticFS fs.FS) (http.Handler, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	staticSrv, err := webhttp.StaticHandler(sub, webhttp.WithStaticCacheControl(kiroCacheControl))
+	staticSrv, err := httpserver.StaticHandler(sub, httpserver.WithStaticCacheControl(kiroCacheControl))
 	if err != nil {
 		return nil, "", err
 	}
 	return staticSrv, cspPolicy, nil
+}
+
+// sessionCreateGate throttles session creation in aggregate, because each
+// admitted POST forks a PTY: a burst of six absorbs a user opening several tabs
+// at once, and one token a second bounds sustained churn. Other methods on the
+// sessions path pass through without spending a token.
+func sessionCreateGate() httpserver.Middleware {
+	return httpserver.RateLimiter(6, time.Second,
+		httpserver.WithRateLimitWhen(func(r *http.Request) bool {
+			return r.Method == http.MethodPost && r.URL.Path == terminal.SessionsPath
+		}),
+		httpserver.WithRateLimitError("rate_limited", "session creation rate exceeded"),
+	)
 }
 
 // registerRoutes wires the full route table on mux and returns the session manager (for
@@ -147,7 +167,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 		ready, reason := deps.kiroReady()
 		return !ready, reason
 	}
-	createGate := webhttp.SessionCreateRateLimit(terminal.SessionsPath)
+	createGate := sessionCreateGate()
 	createGate = restorePendingGate(createGate, deps.restoring, kiroBlocked, toolsBlocked)
 	createGate = composeGate(createGate, toolsBlocked)
 	createGate = composeGate(createGate, kiroBlocked)
@@ -175,7 +195,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 		mux.Handle(kiroRescanPath, loopbackOnly("kiro-cli rescan hook", deps.listenHint,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Allow", http.MethodPost)
-				webhttp.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed",
+				httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed",
 					"kiro-cli rescan is POST-only. Call it with curl -X POST "+deps.listenHint+kiroRescanPath)
 			})))
 	}
@@ -187,25 +207,30 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 		// Same two-pattern shape as kiroRescanPath: the "/" mount would otherwise 404 a GET.
 		mux.HandleFunc(uploadsPath, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Allow", http.MethodPost)
-			webhttp.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "image upload is POST-only")
+			httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "image upload is POST-only")
 		})
 	}
 
-	mux.HandleFunc(healthPath, handleHealth(deps))
+	mux.Handle("GET "+healthPath, handleHealth(deps))
+	// Same two-pattern shape as kiroRescanPath: the "/" mount would otherwise serve
+	// every other method.
+	mux.HandleFunc(healthPath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Allow", "GET, HEAD")
+		httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "the health check answers GET and HEAD only")
+	})
 
 	return mgr
 }
 
-// kiroRescanBody is the repair hook's response envelope, matching healthBody's key order.
-// The status vocabulary is only partly shared: "ok"/"unready" mean what they mean on
-// /api/health; "abandoned" is this hook's own — only a rescan can fail to reach a verdict.
+// kiroRescanBody is the repair hook's response envelope. "ok" and "unready" report the
+// install manager's verdict; "abandoned" means the rescan reached none.
 type kiroRescanBody struct {
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
 }
 
 // reasonRescanAbandoned is the repair hook's 503 reason when the request was abandoned
-// before pinstall reached any verdict. Deliberately NOT one of main.go's kiroReasonText
+// before pin reached any verdict. Deliberately NOT one of main.go's kiroReasonText
 // strings: those name the install manager's readiness state, and this reaches no verdict
 // about the install at all.
 const reasonRescanAbandoned = "kiro-cli rescan not performed: request abandoned before any verdict"
@@ -216,16 +241,16 @@ const reasonRescanAbandoned = "kiro-cli rescan not performed: request abandoned 
 func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		// pinstall owns both halves this handler used to hand-roll: WAITING for its
+		// pin owns both halves this handler used to hand-roll: WAITING for its
 		// operation slot honours this context, while an ADMITTED rescan runs detached, so
 		// a Ctrl-C or --max-time cannot make every candidate probe fail and have the
 		// manager record "no usable version".
 		ok, err := deps.kiroRescan(r.Context())
 		if ok {
-			webhttp.WriteJSON(w, kiroRescanBody{Status: "ok"})
+			httpserver.WriteJSON(w, kiroRescanBody{Status: "ok"})
 			return
 		}
-		// A context error means the request was ABANDONED before pinstall reached any
+		// A context error means the request was ABANDONED before pin reached any
 		// verdict (the caller's own cancellation, or this server's shutdown). Reporting
 		// that as "no usable version" would be a false broken-install record, and
 		// "unready" is wrong too — a rescan queued behind another can abandon on a
@@ -233,7 +258,7 @@ func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			slog.Debug("kiro-cli rescan abandoned before a verdict was reached",
 				"error", err)
-			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+			httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 				kiroRescanBody{Status: "abandoned", Reason: reasonRescanAbandoned})
 			return
 		}
@@ -243,35 +268,35 @@ func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 		if _, why := deps.kiroReady(); why != "" {
 			reason = why
 		}
-		// pinstall.Rescan's ordinary failure is (false, nil); a nil error attribute would
+		// pin's Rescan's ordinary failure is (false, nil); a nil error attribute would
 		// put "error":null there, indistinguishable from a state-write failure.
 		attrs := []any{"reason", reason}
 		if err != nil {
 			attrs = append(attrs, "error", err)
 		}
 		slog.Warn("kiro-cli rescan found no usable version", attrs...)
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			kiroRescanBody{Status: "unready", Reason: reason})
 	}
 }
 
 // childEnv is the environment overlay for one tab's kiro-cli process: the active version's
-// PATH lead, plus the two variables a hook needs to report which kiro session this tab is
-// running. Built as a fresh slice rather than appending to sessionEnv's return, so one
-// session's overlay can never alias another's backing array.
+// PATH lead, the agent-engine overlay, and the two variables a hook needs to report which
+// kiro session this tab is running. Built as a fresh slice rather than appending to
+// sessionEnv's return, so one session's overlay can never alias another's backing array.
 func (d *routeDeps) childEnv(id terminal.SessionID) []string {
 	base := d.sessionEnv()
-	var extra []string
-	if d.sessionTitleEnv != nil {
-		extra = d.sessionTitleEnv(id)
+	var engine, title []string
+	if d.engineEnv != nil {
+		engine = d.engineEnv()
 	}
-	if len(extra) == 0 {
+	if d.sessionTitleEnv != nil {
+		title = d.sessionTitleEnv(id)
+	}
+	if len(engine) == 0 && len(title) == 0 {
 		return base
 	}
-	out := make([]string, 0, len(base)+len(extra))
-	out = append(out, base...)
-	out = append(out, extra...)
-	return out
+	return slices.Concat(base, engine, title)
 }
 
 // newSessionBuilder returns the per-session handler factory for one resume id ("" starts
@@ -291,9 +316,9 @@ func newSessionBuilder(deps *routeDeps) func(resumeID string) func(terminal.Sess
 }
 
 func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID) *terminal.Handler {
-	// WithKeepUnfocused pins DEC 1004 "unfocused" so kiro-cli keeps emitting the focus-gated
-	// OSC 9 notifications that browser notifications and classifyNotification read;
-	// web-terminal-server deliberately does not use this.
+	// The child gets the engine's real DEC 1004 focus, not WithKeepUnfocused: kiro-cli draws
+	// its home ghost in colour and animates it only while focused, and tab status rides OSC
+	// 7501, which focus does not gate.
 	//
 	// No TERM_PROGRAM override: the engine advertises iTerm.app, which puts kiro-cli in
 	// its OSC 9;4 progress allowlist and enables DEC 2026 synchronized output.
@@ -308,7 +333,6 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 		sessionLogger := slog.Default().With("session", safeID)
 		opts := []terminal.Option{
 			terminal.WithWorkDir(deps.workDir),
-			terminal.WithKeepUnfocused(true),
 			terminal.WithLogger(sessionLogger),
 			terminal.WithCommandLogValue("[redacted]"),
 			// The active kiro-cli version's own directory first on the child's PATH, plus
@@ -324,9 +348,8 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 			// are never touched.
 			terminal.WithMinimumContrast(4.5),
 			// Closing a tab must end the whole tree, and for this app it otherwise does
-			// not: `kiro-cli chat` runs kiro-cli -> kiro-cli-chat -> the TUI -> the agent
-			// server, and that last process calls setsid(), so no signal the engine can
-			// aim reaches it. A nil containment is a no-op.
+			// not: `kiro-cli chat` starts the agent server as a descendant, and that
+			// process calls setsid(), so no signal the engine can aim reaches it. A nil containment is a no-op.
 			terminal.WithContainment(deps.containment, id),
 			// A dev-box tab can live for days; containment reclaims only at teardown, so
 			// a tab whose agent connection died while its TUI stays alive keeps holding
@@ -342,10 +365,10 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 			// otherwise fire this as a false broken-install alert on every deploy.
 			terminal.WithOnProcessExit(func(err error) {
 				kiroReady, _ := deps.kiroReady()
-				if err != nil && deps.ready.Ready() && kiroReady && time.Since(start) < 10*time.Second {
+				if err != nil && deps.ready.Load() && kiroReady && time.Since(start) < 10*time.Second {
 					sessionLogger.Warn(sessionFastDeathMsg,
 						"error", err,
-						"hint", "check /api/health and the kiro-cli install under /config/tools/kiro-cli-versions")
+						"hint", "check /healthz and the kiro-cli install under /config/tools/kiro-cli-versions")
 				}
 			}),
 		}
@@ -363,63 +386,77 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 	}
 }
 
-// healthBody is /api/health's response envelope. A struct, not a map, because
-// encoding/json sorts map keys, and webhttp's own readiness handler (and therefore
-// web-terminal-server and subflux) emits {"status":…,"reason":…}. ToolsMissing is a
-// POINTER so it is absent rather than 0 when unknown, since zero means converged.
-// FIELD ORDER IS THE WIRE CONTRACT: never reorder for fieldalignment.
-type healthBody struct {
-	Status       string `json:"status"`
-	Reason       string `json:"reason,omitempty"`
-	Tools        string `json:"tools,omitempty"`
-	ToolsMissing *int   `json:"tools_missing,omitempty"`
-	Sandbox      string `json:"sandbox,omitempty"`
+// reasonStarting is the /healthz reason while the listener is not serving: before
+// startup completes and from the start of a drain.
+const reasonStarting = "starting up or shutting down"
+
+// kiroReasons are the kiro-cli faults /healthz can list, one check each, in this order.
+var kiroReasons = []string{reasonInstalling, reasonRetrying, reasonUnavailable, reasonSettings}
+
+// healthChecks reads listener readiness and the kiro-cli verdict once each. A refusal
+// whose reason is not one of kiroReasons is reported as reasonUnavailable, so an
+// unready install can never answer 200.
+func healthChecks(deps *routeDeps) []health.Check {
+	kiroFault := ""
+	if ok, why := deps.kiroReady(); !ok {
+		kiroFault = reasonUnavailable
+		if slices.Contains(kiroReasons, why) {
+			kiroFault = why
+		}
+	}
+	checks := make([]health.Check, 0, 1+len(kiroReasons))
+	checks = append(checks, health.Check{Signal: health.SignalFunc(deps.ready.Load), Reason: reasonStarting})
+	for _, reason := range kiroReasons {
+		checks = append(checks, health.Check{Signal: health.SignalFunc(func() bool { return kiroFault != reason }), Reason: reason})
+	}
+	return checks
 }
 
-// handleHealth returns the /api/health readiness handler. It reflects, in order: listener
-// readiness, the kiro-cli install manager's verdict, and the INFORMATIONAL tools and
-// sandbox fields — neither gates readiness.
+// healthBody is the /healthz answer: the health library's status and reasons, then
+// the informational keys, which never change the status code. ToolsMissing is a
+// pointer so it is absent while uncounted, because zero means converged.
+type healthBody struct { //nolint:govet // fieldalignment: the field order is the JSON key order
+	Status       string   `json:"status"`
+	Reasons      []string `json:"reasons,omitempty"`
+	Tools        string   `json:"tools,omitempty"`
+	ToolsMissing *int     `json:"tools_missing,omitempty"`
+	Sandbox      string   `json:"sandbox,omitempty"`
+}
+
+// capturedResponse holds one handler's answer so handleHealth can extend it.
+type capturedResponse struct {
+	header http.Header
+	body   bytes.Buffer
+	code   int
+}
+
+func (c *capturedResponse) Header() http.Header { return c.header }
+
+func (c *capturedResponse) WriteHeader(code int) {
+	if c.code == 0 {
+		c.code = code
+	}
+}
+
+func (c *capturedResponse) Write(p []byte) (int, error) {
+	c.WriteHeader(http.StatusOK)
+	return c.body.Write(p)
+}
+
+// handleHealth answers /healthz with health.CheckHandler's verdict, code and headers,
+// adding the tools, tools_missing and sandbox keys to its body.
 func handleHealth(deps *routeDeps) http.HandlerFunc {
-	// One constructor for both outcomes, so the informational fields cannot diverge
-	// between them; they belong on the 503 bodies too, since an operator diagnosing a
-	// 503 needs to see tools state as much as a healthy caller does.
-	healthResponse := func(status, reason string) healthBody {
-		body := healthBody{
-			Status:  status,
-			Reason:  reason,
-			Tools:   deps.toolsState(),
-			Sandbox: deps.sandbox,
-		}
+	return func(w http.ResponseWriter, r *http.Request) {
+		answer := capturedResponse{header: http.Header{}}
+		health.CheckHandler(healthChecks(deps)...).ServeHTTP(&answer, r)
+		maps.Copy(w.Header(), answer.header)
+		body := healthBody{Tools: deps.toolsState(), Sandbox: deps.sandbox}
 		if n, ok := deps.toolsMissing(); ok {
 			body.ToolsMissing = &n
 		}
-		return body
-	}
-	return func(w http.ResponseWriter, _ *http.Request) {
-		// Set here rather than by middleware, so the handler carries its own contract
-		// wherever it is mounted: a 200 with no explicit freshness is heuristically
-		// cacheable under RFC 9111, and a cached "ok" keeps traffic arriving at an
-		// instance that has begun draining.
-		w.Header().Set("Cache-Control", "no-store")
-		unready := func(reason string) {
-			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthResponse("unready", reason))
-		}
-		if !deps.ready.Ready() {
-			unready("starting up or shutting down")
-			return
-		}
-		// kiro-cli readiness, straight from the install manager. The listener binds
-		// BEFORE the install runs, so this is what tells `docker ps` and the monitoring
-		// probe apart from "serving". A READINESS signal, not liveness: under Swarm or
-		// k8s, wire this to a readinessProbe, never a livenessProbe.
-		if ok, reason := deps.kiroReady(); !ok {
-			unready(reason)
-			return
-		}
-		// The tools field is INFORMATIONAL: kiro-cli is the only core dependency, so
-		// monitoring stays green during a long first-boot install while operators can
-		// still see it.
-		webhttp.WriteJSON(w, healthResponse("ok", ""))
+		_ = json.Unmarshal(answer.body.Bytes(), &body)
+		w.WriteHeader(answer.code)
+		_ = json.NewEncoder(w).Encode(body)
 	}
 }
 
@@ -440,7 +477,7 @@ func classifyNotification(msg string) (string, bool) {
 	return "", false
 }
 
-// Cache-Control policies handed to webhttp.StaticHandler. Only a content-addressed asset may
+// Cache-Control policies handed to httpserver.StaticHandler. Only a content-addressed asset may
 // promise its bytes never change, so `immutable` is earned by the name.
 const (
 	fontAssetPrefix    = "vendor/fonts/"
@@ -504,11 +541,11 @@ func buildCSPPolicy(sub fs.FS) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("buildCSPPolicy: read index.html: %w", err)
 	}
-	hashes := webhttp.InlineScriptHashes(html)
+	hashes := httpserver.InlineScriptHashes(html)
 	if len(hashes) == 0 {
 		return "", errors.New("buildCSPPolicy: no inline <script> blocks in index.html")
 	}
-	styleHashes := webhttp.InlineStyleHashes(html)
+	styleHashes := httpserver.InlineStyleHashes(html)
 	if len(styleHashes) != 1 {
 		return "", fmt.Errorf(
 			"buildCSPPolicy: want exactly one inline <style> block in index.html, found %d",
@@ -537,7 +574,7 @@ func composeGate(inner func(http.Handler) http.Handler, blocked func() (bool, st
 				// hint: neither a tools convergence nor a kiro-cli download has a
 				// predictable remaining time, so a cheap re-poll beats a computed date.
 				w.Header().Set("Retry-After", "5")
-				webhttp.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
+				httpserver.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
 				return
 			}
 			gated.ServeHTTP(w, r)
@@ -567,14 +604,14 @@ func restorePendingGate(inner func(http.Handler) http.Handler, pending func() bo
 			if layoutRead {
 				if reason, block := firstBlocked(outer); block {
 					w.Header().Set("Retry-After", "5") // composeGate's hint for the same wait
-					webhttp.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
+					httpserver.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
 					return
 				}
 			}
 			// One second: the restore itself takes milliseconds once both outer gates
 			// open, and a longer hint would hold pages on the overlay after the tabs exist.
 			w.Header().Set("Retry-After", "1")
-			webhttp.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", terminal.RestoringMessage)
+			httpserver.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", terminal.RestoringMessage)
 		})
 	}
 }
@@ -590,15 +627,12 @@ func firstBlocked(checks []func() (bool, string)) (string, bool) {
 }
 
 // loopbackOnly admits only requests whose SOCKET PEER and Host header are both loopback
-// and which carry no proxy/browser provenance header (mechanism: webhttp.LoopbackOnly).
+// and which carry no proxy/browser provenance header (mechanism: httpserver.LoopbackOnly).
 // What stays here is the refusal wording, which names the guarded surface and the
 // deployment's own listen hint — the 403 is the whole of what a refused caller is told.
 func loopbackOnly(surface, hint string, next http.Handler) http.Handler {
-	refuse := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		webhttp.WriteError(w, r, http.StatusForbidden, "loopback_only",
-			surface+" is loopback-only. Call it from inside the container with curl "+hint)
-	})
-	return webhttp.LoopbackOnly(refuse)(next)
+	return httpserver.LoopbackOnly(httpserver.WithLoopbackError("loopback_only",
+		surface+" is loopback-only. Call it from inside the container with curl "+hint))(next)
 }
 
 // sessionCostInterval is how often a contained session logs what it is currently costing.

@@ -6,14 +6,19 @@ This page lists every setting of Web Terminal for Kiro and what each one changes
 
 Settings are environment variables on the container, under `environment:` in `compose.yaml`. The server reads them once at start, so recreate the container after a change. No setting is required, and the image ships working defaults. A malformed value logs a warning that names the variable, never the value, and the server falls back to the default. `ALLOWED_HOSTS` is the exception, described below.
 
+The image also ships three kiro-cli defaults in `/etc/kiro-cli/default-settings.json`. They turn off telemetry and the warning that kiro-cli runs as root, since every tab runs as root by design. They also turn off copy-on-select in full-screen mode, which reports "Copied" in this image while copying nothing ([Kiro#12210](https://github.com/kirodotdev/Kiro/issues/12210)). Shift+drag still selects text in the browser.
+
+Run `kiro-cli settings <key> <value>` in a tab to change one of these defaults, and your value stays after a restart. Four other kiro-cli settings are reset at every start, because the app relies on them: `app.disableAutoupdates`, `chat.enableNotifications`, `chat.notificationMethod` and `chat.terminalTitle`.
+
 ## Every setting
 
 | Variable | Description | Default |
 | --- | --- | --- |
 | `ALLOWED_HOSTS` | Comma-separated hostnames and IPs you open the terminal at. Any other host name is refused. Unset accepts every host and logs a warning. | _(unset)_ |
 | `TRUSTED_PROXIES` | Reverse-proxy CIDRs or IPs whose `X-Forwarded-For` the access log trusts to name the real client. | _(unset)_ |
-| `LISTEN_ADDR` | Listen address as `host:port`. Keep the host part empty so the healthcheck can still reach it on `127.0.0.1`. | `:9848` |
-| `KIRO_CLI_CHAT_ARGS` | Extra flags added to every tab's `kiro-cli chat` command, separated by spaces, for example `--v3`. | _(unset)_ |
+| `LISTEN_ADDR` | Listen address as `host:port`. The healthcheck asks the same address, or `127.0.0.1` when the host part is empty. | `:9848` |
+| `KIRO_CLI_CHAT_ARGS` | Extra flags added to every tab's `kiro-cli chat` command, separated by spaces, for example `--effort high`. | _(unset)_ |
+| `KIRO_CLI_HIGH_THROUGHPUT` | Experimental. `true` starts each tab's kiro-cli agent engine with two Node.js flags, a larger young generation and AsyncLocalStorage without promise hooks, when kiro-cli's Node.js is the version they were tested on. They pay off when one tab runs many sessions at once, such as workflows and subagents. [KIRO_CLI_HIGH_THROUGHPUT](#kiro_cli_high_throughput) has the numbers. | `false` |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error`. An unknown value falls back to `info` with a warning. | `info` |
 | `WORK_DIR` | The folder each new tab starts in. It must exist. | `/workspace` |
 | `SCROLLBACK` | Lines of history kept per tab. kiro-cli wipes history when it redraws the whole screen, so in practice a tab keeps about 3000 lines. | `100000` |
@@ -23,14 +28,14 @@ Settings are environment variables on the container, under `environment:` in `co
 | `BUNDLED_TOOLS_PATH` | The file in the image naming the four language servers no registry carries, merged over every loaded catalog. | `/app/bundled-tools.json` |
 | `GH_TOKEN` | A GitHub token for tool version checks, which raises GitHub's limit of 60 requests an hour. Every tab sees it. Takes precedence over `GITHUB_TOKEN`. | _(unset)_ |
 | `GITHUB_TOKEN` | Read in place of `GH_TOKEN` when that one is unset or empty. | _(unset)_ |
-| `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the kiro-cli install folder. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
+| `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the tools folder that holds kiro-cli and your installed tools. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
 | `KIRO_CLI_SANDBOX` | Check at start that kiro-cli's command sandbox can run, and give it bubblewrap when it can. Needs the profiles in [Command sandbox](sandbox.md). | `false` |
 
 ## ALLOWED_HOSTS
 
 List the exact names and addresses you type in the browser, for example `localhost,192.0.2.5,webterm.example.com`. Use bare names and addresses only, with no scheme, path or CIDR range such as `192.0.2.0/24`. This list is the check that stops DNS rebinding, described in [Security](hardening.md).
 
-A request that is loopback on both ends is always admitted, so the healthcheck and commands run inside the container keep working. Both the client address and the `Host` must be loopback for that, as with `127.0.0.1:9848` or `localhost:9848`. Any other name still needs to be in the list.
+A request that is loopback on both ends is always admitted, so the healthcheck and commands run inside the container keep working. Both the client address and the `Host` must be loopback for that, as with `127.0.0.1:9848` or `localhost:9848`. When `LISTEN_ADDR` names one IP address, a request from that address to that address is admitted too, which is how the healthcheck reaches it. Any other name still needs to be in the list. An uptime prober from outside must use a name in the list.
 
 Malformed entries are dropped with a warning that gives their count. When every entry is malformed, the server refuses every request that is not loopback and logs why.
 
@@ -40,11 +45,19 @@ With this unset, the access log records the address that opened the connection a
 
 ## LISTEN_ADDR
 
-The image's healthcheck calls `127.0.0.1` on the port taken from this value. A listen address pinned to one interface that is not loopback therefore reports the container `unhealthy` while it serves normally. Limit who can reach the port with the published port, for example `127.0.0.1:9848:9848`, or with a reverse proxy.
+The image's healthcheck asks `/healthz` at the host and port this value names, or on `127.0.0.1` when the host part is empty, `0.0.0.0` or `::`. A host given as a name other than `localhost` must also be in `ALLOWED_HOSTS` when that is set, or the healthcheck is refused and reports the container `unhealthy`. Limit who can reach the port with the published port, for example `127.0.0.1:9848:9848`, or with a reverse proxy.
 
 ## KIRO_CLI_CHAT_ARGS
 
-Use it for any flag `kiro-cli chat` accepts, for example `--effort high` or `--v3`. The flags go only to `kiro-cli chat`, not to the sign-in commands. Their values never reach the log. The startup line records only how many flags there are. The flags also apply to every conversation restored after a restart, so a `--model` or `--agent` given here replaces the model or agent that conversation was using.
+Use it for any flag `kiro-cli chat` accepts, for example `--effort high`, or `--v2` to keep the agent engine kiro-cli used before 3.0. The flags go only to `kiro-cli chat`, not to the sign-in commands. Their values never reach the log. The startup line records only how many flags there are. The flags also apply to every conversation restored after a restart, so a `--model` or `--agent` given here replaces the model or agent that conversation was using.
+
+## KIRO_CLI_HIGH_THROUGHPUT
+
+Off unless you set it. With it on, each tab's kiro-cli starts its agent engine with `--max-semi-space-size=64` and `--experimental-async-context-frame`. The flags go on the engine's own command line, through kiro-cli's `KIRO_KAS_NODE_PATH`, and never into `NODE_OPTIONS`. Every command the agent runs inherits the engine's environment, and Node.js 26 and later refuse to start with the second flag in `NODE_OPTIONS`. A `NODE_OPTIONS` you set yourself still reaches the engine unchanged.
+
+The flags were measured on Node.js 22.23.4, the version kiro-cli 2.37.1 and 3.0.0 bundle. Before each tab starts, the server checks kiro-cli's unpacked Node.js against its `node.sha256`, against the hash the active kiro-cli embeds, and against that version. When any check fails, the tab starts as stock kiro-cli and the log carries one warning naming the reason, or both versions. A tab started before kiro-cli unpacked its Node.js also starts stock, and that start is what unpacks it. A `KIRO_KAS_NODE_PATH` already set on the container is left alone, with a warning, and the setting does nothing.
+
+The gain depends on how many sessions one engine carries. Against a scratch engine driven with 32 concurrent sessions and a 4 GB heap, the flags raised throughput from 2.6-3.0 to 10.1 prompts a second, cut time in garbage collection from 36-43% to 12%, and cut event-loop lag from 14-35 seconds to 4 seconds. With one or two concurrent sessions, the load of a tab you type in, they halved the time in garbage collection (about 5% to 2.5%) and gave no throughput gain. Turn it on for tabs that run workflows or many subagents. `--experimental-async-context-frame` is experimental in Node.js 22 and the default from Node.js 24.
 
 ## LOG_LEVEL
 
@@ -68,13 +81,13 @@ Every tab inherits the server's environment, so `gh` and other programs in a ter
 
 ## TRUSTED_INSTALL_UIDS
 
-Before installing kiro-cli, the server checks who can write each folder on the way to the install under `/config/tools`. It refuses when another account can, because what lands there later runs as root. Leave this unset, which makes no exception, for almost every setup. Set it only when the check refuses a volume you know is safe.
+Before installing kiro-cli, and before the tools engine starts, the server checks who can write each folder on the way to `/config/tools`. It refuses when another account can, because what lands there later runs as root. The same list applies to both checks. Leave this unset, which makes no exception, for almost every setup. Set it only when the check refuses a volume you know is safe.
 
 Each user ID you list states that the account is already as privileged as this server. Listing an account that is not hands it a way to run code as root. An entry that is not a whole number above `0` is skipped with a warning that names the variable and how many entries were dropped.
 
 ## KIRO_CLI_SANDBOX
 
-Set it to `true` once the container runs with both the seccomp and AppArmor profiles from [Command sandbox](sandbox.md), which needs a host with AppArmor. At each start the server then checks that the container runs under that AppArmor profile, runs one command in kiro-cli's sandbox, and logs whether both worked. Only when it worked does kiro-cli get a working bubblewrap, so `/sandbox` does not report a sandbox that cannot run. `true`, `yes`, `on` and `1` turn it on, in any letter case, and `false`, `no`, `off` and `0` leave it off. Any other value also leaves it off, with a warning. `/api/health` reports the result in its `sandbox` field.
+Set it to `true` once the container runs with both the seccomp and AppArmor profiles from [Command sandbox](sandbox.md), which needs a host with AppArmor. At each start the server then checks that the container runs under that AppArmor profile, runs one command in kiro-cli's sandbox, and logs whether both worked. Only when it worked does kiro-cli get a working bubblewrap, so `/sandbox` does not report a sandbox that cannot run. `true`, `yes`, `on` and `1` turn it on, in any letter case, and `false`, `no`, `off` and `0` leave it off. Any other value also leaves it off, with a warning. `/healthz` reports the result in its `sandbox` field.
 
 ## Uploads
 

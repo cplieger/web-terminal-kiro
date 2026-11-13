@@ -5,41 +5,32 @@ import (
 	"context"
 	"log/slog"
 	"maps"
-	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/cplieger/slogx"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/slogx"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
-// trustedContains reports whether ip is inside any of the parsed trusted nets.
-func trustedContains(nets []*net.IPNet, ip string) bool {
-	parsed := net.ParseIP(ip)
-	for _, n := range nets {
-		if n.Contains(parsed) {
+// trustedContains reports whether ip is inside any of the parsed trusted prefixes.
+func trustedContains(prefixes []netip.Prefix, ip string) bool {
+	parsed := netip.MustParseAddr(ip)
+	for _, p := range prefixes {
+		if p.Contains(parsed) {
 			return true
 		}
 	}
 	return false
 }
 
-// mustCIDR parses a CIDR for test setup, failing the test on a bad literal.
-func mustCIDR(t *testing.T, s string) *net.IPNet {
-	t.Helper()
-	_, n, err := net.ParseCIDR(s)
-	if err != nil {
-		t.Fatalf("net.ParseCIDR(%q): %v", s, err)
-	}
-	return n
-}
-
 // TestParseTrustedProxies pins the TRUSTED_PROXIES parsing that feeds
-// webhttp.WithClientIP via webhttp.ParseCIDRs. Four contracts: unset/blank
+// httpserver.WithClientIP via httpserver.ParseCIDRs. Four contracts: unset/blank
 // yields nil (ClientIP ignores X-Forwarded-For and logs the spoof-proof
 // socket peer); a valid CIDR + bare-IP mix parses into containment-correct
 // nets; a malformed entry is warned count-only and skipped while the valid
@@ -144,9 +135,9 @@ func TestParseTrustedProxies(t *testing.T) {
 	})
 
 	// A default route is syntactically perfect and semantically impossible:
-	// it makes every X-Forwarded-For hop of its own family "our own hop"
+	// it makes every X-Forwarded-For hop it covers "our own hop"
 	// (ClientIP exhausts the walk and falls back to logging the PROXY),
-	// while an entry of the OTHER family is never skipped and is returned
+	// while 0.0.0.0/0 never skips an IPv6 entry, which is returned
 	// as the client -- an unauthenticated caller picks the client_ip
 	// recorded for its own request. The warning is the only signal an
 	// operator gets. Lenient by design: this asserts the warning and the
@@ -171,6 +162,13 @@ func TestParseTrustedProxies(t *testing.T) {
 		for _, r := range records.Records() {
 			if r.Level == slog.LevelWarn && strings.Contains(r.Message, "default route") {
 				warns++
+				// ::/0 covers IPv4, so only 0.0.0.0/0 lets a forged family choose client_ip.
+				if !strings.Contains(r.Message, "under 0.0.0.0/0") || !strings.Contains(r.Message, "forged IPv6") {
+					t.Errorf("default-route Warn = %q, want it to name the IPv6 forgery under 0.0.0.0/0", r.Message)
+				}
+				if strings.Contains(r.Message, "other address family") {
+					t.Errorf("default-route Warn = %q, must not claim the other address family can choose client_ip", r.Message)
+				}
 			}
 		}
 		if warns != 1 {
@@ -201,6 +199,35 @@ func TestParseTrustedProxies(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestDefaultRouteClientIP pins the two facts the default-route warning states,
+// through the real parser and resolver for an IPv4 peer: ::/0 covers IPv4 through
+// the mapped form, so client_ip stays the peer, while 0.0.0.0/0 never covers an
+// IPv6 entry, so a forged one becomes the client. Serial: the parser's Warn goes
+// to the swapped default logger.
+func TestDefaultRouteClientIP(t *testing.T) {
+	const peerIP = "192.0.2.1" // httptest.NewRequest default RemoteAddr host
+	cases := []struct {
+		name, proxies, xff, want string
+	}{
+		{name: "IPv6 default route with an IPv4 X-Forwarded-For logs the peer", proxies: "::/0", xff: "203.0.113.7", want: peerIP},
+		{name: "IPv4 default route with an IPv6 X-Forwarded-For logs the forged entry", proxies: "0.0.0.0/0", xff: "2001:db8::7", want: "2001:db8::7"},
+		{name: "IPv4 default route with an IPv4 X-Forwarded-For logs the peer", proxies: "0.0.0.0/0", xff: "203.0.113.7", want: peerIP},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			capture.Default(t)
+			t.Setenv("TRUSTED_PROXIES", tc.proxies)
+			trusted := parseTrustedProxies()
+
+			req := httptest.NewRequest(http.MethodGet, "/probe", http.NoBody)
+			req.Header.Set("X-Forwarded-For", tc.xff)
+			if got := httpserver.ClientIP(req, trusted...); got != tc.want {
+				t.Errorf("ClientIP with TRUSTED_PROXIES=%s and X-Forwarded-For %s = %q, want %q", tc.proxies, tc.xff, got, tc.want)
+			}
+		})
+	}
 }
 
 // logContains reports whether s appears in any captured record's message or
@@ -337,34 +364,28 @@ func firstAttrValue(records *capture.Recorder, key string) (string, bool) {
 	return "", false
 }
 
-// captureTextLog swaps the process-global default logger for a text handler
-// writing into the returned buffer and restores the previous logger on
-// cleanup. buildHandler binds WithLogger(slog.Default()) at CONSTRUCTION, so
-// the capture must be installed before the handler is built; the default
-// logger is process-global, so callers must not use t.Parallel.
-//
-// A TEXT handler at the DEFAULT level -- not the slogx/capture recorder this
-// file uses elsewhere -- because two assertions here turn on level
-// FILTERING rather than capture: TestBuildHandlerSkipsAccessLogForStreams
-// proves a HEALTHY /api/health probe never reaches the shipped stream
-// (the handler drops the Debug record ProbeLogLevel demotes it to), and
-// TestBuildHandlerFailingProbeSurfaces reads the rendered level=ERROR. A
-// capture.Recorder keeps every level, which would weaken both to "recorded
-// at Debug".
+// captureTextLog swaps the process-global default logger for an Info text
+// handler writing into the returned buffer, restored on cleanup. Install it
+// before buildHandler, which binds slog.Default() at construction; callers
+// must not use t.Parallel. It filters by level, unlike capture.Recorder, so it
+// can show that a probe line stays out of the Info stream.
 func captureTextLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
+	return captureTextLogAt(t, slog.LevelInfo)
+}
+
+// captureTextLogAt is captureTextLog with slogx.Setup's handler (logfmt,
+// UTC timestamps) at level.
+func captureTextLogAt(t *testing.T, level slog.Level) *bytes.Buffer {
+	t.Helper()
 	var buf bytes.Buffer
-	// slogx.Setup's constructor: text/logfmt, Info by default, UTC-normalized
-	// timestamps. The returned LevelVar is unused -- these tests assert
-	// against the DEFAULT level, which is what makes the probe demotion
-	// observable.
-	handler, _ := slogx.NewHandler(slogx.Options{Output: &buf})
+	handler, _ := slogx.NewHandler(slogx.Options{Output: &buf, Level: level})
 	capture.SwapDefault(t, slog.New(handler))
 	return &buf
 }
 
 // TestBuildHandlerClientIPThreading proves the trusted-proxy set is
-// threaded into webhttp.WithClientIP and drives the access log's
+// threaded into httpserver.WithClientIP and drives the access log's
 // client_ip field through the production middleware chain (buildHandler).
 // Two contracts: with NO trusted proxies the logged client_ip is the
 // unspoofable socket peer and a client-supplied X-Forwarded-For is ignored
@@ -379,7 +400,7 @@ func TestBuildHandlerClientIPThreading(t *testing.T) {
 	)
 	cases := []struct {
 		name       string
-		trusted    []*net.IPNet
+		trusted    []netip.Prefix
 		wantIP     string
 		mustNotLog string // a value no record may carry, in any attr
 	}{
@@ -391,7 +412,7 @@ func TestBuildHandlerClientIPThreading(t *testing.T) {
 		},
 		{
 			name:    "trusted peer resolves the real client from X-Forwarded-For",
-			trusted: []*net.IPNet{mustCIDR(t, "192.0.2.0/24")},
+			trusted: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
 			wantIP:  xffIP,
 		},
 	}
@@ -437,7 +458,7 @@ func TestBuildHandlerClientIPThreading(t *testing.T) {
 // never switches protocols, so the response-based WithSkipUpgrades can't
 // cover it), while a request to /ws that never becomes a stream -- no
 // upgrade headers, or a non-GET carrying them -- MUST be logged; a healthy
-// /api/health probe is suppressed at the default Info level while a
+// /healthz probe is suppressed at the default Info level while a
 // failing probe still emits at Warn/Error (that admitted-upgrade half lives
 // in TestAccessLogSkipsOnlyCompletedUpgrades).
 //
@@ -467,7 +488,7 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 	)
 	t.Cleanup(func() { shutdownManager(t, mgr) })
 	mgr.MountAPI(mux)
-	mux.HandleFunc("/api/health", ok)
+	mux.HandleFunc("/healthz", ok)
 	mux.HandleFunc("/probe", ok)
 
 	h := buildHandler(mux, nil, "default-src 'self'", nil)
@@ -489,7 +510,7 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 		{method: http.MethodDelete, path: "/api/sessions/live-token-5678"},
 		{method: http.MethodPut, path: "/api/sessions/live-token-2345/pinned-title"},
 		{method: http.MethodDelete, path: "/api/sessions/live-token-3456/pinned-title"},
-		{method: http.MethodGet, path: "/api/health"},
+		{method: http.MethodGet, path: "/healthz"},
 		{method: http.MethodGet, path: "/api/sessions"},
 		{method: http.MethodGet, path: "/probe"},
 		{method: http.MethodGet, path: "/api/sessions/live-token-9012/extra/title"},
@@ -504,7 +525,7 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 			httptest.NewRequestWithContext(ctx, req.method, req.path, http.NoBody))
 	}
 	// A COMPLETE upgrade attempt cannot be exercised here: the skip is
-	// webhttp.WithSkipUpgrades, decided from the RESPONSE, and this mux has
+	// httpserver.WithSkipUpgrades, decided from the RESPONSE, and this mux has
 	// no /ws route to upgrade with -- a 404 is not a stream, so it is
 	// correctly logged. The admitted-upgrade case is
 	// TestAccessLogSkipsOnlyCompletedUpgrades, which drives a real
@@ -535,10 +556,10 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 			t.Errorf("access log = %q, want no access line for skipped path %q (the skip wiring must keep stream lines out)", log, skipped)
 		}
 	}
-	// A HEALTHY probe logs at Debug (ProbeLogLevel), which the Info-level
-	// handler above drops — so no /api/health line lands in the stream.
-	if strings.Contains(log, "path=/api/health") {
-		t.Errorf("access log = %q, want no healthy-probe line at the default level (ProbeLogLevel maps 2xx to Debug)", log)
+	// A HEALTHY probe logs at Debug (WithProbeLogLevel), which the Info-level
+	// handler above drops — so no /healthz line lands in the stream.
+	if strings.Contains(log, "path=/healthz") {
+		t.Errorf("access log = %q, want no healthy-probe line at the default level (WithProbeLogLevel maps 2xx to Debug)", log)
 	}
 	for _, token := range []string{"live-token-1234", "live-token-5678", "live-token-2345", "live-token-3456", "live-token-9012"} {
 		if strings.Contains(log, token) {
@@ -583,27 +604,28 @@ func TestBuildHandlerSkipsAccessLogForStreams(t *testing.T) {
 	}
 }
 
-// TestBuildHandlerFailingProbeSurfaces pins the other half of the
-// ProbeLogLevel contract: a FAILING /api/health probe (the readiness 503 when
-// kiro-cli is broken or missing) must land in the shipped log stream at
-// Error — the silent-skip idiom this replaced hid exactly that signal.
-// Serial: swaps the process-global default logger.
-func TestBuildHandlerFailingProbeSurfaces(t *testing.T) {
-	buf := captureTextLog(t)
-
+// TestBuildHandlerFailingProbeLogsAtDebug pins that a FAILING /healthz probe
+// (the 503 while kiro-cli is broken or missing) logs at Debug like a healthy
+// one: a standing 503 would otherwise write a line every 30 seconds, while the
+// app logs the cause once when it appears. Serial: swaps the process-global
+// default logger.
+func TestBuildHandlerFailingProbeLogsAtDebug(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	})
 
-	h := buildHandler(mux, nil, "default-src 'self'", nil)
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
-
-	log := buf.String()
-	if !strings.Contains(log, "path=/api/health") {
-		t.Errorf("access log = %q, want the failing probe's access line (a 503 health check must not be silent)", log)
+	info := captureTextLog(t)
+	buildHandler(mux, nil, "default-src 'self'", nil).
+		ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
+	if strings.Contains(info.String(), "path=/healthz") {
+		t.Errorf("Info-level log = %q, want no line for a failing probe", info.String())
 	}
-	if !strings.Contains(log, "level=ERROR") {
-		t.Errorf("access log = %q, want the failing probe at Error (ProbeLogLevel maps 5xx to Error)", log)
+
+	debug := captureTextLogAt(t, slog.LevelDebug)
+	buildHandler(mux, nil, "default-src 'self'", nil).
+		ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
+	if log := debug.String(); !strings.Contains(log, "level=DEBUG") || !strings.Contains(log, "path=/healthz") || !strings.Contains(log, "status=503") {
+		t.Errorf("Debug-level log = %q, want the failing probe's access line at Debug with status=503", log)
 	}
 }

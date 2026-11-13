@@ -4,7 +4,7 @@
 # hook, prepares per-session containment, exports the Renovate-pinned
 # kiro-cli version and digests, and execs the Go web server.
 #
-# Does NOT install kiro-cli: the server owns that (cplieger/pinstall,
+# Does NOT install kiro-cli: the server owns that (cplieger/toolbelt's pin,
 # wired in main.go), after the listener binds, so a slow first-boot
 # download answers 503 instead of refusing connections. Fetched at
 # runtime rather than baked into the image because we do not redistribute
@@ -204,8 +204,8 @@ harden_config_dir() {
 }
 
 # --- persistent tool-tree integrity ---------------------------------------------
-# $TOOLS/bin leads PATH and the version-addressed install root sits beside it
-# at $TOOLS/kiro-cli-versions, so the tree HOLDING kiro-cli is part of the
+# $TOOLS/kiro-cli-bin and $TOOLS/bin lead PATH and the version-addressed install
+# root sits beside them at $TOOLS/kiro-cli-versions, so the tree HOLDING kiro-cli is part of the
 # integrity story, not just the download: the install manager accepts an
 # already-present version directory on the strength of its own `.complete`
 # sentinel, which is trivially forgeable, unlike a digest. If an inherited
@@ -222,7 +222,7 @@ secure_tools_dir() {
   # `owned` decides what an UNRECOVERABLE state costs. This is a dev-box
   # container the operator reshapes, so a broken state must heal itself or be
   # fixable from inside it.
-  #   owned=1  the THIRTEEN dirs make_config_dir creates outside $HOME: a symlink or
+  #   owned=1  the FOURTEEN dirs make_config_dir creates outside $HOME: a symlink or
   #            plain file there is anomalous and a reinstall repairs it. Fatal.
   #   owned=0  $TOOLS/go and $TOOLS/go/bin (GOPATH/bin): on PATH but never
   #            created or repaired here, no integrity-gated binary. Warn, skip.
@@ -319,8 +319,8 @@ warn_if_tools_noexec() {
 # disk. The install manager stages under a private HOME and publishes by
 # rename, so it never writes there; this sweep covers pre-existing volumes and
 # an installer resolving its prefix via getpwuid rather than $HOME. The
-# manager owns the matching sweep of $TOOLS/bin (and republishes the
-# convenience symlinks there), so this script must not touch that dir.
+# manager owns the matching sweep of $TOOLS/bin and publishes its convenience
+# symlink in $TOOLS/kiro-cli-bin, so this script must not touch either dir.
 #
 # rm -rf, not rm -f: `rm -f` fails on a directory, which would turn a hygiene
 # step into a boot failure at any caller that checked the status. The return
@@ -330,7 +330,7 @@ warn_if_tools_noexec() {
 # PATH with the active version's own directory), not because this sweep ran.
 #
 # Takes ONE directory, deliberately: the only residue dir in this script's
-# remit is $HOME/.local/bin, since $TOOLS/bin is the manager's.
+# remit is $HOME/.local/bin, since the manager sweeps $TOOLS/bin.
 sweep_legacy_dispatchers() {
   local dir=${1:-}
   # Never expand to /kiro-cli* on an unset/empty argument.
@@ -346,115 +346,6 @@ sweep_legacy_dispatchers() {
   if ! rm -rf "$dir/kiro-cli"*; then
     printf 'level=warn msg="failed to remove legacy kiro-cli residue" dir="%s" component=entrypoint\n' "$dir" >&2
   fi
-  return 0
-}
-
-# Prints kiro-cli's data dir, resolved the way kiro-cli resolves it
-# (XDG_DATA_HOME, else $HOME/.local/share): cleaning a directory the CLI does
-# not use would be a silent no-op. Returns 1 when neither is set, which under
-# set -u would otherwise abort the boot; callers treat that as nothing to clean.
-kiro_cli_data_dir() {
-  local data_home="${XDG_DATA_HOME:-}"
-  if [ -z "$data_home" ]; then
-    [ -n "${HOME:-}" ] || return 1
-    data_home="$HOME/.local/share"
-  fi
-  printf '%s\n' "$data_home/kiro-cli"
-}
-
-# Reclaims the one install residue the two bin-dir sweeps cannot see:
-# kiro-cli's own agent-server runtimes. Each version unpacks a ~240 MB tree
-# under <data-dir>/kas/<version>-<hash>/ (plus a sibling .lock) on its first
-# chat launch -- after this entrypoint has already exec'd the server -- and
-# nothing ever removes the superseded ones. Applies the toolbelt engine's own
-# keep-current-drop-the-rest rule to the one install outside its custody.
-# Warn, never fatal.
-prune_superseded_kas_runtimes() {
-  # $1 = the version whose runtime tree must survive; defaults to the pin.
-  # The caller passes the pin, since the version that ends up active is only
-  # known after the server's install manager has selected one, after this
-  # script execs.
-  local keep="${1:-$KIRO_CLI_VERSION}" data_dir kas_dir kas_real entry name
-  data_dir=$(kiro_cli_data_dir) || return 0
-  kas_dir="$data_dir/kas"
-  [ -d "$kas_dir" ] || return 0
-  # `-d` FOLLOWS symlinks and the rm below runs as root, so a `kiro-cli` or `kas`
-  # symlink planted on a once-writable volume would redirect this sweep at an
-  # arbitrary tree. Prove the store is a real directory resolving where it is
-  # named, or skip the prune.
-  if [ -L "$data_dir" ] || [ -L "$kas_dir" ]; then
-    printf 'level=warn msg="kiro-cli data dir or its kas store is a symlink; refusing to prune through it" dir="%s" component=entrypoint\n' "$kas_dir" >&2
-    return 0
-  fi
-  kas_real=$(realpath "$kas_dir" 2>/dev/null) || kas_real=""
-  case "$kas_real" in
-    "$data_dir"/kas) ;;
-    *)
-      printf 'level=warn msg="kiro-cli kas store does not resolve inside the data dir; refusing to prune" dir="%s" resolved="%s" component=entrypoint\n' \
-        "$kas_dir" "$(logfmt_value "${kas_real:-unknown}")" >&2
-      return 0
-      ;;
-  esac
-  for entry in "$kas_dir"/*; do
-    # An empty store leaves the glob unexpanded.
-    [ -e "$entry" ] || continue
-    name="${entry##*/}"
-    # One pattern covers the tree and its sibling .lock: both carry the
-    # <version>-<hash> stem.
-    case "$name" in
-      "$keep"-*) continue ;;
-    esac
-    # Only VERSION-KEYED entries are superseded runtimes. kas/ is kiro-cli's
-    # directory, not ours; an entry with no leading numeric version is
-    # something this pruner has never seen, and deleting another program's
-    # unrecognized state is worse than leaving a few MB behind.
-    if [[ ! "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+- ]]; then
-      printf 'level=info msg="leaving unrecognized (non version-keyed) entry in the kiro-cli agent runtime store" entry="%s" component=entrypoint\n' "$(logfmt_value "$name")" >&2
-      continue
-    fi
-    if rm -rf "$entry"; then
-      printf 'level=info msg="pruned superseded kiro-cli agent runtime" entry="%s" keep=%s pinned=%s component=entrypoint\n' "$(logfmt_value "$name")" "$keep" "$KIRO_CLI_VERSION" >&2
-    else
-      printf 'level=warn msg="failed to prune superseded kiro-cli agent runtime" entry="%s" component=entrypoint\n' "$(logfmt_value "$name")" >&2
-    fi
-  done
-  return 0
-}
-
-# Removes kiro-cli's pinned chat binary copies from <data-dir>/run/. Acts only
-# on KIRO_SKIP_BINARY_PINNING=1: with pinning on, run/ is kiro-cli's live
-# state. Warn, never fatal.
-purge_pinned_chat_cli_copies() {
-  [ "${KIRO_SKIP_BINARY_PINNING:-}" = 1 ] || return 0
-  local data_dir run_dir run_real entry
-  data_dir=$(kiro_cli_data_dir) || return 0
-  run_dir="$data_dir/run"
-  [ -d "$run_dir" ] || return 0
-  # Same root-rm containment as the kas prune: refuse a redirected run dir.
-  if [ -L "$data_dir" ] || [ -L "$run_dir" ]; then
-    printf 'level=warn msg="kiro-cli data dir or its run dir is a symlink; refusing to purge through it" dir="%s" component=entrypoint\n' "$run_dir" >&2
-    return 0
-  fi
-  run_real=$(realpath "$run_dir" 2>/dev/null) || run_real=""
-  case "$run_real" in
-    "$data_dir"/run) ;;
-    *)
-      printf 'level=warn msg="kiro-cli run dir does not resolve inside the data dir; refusing to purge" dir="%s" resolved="%s" component=entrypoint\n' \
-        "$run_dir" "$(logfmt_value "${run_real:-unknown}")" >&2
-      return 0
-      ;;
-  esac
-  for entry in "$run_dir"/chat-cli-[0-9]* "$run_dir"/.chat-cli-[0-9]*.heartbeat; do
-    # An unmatched glob stays literal; a directory or symlink is not a pinned copy.
-    if [ ! -f "$entry" ] || [ -L "$entry" ]; then
-      continue
-    fi
-    if rm -f "$entry"; then
-      printf 'level=info msg="removed unused kiro-cli pinned binary" entry="%s" component=entrypoint\n' "$(logfmt_value "${entry##*/}")" >&2
-    else
-      printf 'level=warn msg="failed to remove unused kiro-cli pinned binary" entry="%s" component=entrypoint\n' "$(logfmt_value "${entry##*/}")" >&2
-    fi
-  done
   return 0
 }
 
@@ -495,7 +386,7 @@ warn_legacy_tool_metadata() {
 # are the per-arch sha256 of the headless zip, both enforced at install; the
 # kiro-cli packageRule in cplieger/.github groups all three literals into one
 # Renovate PR so neither arch's gate can land stale.
-# Exported below and consumed by the server's install manager (cplieger/pinstall,
+# Exported below and consumed by the server's install manager (cplieger/toolbelt's pin,
 # wired by main.go's kiroInstallConfig). They stay shell literals here because
 # that is where Renovate's custom datasource finds them.
 # COUPLING (re-verify on every bump): the per-tab status dots come from
@@ -507,14 +398,19 @@ warn_legacy_tool_metadata() {
 # boot that installs nothing, so a renamed key or subcommand makes every
 # container report kiro-cli unavailable.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.37.1"
-KIRO_CLI_SHA256="b4049000d5a7b684947306eb9f9a480cab3a3ab2ff42584c293d05bde4d314a1"
+KIRO_CLI_VERSION="3.2.1"
+KIRO_CLI_SHA256="8338ea19e7065333e25e6f722c8d96c942d426bbc5335b01158ea72b6c4b978a"
 # The `# kiro-cli <version>` trailer is Renovate's version anchor for this
 # arch's digest lookup — do not hand-edit or drop it.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="e589bd8d8b845bb193b9f36f2ee263fe8aef7dbb19aff03ce44c5076ce6ab0c1" # kiro-cli 2.37.1
+KIRO_CLI_SHA256_ARM64="5756c82a88346843b28a9b79a38cabfebea797f10167dd95cc61382438f45020" # kiro-cli 3.2.1
+# The Node.js bundled with the pinned kiro-cli that KIRO_CLI_HIGH_THROUGHPUT's
+# flags were measured on. The image smoke test fails when the pin bundles another
+# one: re-measure the flags on it, then update this literal. At runtime a tab whose
+# Node.js differs starts without the flags (enginetuning.go).
+KIRO_CLI_NODE_VALIDATED="22.23.4"
 
-export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
+export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64 KIRO_CLI_NODE_VALIDATED
 KIRO_CLI_TOOLS_DIR="$TOOLS"
 export KIRO_CLI_TOOLS_DIR
 
@@ -546,6 +442,8 @@ printf 'level=info msg="preparing persistent directories" dir="%s" component=ent
 make_config_dir /config
 make_config_dir "$TOOLS"
 make_config_dir "$TOOLS/bin"
+# The install manager's own link dir, ahead of $TOOLS/bin on PATH.
+make_config_dir "$TOOLS/kiro-cli-bin"
 # The version-addressed install root the manager writes into, created and
 # validated HERE rather than by the manager's own MkdirAll, which cannot see
 # a symlink planted on an inherited volume.
@@ -595,6 +493,7 @@ fi
 secure_tools_dir /config
 secure_tools_dir "$TOOLS"
 secure_tools_dir "$TOOLS/bin"
+secure_tools_dir "$TOOLS/kiro-cli-bin"
 secure_tools_dir "$TOOLS/opt"
 secure_tools_dir "$TOOLS/kiro-cli-versions"
 # arm=0: neither tree ever holds kiro-cli, so a loose mode here is no reason
@@ -681,21 +580,21 @@ for path_dir in "$TOOLS/go" "$TOOLS/go/bin"; do
   [ -e "$path_dir" ] || [ -L "$path_dir" ] || continue
   secure_tools_dir "$path_dir" 0 0
 done
-# Directory modes leave every binary in $TOOLS/bin unexamined, and this dir
-# LEADS PATH. A group/other-writable file is rewritable in place with no
-# write access to the directory, and the toolbelt engine really does leave
-# group-writable modes on some volumes. Tighten what we can; never quarantine.
-# stat -L / chmod deliberately DEREFERENCE: $TOOLS/bin is mostly symlinks into
-# the engine's opt/<tool>/<ver>/ trees, and the target's mode is the one that
-# decides whether a foreign host user can rewrite what root executes.
+# Directory modes leave every binary in $TOOLS/kiro-cli-bin and $TOOLS/bin
+# unexamined, and these dirs LEAD PATH. A group/other-writable file is
+# rewritable in place with no write access to the directory, and the toolbelt
+# engine really does leave group-writable modes on some volumes. Tighten what
+# we can; never quarantine.
+# stat -L / chmod deliberately DEREFERENCE: both hold symlinks into the
+# engine's opt/<tool>/<ver>/ trees or the manager's version dirs, and the
+# target's mode decides whether a foreign host user can rewrite what root runs.
 tightened_tool_bins=0
-for tool_bin in "$TOOLS/bin"/*; do
+for tool_bin in "$TOOLS/kiro-cli-bin"/* "$TOOLS/bin"/*; do
   # An unmatched glob, or a dangling symlink -- nothing that can be executed.
   [ -e "$tool_bin" ] || continue
-  # No name is exempt, the manager's own convenience symlinks included: their
-  # targets sit under kiro-cli-versions/, tightened by the loop above, so they
-  # pass the mode check below. The manager yields to a foreign entry at those
-  # names, and that entry must be checked like any other.
+  # No name is exempt, the manager's own convenience symlink included: its
+  # target sits under kiro-cli-versions/, tightened by the loop above, so it
+  # passes the mode check below.
   tool_bin_mode=$(stat -Lc '%a' "$tool_bin" 2>/dev/null) || tool_bin_mode=""
   if [ -n "$tool_bin_mode" ] && [ $((8#$tool_bin_mode & 0022)) -eq 0 ]; then
     continue
@@ -729,7 +628,7 @@ for tool_bin in "$TOOLS/bin"/*; do
 done
 if [ "$tightened_tool_bins" -ne 0 ]; then
   printf 'level=warn msg="tightened group/other-writable binaries on the first-on-PATH tools tree; they were rewritable in place by any host user in their group" dir="%s" count=%d component=entrypoint\n' \
-    "$TOOLS/bin" "$tightened_tool_bins" >&2
+    "$TOOLS/kiro-cli-bin $TOOLS/bin" "$tightened_tool_bins" >&2
 fi
 
 # Hands the taint observation to the manager: the directories are private NOW,
@@ -762,21 +661,6 @@ warn_legacy_tool_metadata /config "$TOOLS"
 # beneath $TOOLS). Warn, don't exit: every session leads PATH with the active
 # version's directory, so nothing here can shadow the pinned CLI.
 sweep_legacy_dispatchers "$HOME/.local/bin"
-
-# Reclaims superseded kiro-cli agent runtimes. Stays in the entrypoint rather
-# than moving into the server with the installer: the kas store is a
-# SEPARATE object (kiro-cli's own data dir) with its own containment guards,
-# it is keyed on the pin this script declares, and running it before the
-# server binds keeps peak disk at ONE tree.
-#
-# The keep-key is the PIN, not the version that ends up active: if the manager
-# falls back to a retained predecessor, that predecessor's tree has already
-# been pruned here, costing one ~240 MB re-unpack on a boot whose install
-# failed. Accepted over pruning after selection, which would let two trees
-# coexist on the routine bump path.
-printf 'level=info msg="pruning superseded kiro-cli agent runtimes" keep=%s component=entrypoint\n' "$KIRO_CLI_VERSION" >&2
-prune_superseded_kas_runtimes "$KIRO_CLI_VERSION"
-purge_pinned_chat_cli_copies
 
 # Repairs an interrupted dpkg transaction, unconditionally: an interrupted
 # install leaves dpkg wedged for the container's life, and this must run
@@ -827,10 +711,10 @@ else
   fi
 fi
 
-# Seeds the kiro-cli hook that reports which kiro session each tab is
-# running -- the mapping half of the tab-title feature (sessiontitle.go). The
+# Seeds the kiro-cli hook that reports which kiro sessions run in each tab,
+# the report half of the tab-title feature (sessiontitle.go decides). The
 # server injects WT_TITLE_HANDLE + WT_TITLE_STATE_DIR into each PTY session,
-# and this hook (a descendant, handed kiro's own session_id on stdin) writes
+# and this hook (a descendant, handed kiro's own session_id on stdin) reports
 # the pair where the server reads it. Without it a tab falls back to the
 # engine's automatic cwd/process name ladder.
 #
@@ -860,7 +744,7 @@ else
 fi
 
 # Hands the image's PATH back so the server and its PTY sessions keep
-# /config/tools/bin first. Each PTY session additionally gets the ACTIVE
+# /config/tools/kiro-cli-bin and /config/tools/bin first. Each PTY session additionally gets the ACTIVE
 # kiro-cli version directory prepended by the server.
 #
 # The carry variable is dropped here rather than inherited: it exists only to

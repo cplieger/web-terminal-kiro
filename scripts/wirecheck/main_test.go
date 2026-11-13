@@ -54,7 +54,7 @@ func dockerfileUnderTest(t *testing.T) string {
 // verdict is worthless if nothing runs it: a stage restructure that drops OR
 // COMMENTS OUT the RUN leaves this package compiling and every test green
 // while an incompatible Go/TS pair ships and refuses every session at first
-// connect (close 4002) behind a green /api/health.
+// connect (close 4002) behind a green /healthz.
 func TestDockerfileInvokesTheGate(t *testing.T) {
 	// One LIVE line must build the gate and then invoke the BUILT binary
 	// with the manifest flag. A whole-file substring sweep would pass on a

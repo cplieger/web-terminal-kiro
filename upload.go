@@ -11,8 +11,8 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/webhttp/v3"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/httpserver"
 )
 
 // Image paste uploads. The browser posts a clipboard image here and types the returned
@@ -70,7 +70,7 @@ func handleUpload(dir string, maxBytes int64) http.HandlerFunc {
 			names[i] = filepath.Base(p)
 		}
 		slog.Info("image upload", "count", len(paths), "bytes", total, "names", names)
-		webhttp.WriteJSON(w, uploadBody{Uploaded: paths})
+		httpserver.WriteJSON(w, uploadBody{Uploaded: paths})
 	}
 }
 
@@ -108,8 +108,8 @@ func writeUploads(r *http.Request, dir string, maxBytes int64) (paths []string, 
 			return paths, total, nameErr
 		}
 		cr := &countingReader{r: part}
-		if _, wErr := atomicfile.WriteReaderInRoot(r.Context(), root, name, cr,
-			atomicfile.WithMaxBytes(maxBytes)); wErr != nil {
+		if _, wErr := filesafe.WriteReaderInRoot(r.Context(), root, name, cr,
+			filesafe.WithMaxBytes(maxBytes)); wErr != nil {
 			return paths, total, wErr
 		}
 		paths = append(paths, filepath.Join(dir, name))
@@ -143,28 +143,28 @@ func respondUploadError(w http.ResponseWriter, r *http.Request, err error, maxBy
 		slog.Debug("image upload abandoned by the client", "error", err)
 		return
 	}
-	if _, ok := errors.AsType[*http.MaxBytesError](err); ok || errors.Is(err, atomicfile.ErrFileTooLarge) {
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok || errors.Is(err, filesafe.ErrFileTooLarge) {
 		slog.Warn("image upload too large", "limit", maxBytes)
-		webhttp.WriteError(w, r, http.StatusRequestEntityTooLarge, "upload_too_large", "image is too large to upload")
+		httpserver.WriteError(w, r, http.StatusRequestEntityTooLarge, "upload_too_large", "image is too large to upload")
 		return
 	}
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		slog.Warn("image upload timed out", "timeout", uploadReadTimeout)
-		webhttp.WriteError(w, r, http.StatusRequestTimeout, "upload_timeout", "image upload took too long")
+		httpserver.WriteError(w, r, http.StatusRequestTimeout, "upload_timeout", "image upload took too long")
 		return
 	}
 	if errors.Is(err, errInvalidFilename) {
-		webhttp.WriteError(w, r, http.StatusBadRequest, "invalid_filename", "file name is not a pasted image name")
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_filename", "file name is not a pasted image name")
 		return
 	}
 	// A body that ends inside a part is malformed, not a server fault.
 	if errors.Is(err, errInvalidUpload) || errors.Is(err, io.ErrUnexpectedEOF) {
-		webhttp.WriteError(w, r, http.StatusBadRequest, "invalid_upload",
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_upload",
 			"expected a multipart body of 1 to 25 files in the \"files\" field")
 		return
 	}
 	slog.Warn("image upload failed", "error", err)
-	webhttp.WriteError(w, r, http.StatusInternalServerError, "upload_failed", "image upload failed")
+	httpserver.WriteError(w, r, http.StatusInternalServerError, "upload_failed", "image upload failed")
 }
 
 // countingReader counts the bytes a write consumed, for the upload log line.

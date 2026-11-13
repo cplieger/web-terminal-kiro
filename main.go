@@ -18,21 +18,23 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/cplieger/envx/v2"
-	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/pinstall/v3/kirocli"
-	"github.com/cplieger/slogx"
+	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/slogx"
 	"github.com/cplieger/toolbelt/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v3"
 )
 
 // staticFS holds the served asset tree. It embeds the DIRECTORY rather than a file
@@ -50,13 +52,13 @@ var staticFS embed.FS
 // subset used, so one typo cannot disable proxy awareness entirely — and it never
 // fails open: unset yields nil, "trust nothing", which logs the unspoofable socket
 // peer.
-func parseTrustedProxies() []*net.IPNet {
+func parseTrustedProxies() []netip.Prefix {
 	const key = "TRUSTED_PROXIES"
 	v := envx.String(key)
 	if v == "" {
 		return nil
 	}
-	nets, invalid := webhttp.ParseCIDRs(strings.Split(v, ","))
+	prefixes, invalid := httpserver.ParseCIDRs(strings.Split(v, ","))
 	if len(invalid) > 0 {
 		// Count-only: a compose expansion mistake could put a credential in an
 		// entry, so the rejected raw values never reach the log.
@@ -64,34 +66,31 @@ func parseTrustedProxies() []*net.IPNet {
 			"invalid_count", len(invalid),
 			"hint", "each entry must be a CIDR (e.g. 192.0.2.0/28) or a bare IP (e.g. 192.0.2.5)")
 	}
-	// A default route (0.0.0.0/0 or ::/0) parses cleanly but can never describe a proxy
-	// SET, and it breaks client-IP resolution both ways: a same-family chain exhausts the
-	// trusted-hop walk and falls back to the socket peer (the proxy — exactly what setting
-	// this var was meant to stop logging), while an entry of the OTHER address family is
-	// never skipped, so a forged X-Forwarded-For becomes the logged client_ip. Warn by
-	// PREFIX LENGTH only, never the raw entry.
-	for _, n := range nets {
-		if ones, _ := n.Mask.Size(); ones == 0 {
-			slog.Warn(key+" contains a default route (0.0.0.0/0 or ::/0); every peer counts as a proxy, so client_ip logs the proxy itself and a forged X-Forwarded-For of the other address family can choose the logged client",
+	// A default route trusts every hop, so client_ip logs the proxy itself, and
+	// 0.0.0.0/0 never covers an IPv6 entry, so there a forged IPv6 X-Forwarded-For
+	// chooses the logged client. Warn by prefix length only, never the raw entry.
+	for _, p := range prefixes {
+		if p.Bits() == 0 {
+			slog.Warn(key+" contains a default route (0.0.0.0/0 or ::/0): every peer it covers counts as a proxy, so client_ip logs the proxy itself, and under 0.0.0.0/0 a forged IPv6 X-Forwarded-For can choose the logged client",
 				"hint", "list only the reverse proxy's own address(es), e.g. 192.0.2.0/28 or 192.0.2.100; leave "+key+" unset to log the unspoofable socket peer")
 			break
 		}
 	}
-	return nets
+	return prefixes
 }
 
 // parseAllowedHosts reads the comma-separated ALLOWED_HOSTS list of exact hostnames
-// / IPs this server answers for into a webhttp.HostPolicy. It closes the DNS-rebinding
+// / IPs this server answers for into a httpserver.HostPolicy. It closes the DNS-rebinding
 // hole a same-origin check alone leaves open: rebinding makes Origin and Host AGREE, so
 // CrossOriginProtection admits it (CWE-346). Unset yields an INACTIVE policy, the
 // backward-compatible default main warns about; entries that are ALL malformed yield an
 // active EMPTY policy — deny-all but the loopback carve-out, warned by name since every
 // request would otherwise 403 unexplained.
-func parseAllowedHosts() *webhttp.HostPolicy {
+func parseAllowedHosts() *httpserver.HostPolicy {
 	const key = "ALLOWED_HOSTS"
-	policy, invalid := webhttp.ParseHostList(strings.Split(envx.String(key), ","),
-		webhttp.WithLoopbackExempt(true),
-		webhttp.WithHostAllowlistError("host_not_allowed",
+	policy, invalid := httpserver.ParseHostList(strings.Split(envx.String(key), ","),
+		httpserver.WithLoopbackExempt(true),
+		httpserver.WithHostAllowlistError("host_not_allowed",
 			"host not allowed. Add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		// Count-only, like parseTrustedProxies.
@@ -149,11 +148,8 @@ func parseCatalogRefresh(raw string) time.Duration {
 	switch strings.ToLower(trimmed) {
 	case "", "off", "disabled":
 	default:
-		// Parse the TRIMMED but NOT lowercased value: scheduler.ParseInterval
-		// lowercases only for the off/disabled sentinels and hands the trimmed
-		// string to time.ParseDuration, whose units are case-sensitive. Gating on
-		// a lowercased copy would pass "24H" through to the library's
-		// value-echoing warning.
+		// Trimmed, not lowercased: time.ParseDuration units are case-sensitive, and a
+		// lowercased "24H" would pass into the library's value-echoing warning.
 		if d, err := time.ParseDuration(trimmed); err != nil || d < 0 {
 			slog.Warn("unusable "+catalogRefreshKey+"; using the built-in catalog refresh cadence",
 				"hint", `use a Go duration (e.g. 24h, 90m) or "off" to disable the schedule`)
@@ -164,17 +160,17 @@ func parseCatalogRefresh(raw string) time.Duration {
 }
 
 // parseTrustedInstallUIDs decodes TRUSTED_INSTALL_UIDS, a comma-separated list of
-// numeric uids, into the identities pinstall may find with write access to the kiro-cli
-// installation tree without treating custody as broken. EMPTY BY DEFAULT, and the
+// numeric uids, into the identities the kiro-cli install and the tools engine may find
+// with write access to the tools tree without treating custody as broken. EMPTY BY DEFAULT, and the
 // default is the point: setting it asserts what the library's field doc requires — every
 // uid listed is already at least as privileged as this server — because one that is NOT
 // can escalate through a binary this app installs and then executes. A malformed entry
 // is DROPPED, which is fail-closed: a uid that never lands keeps the check enforcing.
 func parseTrustedInstallUIDs() []int {
 	const key = "TRUSTED_INSTALL_UIDS"
-	uids, rejected := pinstall.ParseIdentities(envx.String(key))
+	uids, rejected := pin.ParseIdentities(envx.String(key))
 	if rejected > 0 {
-		slog.Warn("dropping unusable "+key+" entries; the kiro-cli install keeps enforcing custody against those identities",
+		slog.Warn("dropping unusable "+key+" entries; the kiro-cli install and the tools engine keep enforcing custody against those identities",
 			"invalid_count", rejected,
 			"hint", "each entry is a single numeric uid greater than 0 (e.g. 1000,1001); root is trusted already, and every identity listed must be at least as privileged as this server")
 	}
@@ -191,7 +187,7 @@ func parseTrustedInstallUIDs() []int {
 // SESSION, because cliPath is the manager's ACTIVE version directory.
 func sessionCommand(cliPath string, chatArgs ...string) []string {
 	const script = `if ! command -v "$0" >/dev/null 2>&1; then
-printf '%s\n' 'kiro-cli is not installed or not on PATH. The first-boot install may have failed. Check the container logs and /api/health.'
+printf '%s\n' 'kiro-cli is not installed or not on PATH. The first-boot install may have failed. Check the container logs and /healthz.'
 exit 1
 fi
 if ! "$0" whoami >/dev/null 2>&1; then
@@ -218,6 +214,16 @@ func loopbackHint(addr string) string {
 // reports failure by returning an error, so no startup branch can exit past a
 // pending defer and skip the subsystem teardown.
 func main() {
+	// Started through the image's launcher link, this binary is kiro-cli's
+	// agent-engine node (enginetuning.go), not the server.
+	if filepath.Base(os.Args[0]) == kasNodeLauncherName {
+		err := execKasNode(os.Getenv(kasRealNodeKey), os.Args[1:])
+		fmt.Fprintln(os.Stderr, kasNodeLauncherName+":", err)
+		os.Exit(127)
+	}
+	if len(os.Args) == 2 && os.Args[1] == "health" {
+		os.Exit(healthCommand(os.Stderr, listenAddr()))
+	}
 	if err := run(); err != nil {
 		// Rendered once, here: the failure branches in run carry their operator hint
 		// inside the returned error, so a startup failure produces exactly one ERROR
@@ -237,8 +243,8 @@ func main() {
 const shutdownGrace = 5 * time.Second
 
 // The startup stages a failure can be attributed to. Values, not messages: these
-// are the strings an operator's log query or alert rule matches, so changing one
-// is a breaking change to the log surface.
+// are the strings an operator's log search matches, so changing one is a breaking
+// change to the log surface.
 const (
 	stageWorkDir = "work_dir" // the /workspace mount is absent or not a directory
 	stageStatic  = "static"   // the embedded static tree is unusable
@@ -317,25 +323,18 @@ func checkWorkDir(workDir string) error {
 // lifecycle. Keeping the body here rather than in main is what lets the deferred
 // teardown run on every failure path.
 func run() error {
-	// First: a kiro-cli session lock written before this instant belongs to a dead boot
-	// (sweepStaleKiroLocks).
-	bootTime := time.Now()
 	setupLogging()
 
-	// The shutdown context every long-lived goroutine in run() keys its exit
-	// off: the tools convergence watcher and boot-convergence waiter inside
-	// startTools, the session-title poller, the tab restorer, and the server's
-	// request contexts via BaseContext. The pre-drain hook cancels it. It is
-	// created before startTools because a goroutine handed context.Background()
-	// has an exit path that can never fire. startKiroCLI keeps its own root.
+	// Every long-lived goroutine in run() exits on this context; the pre-drain hook
+	// cancels it. Created before startTools so no goroutine gets context.Background().
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
 
-	addr := cmp.Or(envx.String("LISTEN_ADDR"), ":9848")
+	addr := listenAddr()
 	// Warn for any bind reachable beyond loopback: a client that can reach this
 	// port gets an UNAUTHENTICATED kiro-cli PTY. Only a definite exposure warns; an
 	// unparseable addr will fail at Listen with its own error.
-	if webhttp.ClassifyBind(addr) == webhttp.BindExposed {
+	if httpserver.ClassifyBind(addr) == httpserver.BindExposed {
 		slog.Warn("serving an UNAUTHENTICATED kiro-cli shell on a non-loopback address; front it with an authenticating reverse proxy",
 			"addr", addr,
 			"hint", "any client that can reach this port gets a kiro-cli PTY with filesystem access to /workspace and the /config home (auth tokens, ssh keys, gitconfig)")
@@ -346,14 +345,14 @@ func run() error {
 	}
 	scrollback := resolveScrollback()
 
-	// ONE read for the ONE tools root, handed to both co-owners below: the toolbelt
-	// engine (its ConfigDir and ToolsDir) and the kiro-cli install manager (its
-	// install Root). A SECOND derivation is what previously split toolbelt's
-	// manifest from the tree it describes. Empty outside the container, where
-	// startTools falls back to <configDir>/tools.
+	// One read of the tools root, for toolbelt (ConfigDir and ToolsDir) and the
+	// kiro-cli install manager (Root). Empty outside the container.
 	kiroToolsDir := envx.String("KIRO_CLI_TOOLS_DIR")
 	ghToken, ghTokenEnv := githubToken()
 
+	// ONE parse for both custody checks, the tools engine's (baseTools below) and the
+	// kiro-cli install's (baseKiro): each must receive this same slice.
+	trustedInstallUIDs := parseTrustedInstallUIDs()
 	tools := startTools(baseCtx, &baseTools{
 		configDir:   configMountDir,
 		toolsDir:    kiroToolsDir,
@@ -369,6 +368,7 @@ func run() error {
 		refreshInterval: parseCatalogRefresh(envx.String(catalogRefreshKey)),
 		githubToken:     ghToken,
 		githubTokenEnv:  ghTokenEnv,
+		trustedUIDs:     trustedInstallUIDs,
 	})
 
 	trustedProxies := parseTrustedProxies()
@@ -384,7 +384,7 @@ func run() error {
 	}
 
 	// KIRO_CLI_CHAT_ARGS appends extra launch flags to the per-session `kiro-cli
-	// chat` command (whitespace-separated, e.g. "--v3"). The values reach chat as
+	// chat` command (whitespace-separated, e.g. "--effort high"). The values reach chat as
 	// positional shell params (see sessionCommand), never via string splicing.
 	chatArgs := strings.Fields(envx.String("KIRO_CLI_CHAT_ARGS"))
 	if len(chatArgs) > 0 {
@@ -393,11 +393,8 @@ func run() error {
 		slog.Info("appending extra kiro-cli chat flags", "chat_args_count", len(chatArgs))
 	}
 
-	// Concurrent sessions are uncapped, like browser tabs, and idle reaping is deliberately
-	// OFF: terminal state lives only in the in-memory VT buffer and replays on reconnect,
-	// so a session outliving its browser IS the resume feature. Any reaper window short
-	// enough to bound a runaway creator is short enough to break that; the create-rate
-	// limiter in routes.go is the bound chosen instead.
+	// No session cap and no idle reaping: a session outliving its browser is the
+	// resume feature. The create-rate limiter in routes.go is the bound instead.
 	tainted := os.Getenv("KIRO_CLI_TOOLS_TAINTED") == "1"
 	kiro := startKiroCLI(&baseKiro{
 		version:            envx.String("KIRO_CLI_VERSION"),
@@ -406,12 +403,13 @@ func run() error {
 		toolsDir:           kiroToolsDir,
 		tainted:            tainted,
 		chatArgs:           chatArgs,
-		trustedInstallUIDs: parseTrustedInstallUIDs(),
+		trustedInstallUIDs: trustedInstallUIDs,
 	})
 	sandbox := startSandbox(baseCtx, parseSandboxOptIn(), workDir, envx.String("HOME"))
+	tuning := newEngineTuning(parseHighThroughput(), envx.String(nodeValidatedKey), kiroDataDir(), kiro.engineBinary)
 
 	mux := http.NewServeMux()
-	var ready webhttp.Ready
+	var ready atomic.Bool
 
 	// The saved tab set, read before anything can save over it.
 	store := newTabStore(configMountDir)
@@ -446,13 +444,8 @@ func run() error {
 			" rebuild the image — go generate ./... plus the Dockerfile static build. The container will crash-loop under its restart policy until it is rebuilt.)", err))
 	}
 
-	// Orphan reaping is the CONTAINER INIT's job (`init: true`, tini at pid 1), so no
-	// reaper is installed here — and the engine's terminal.StartZombieReaper is not
-	// merely redundant, it is INCOMPATIBLE: it sets PR_SET_CHILD_SUBREAPER, which
-	// re-parents orphans onto this server even behind an init shim, and its sweep
-	// exempts only pids in the engine's own spawn registry. This app also spawns
-	// through os/exec outside that registry, so the sweep can win the race for one of
-	// THOSE exit statuses and make successful work report as failed.
+	// Orphan reaping is the container init's job (`init: true`): os/exec waits only
+	// for the children this process started, so at PID 1 every orphan stays a zombie.
 	if os.Getpid() == 1 {
 		slog.Warn("running as PID 1 with no init: orphaned session processes will accumulate as zombies for the container's lifetime",
 			"hint", "add `init: true` to the compose service (or run with `docker run --init`) so an init at PID 1 reaps orphans; the shipped compose.yaml marks it required")
@@ -463,6 +456,7 @@ func run() error {
 		listenHint:      loopbackHint(addr),
 		cmd:             kiro.cmd,
 		sessionEnv:      sandbox.sessionEnv(kiro.env),
+		engineEnv:       tuning.env,
 		sessionTitleEnv: pollers.sessionEnv,
 		sessionActivity: pollers.workflows.sessionActivity,
 		workDir:         workDir,
@@ -489,14 +483,11 @@ func run() error {
 		return atStage(stageListen, fmt.Errorf("listen on %s: %w", addr, err))
 	}
 
-	// webhttp.NewServer supplies the streaming-safe timeout defaults the hijacked /ws
-	// stream needs. WithSlogErrorLog keeps net/http's OWN diagnostics inside the slog
-	// stream this app documents as its only observability channel; a nil ErrorLog routes
-	// them through the legacy log package instead, in a shape Loki cannot query alongside
-	// the access log. Warn, not Error: net/http's accept path retries itself.
-	srv := webhttp.NewServer(
+	// WithSlogErrorLog keeps net/http's own diagnostics in the slog stream; Warn, not
+	// Error, since net/http's accept path retries itself.
+	srv := httpserver.New(
 		buildHandler(mux, trustedProxies, cspPolicy, hostPolicy),
-		webhttp.WithSlogErrorLog(slog.LevelWarn),
+		httpserver.WithSlogErrorLog(slog.LevelWarn),
 	)
 	// BaseContext hands every request a context the WithPreDrain hook below
 	// cancels on shutdown; see that hook for why cancelling baseCtx rather than
@@ -513,7 +504,7 @@ func run() error {
 	}
 	// The sweep goes first: a restored tab resuming onto a stale lock would refuse to open.
 	go func() {
-		sweepStaleKiroLocks(baseCtx, pollers.titles.sessionsRoot, bootTime)
+		sweepStaleKiroLocks(baseCtx, pollers.titles.sessionsRoot)
 		if restorer != nil {
 			restorer.run(baseCtx, mgr, func() bool {
 				kiroOK, _ := kiro.ready()
@@ -527,18 +518,15 @@ func run() error {
 	defer stop()
 
 	slog.Info("web-terminal-kiro listening", "addr", addr, "work_dir", workDir)
-	ready.Set(true)
+	ready.Store(true)
 
-	// The pre-drain hook flips readiness false and cancels in-flight request
-	// contexts before webhttp.Run drains, so /api/health reports 503 during the
-	// drain window. cancelBase unblocks the always-open /api/sessions/events SSE
-	// handler (it returns only on r.Context().Done(); srv.Shutdown does not
-	// interrupt an active stream, so without this the drain blocks the full
-	// grace window whenever a tab is open).
-	if err := webhttp.Run(ctx, srv, ln, shutdownSessions,
-		webhttp.WithShutdownGrace(shutdownGrace),
-		webhttp.WithPreDrain(func(context.Context) {
-			ready.Set(false)
+	// The pre-drain hook flips readiness false and cancels baseCtx, which ends the
+	// open /api/sessions/events streams; srv.Shutdown does not interrupt them.
+	if err := httpserver.Run(ctx, srv, ln,
+		httpserver.WithTeardown(shutdownSessions),
+		httpserver.WithShutdownGrace(shutdownGrace),
+		httpserver.WithPreDrain(func(context.Context) {
+			ready.Store(false)
 			cancelBase()
 			slog.Info("shutting down", "cause", context.Cause(ctx))
 		})); err != nil {
@@ -546,8 +534,8 @@ func run() error {
 		// registerRoutes keys on it to distinguish app-initiated process
 		// cancellation from a spontaneous early child failure, so this fatal path
 		// must clear it too or a teardown emits a false broken-install alert.
-		ready.Set(false)
-		// This path gets its own budget: webhttp builds a teardown context only
+		ready.Store(false)
+		// This path gets its own budget: httpserver builds a teardown context only
 		// on the graceful path, and it returns before the pre-drain hook here.
 		tctx, cancelTeardown := context.WithTimeout(context.Background(), shutdownGrace)
 		shutdownSessions(tctx)
@@ -558,20 +546,24 @@ func run() error {
 }
 
 // The layout facts this app brings to the kiro-cli install: where the convenience
-// symlinks go, and what its own SHELL-era installer left on the volume.
+// symlink goes, and what its own SHELL-era installer left on the volume.
 const (
-	// kiroLinkDir holds the non-authoritative convenience symlinks a `docker exec`
-	// shell resolves kiro-cli and its sidecars through. It is co-owned by the
-	// toolbelt engine, which publishes bin/<tool> symlinks of its own — which is
-	// why the legacy sweep names its targets instead of scanning it.
-	kiroLinkDir = "bin"
+	// kiroLinkDir holds the convenience symlink a `docker exec` shell resolves
+	// kiro-cli through. The install manager is its only writer, and the image PATH
+	// lists it before toolbeltBinDir, so a toolbelt tool named kiro-cli cannot
+	// take the bare name from the pinned binary.
+	kiroLinkDir = "kiro-cli-bin"
+	// toolbeltBinDir is the toolbelt engine's link dir. Legacy dispatchers can sit here,
+	// and so can the manager's former kiro-cli links, which the manager retracts
+	// (FormerLinkDirs).
+	toolbeltBinDir = "bin"
 	// legacyStagePrefix prefixed the shell installer's staging trees directly under
 	// the tools dir, so anything matching this is an orphan its EXIT trap missed on
 	// a SIGKILL. It ends in a dot so it cannot match the install root or the marker
 	// below.
 	legacyStagePrefix = ".kiro-cli-stage."
 	// legacyPurgeMarker records that the one-time migration sweep completed, so it
-	// runs ONCE rather than walking the co-owned bin directory every boot.
+	// runs ONCE rather than reading toolbelt's bin directory every boot.
 	// Dot-prefixed and directly under the tools dir, where the toolbelt engine never
 	// looks and where neither the stage sweep nor the entrypoint's write-probe
 	// cleanup can match it.
@@ -605,7 +597,10 @@ type kiroRuntime struct {
 	// env is the per-session environment overlay, or nil when there is nothing to
 	// add. The engine appends it last, so PATH here wins.
 	env func() []string
-	// ready is the /api/health and session-create verdict plus its 503 reason, or
+	// engineBinary is the active kiro-cli, the binary that embeds the agent
+	// engine and its Node.js, or "" while none is installed.
+	engineBinary func() string
+	// ready is the /healthz and session-create verdict plus its 503 reason, or
 	// nil when this app does not own the install (a bare `go run` with no pins)
 	// and readiness stays pure-listener.
 	ready func() (bool, string)
@@ -622,10 +617,14 @@ type kiroRuntime struct {
 // readiness policy is total and permissive. In the image entrypoint.sh always
 // exports the pins, so this shape is unreachable there.
 func unmanagedKiroRuntime(chatArgs []string) kiroRuntime {
-	argv := sessionCommand(kirocli.Name, chatArgs...)
+	argv := sessionCommand(kiroName, chatArgs...)
 	return kiroRuntime{
-		cmd:   func() []string { return argv },
-		env:   func() []string { return nil },
+		cmd: func() []string { return argv },
+		env: func() []string { return nil },
+		engineBinary: func() string {
+			p, _ := exec.LookPath(kiroName)
+			return p
+		},
 		ready: func() (bool, string) { return true, "" },
 		stop:  func() {},
 	}
@@ -634,15 +633,16 @@ func unmanagedKiroRuntime(chatArgs []string) kiroRuntime {
 // unavailableKiroRuntime is the runtime for a container that CANNOT install
 // kiro-cli: the pins it was handed are unusable, so no version can ever be
 // activated. It reports unready rather than pretending, which gates session
-// creation and surfaces the fault on /api/health instead of letting every terminal
+// creation and surfaces the fault on /healthz instead of letting every terminal
 // die one by one. Degraded, never fatal: the HTTP surface and the `docker exec`
 // repair path stay alive, per this app's failure posture.
 func unavailableKiroRuntime() kiroRuntime {
 	return kiroRuntime{
-		cmd:   func() []string { return sessionCommand(kirocli.Name) },
-		env:   func() []string { return nil },
-		ready: func() (bool, string) { return false, reasonUnavailable },
-		stop:  func() {},
+		cmd:          func() []string { return sessionCommand(kiroName) },
+		env:          func() []string { return nil },
+		engineBinary: func() string { return "" },
+		ready:        func() (bool, string) { return false, reasonUnavailable },
+		stop:         func() {},
 	}
 }
 
@@ -652,35 +652,36 @@ func unavailableKiroRuntime() kiroRuntime {
 // its users is the consumer's. These four literals ARE that wording, and they are a
 // published contract: an operator reads them from `docker inspect` and a monitoring
 // probe, they are the 503 body of POST /api/sessions, and they are the reason text
-// /api/health serves. kiroReasonText is the single place they are produced.
+// /healthz serves. kiroReasonText is the single place they are produced.
 const (
+	// reasonInstalling also covers the first activation's data dir cleanup.
 	reasonInstalling = "kiro-cli installing"
 	reasonRetrying   = "kiro-cli install retrying"
 	// reasonUnavailable is also the fallback for a rescan with no verdict to read,
 	// and for a reason a future library version adds: a state we cannot name still
 	// blocks sessions.
 	reasonUnavailable = "kiro-cli unavailable"
-	// reasonSettings is pinstall.ReasonAssertion in this app's terms. The only
-	// REQUIRED assertion here is the profile's mandatory app.disableAutoupdates, so
+	// reasonSettings is pin.ReasonAssertion in this app's terms. The only
+	// REQUIRED assertion here is app.disableAutoupdates, so
 	// a withheld verdict means exactly that the binary may replace itself and
 	// invalidate the verified digest.
 	reasonSettings = "kiro-cli required settings not enforced"
 )
 
 // kiroReasonText renders the install manager's typed reason as the reason
-// /api/health, the session-create gate and the repair hook serve. ReasonReady maps
+// /healthz, the session-create gate and the repair hook serve. ReasonReady maps
 // to "", which every one of those surfaces omits.
-func kiroReasonText(why pinstall.Reason) string {
+func kiroReasonText(why pin.Reason) string {
 	switch why {
-	case pinstall.ReasonReady:
+	case pin.ReasonReady:
 		return ""
-	case pinstall.ReasonInstalling:
+	case pin.ReasonInstalling:
 		return reasonInstalling
-	case pinstall.ReasonRetrying:
+	case pin.ReasonRetrying:
 		return reasonRetrying
-	case pinstall.ReasonUnavailable:
+	case pin.ReasonUnavailable:
 		return reasonUnavailable
-	case pinstall.ReasonAssertion:
+	case pin.ReasonAssertion:
 		return reasonSettings
 	}
 	return reasonUnavailable
@@ -698,7 +699,7 @@ func startKiroCLI(cfg *baseKiro) kiroRuntime {
 			"hint", "expected outside the container (bare `go run`); in the image entrypoint.sh exports KIRO_CLI_VERSION, both digests and KIRO_CLI_TOOLS_DIR")
 		return unmanagedKiroRuntime(cfg.chatArgs)
 	}
-	mgr, err := pinstall.New(kiroInstallConfig(cfg))
+	mgr, err := pin.New(kiroInstallConfig(cfg))
 	if err != nil {
 		slog.Error("kiro-cli install manager could not be built from the exported pins; no version can be installed, so sessions stay gated",
 			"error", err,
@@ -706,6 +707,8 @@ func startKiroCLI(cfg *baseKiro) kiroRuntime {
 		return unavailableKiroRuntime()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	cleanup := newKiroDataCleanup(kiroDataDir())
+	go cleanup.watch(ctx, mgr.Version)
 	go func() {
 		// EnsureWithRetry already logs the error with the attempt count and the
 		// in-container repair hint, and nothing here could act on it: the server
@@ -716,46 +719,64 @@ func startKiroCLI(cfg *baseKiro) kiroRuntime {
 	// than a pointer into the composition root's config.
 	chatArgs := cfg.chatArgs
 	return kiroRuntime{
-		cmd: func() []string { return sessionCommand(mgr.Path(), chatArgs...) },
-		env: mgr.PathEnv,
-		ready: func() (bool, string) {
-			ok, why := mgr.Ready()
-			return ok, kiroReasonText(why)
-		},
-		rescan: mgr.Rescan,
-		stop:   cancel,
+		cmd:          func() []string { return sessionCommand(mgr.Path(), chatArgs...) },
+		env:          mgr.PathEnv,
+		engineBinary: mgr.Path,
+		ready:        managedReady(mgr.Ready, cleanup),
+		rescan:       mgr.Rescan,
+		stop:         cancel,
 	}
 }
 
-// kiroInstallConfig is this app's deployment of the kiro-cli release: the pins, the
-// tools tree, the taint observation and the local policy. The release PROFILE — URL,
-// arch tokens, in-archive installer, probe argv, licence notice and the mandatory
-// auto-update assertion — is kirocli.Release()'s, shared with every other consumer.
+// managedReady is the install manager's verdict, held back until the data dir
+// cleanup has run for the first version it activates, so no session starts
+// while that cleanup deletes another version's runtime.
+func managedReady(mgr func() (bool, pin.Reason), cleanup *kiroDataCleanup) func() (bool, string) {
+	return func() (bool, string) {
+		ok, why := mgr()
+		if ok && !cleanup.settled() {
+			return false, reasonInstalling
+		}
+		return ok, kiroReasonText(why)
+	}
+}
+
+// The kiro-cli release profile: what is true of the package whatever deploys it.
+const (
+	kiroName        = "kiro-cli"
+	kiroURLTemplate = "https://desktop-release.q.us-east-1.amazonaws.com/{version}/kirocli-{arch}.zip"
+	kiroNotice      = "kiro-cli is proprietary AWS Content; by installing it you accept the AWS Customer Agreement at https://kiro.dev/license/"
+)
+
+// kiroInstallConfig is this app's install of the kiro-cli release: the profile, the
+// pins, the tools tree, the taint observation and the local policy.
 //
 // A function rather than an inline literal so the namespace test can build a manager
 // from the EXACT configuration production runs: the collision it guards is a property
 // of these values, not of a copy of them.
-func kiroInstallConfig(cfg *baseKiro) *pinstall.Config {
-	return &pinstall.Config{
-		Release: kirocli.Release(),
-		Version: cfg.version,
+func kiroInstallConfig(cfg *baseKiro) *pin.Config {
+	return &pin.Config{
+		Name:        kiroName,
+		URLTemplate: kiroURLTemplate,
+		ArchTokens: map[string]string{
+			"amd64": "x86_64-linux",
+			"arm64": "aarch64-linux",
+		},
+		ArtifactDir: "kirocli/bin",
+		ProbeArgs:   []string{"--version"},
+		Notice:      kiroNotice,
+		Version:     cfg.version,
 		// Both pins travel, whatever this container runs on; the library validates
 		// the digest for the resolved GOARCH and ignores the other.
 		Digests: map[string]string{
 			"amd64": cfg.sha256,
 			"arm64": cfg.sha256ARM64,
 		},
-		Root:    cfg.toolsDir,
-		LinkDir: kiroLinkDir,
-		// The chat sidecar is REQUIRED because `kiro-cli chat` over a PTY IS the product: a
-		// version directory holding only the main dispatcher answers --version correctly
-		// and then kills every terminal at chat. The library always requires the release's
-		// primary artifact, so this names only the addition. No Optional set, so
-		// kiro-cli-term is not installed here at all; marotte's set differs, and neither
-		// should be copied across without a caller that needs it.
-		Require: []string{kirocli.Name + "-chat"},
-		Assert:  kiroSettings(),
-		Purge:   kiroLegacyPurge(),
+		Root:           cfg.toolsDir,
+		LinkDir:        kiroLinkDir,
+		FormerLinkDirs: []string{toolbeltBinDir},
+		Assertions:     kiroSettings(),
+		Purge:          kiroLegacyPurge(),
 		// With the taint set, no pre-existing version directory may be activated at
 		// all: a forgeable sentinel is worthless evidence on a tree another host
 		// user could write. marotte deliberately leaves this UNSET — it has no
@@ -767,29 +788,27 @@ func kiroInstallConfig(cfg *baseKiro) *pinstall.Config {
 	}
 }
 
-// kiroSettings is this app's kiro-cli settings set, re-asserted against the active
-// binary on every boot. Every one is best-effort: a failure warns and readiness is
-// unaffected.
-//
-// app.disableAutoupdates is deliberately NOT here: kirocli.Release() declares it
-// Mandatory, so the library forces it Required whatever a deployment passes and the
-// integrity gate cannot be weakened from this list. The two notification settings feed
-// browser notifications and classifyNotification.
-func kiroSettings() []pinstall.Assertion {
-	return []pinstall.Assertion{
-		kirocli.Setting("telemetry.enabled", false),
-		kirocli.Setting("chat.enableNotifications", true),
-		// Raw because the value is not a boolean.
-		kirocli.SettingRaw("chat.notificationMethod", "osc9"),
-		kirocli.Setting("chat.terminalTitle", false),
-		// On, a full-screen drag reports "Copied" while copying nothing: the drag copy needs a
-		// clipboard tool the image lacks and skips OSC 52 (kirodotdev/Kiro#12210). Shift+drag
-		// stays the browser's own selection.
-		kirocli.Setting("chat.fullscreenCopyOnSelect", false),
-		// The image runs every tab as root by design (docs/hardening.md), so kiro-cli's
-		// warning at each chat start that it is running as root is noise here.
-		kirocli.Setting("app.warnOnElevatedPrivileges", false),
+// kiroSettings is the kiro-cli settings this app depends on, re-asserted against the
+// active binary on every boot so a user override cannot outlive a restart.
+// app.disableAutoupdates is the one Required entry: kiro-cli updating itself would
+// replace the binary whose digest was verified, so a failure withholds readiness.
+// The notification pair feeds classifyNotification, and the server owns tab titles.
+// Mere preferences live in kiro-cli-defaults.json instead (KIRO_DEFAULT_SETTINGS), so
+// a user's own value persists; no key may sit in both.
+func kiroSettings() []pin.Assertion {
+	gate := kiroSetting("app.disableAutoupdates", "true")
+	gate.Required = true
+	return []pin.Assertion{
+		gate,
+		kiroSetting("chat.enableNotifications", "true"),
+		kiroSetting("chat.notificationMethod", "osc9"),
+		kiroSetting("chat.terminalTitle", "false"),
 	}
+}
+
+// kiroSetting is the assertion `kiro-cli settings <key> <value>`, named after its key.
+func kiroSetting(key, value string) pin.Assertion {
+	return pin.Assertion{Name: key, Args: []string{"settings", key, value}}
 }
 
 // kiroLegacyPurge describes the layout THIS APP's shell installer left on the tools
@@ -797,26 +816,35 @@ func kiroSettings() []pinstall.Assertion {
 // than about the release. Nothing in the list is read by anything any more.
 //
 // Larger than marotte's on purpose (this installer promoted in place, so it wrote a
-// journal, `.prev` backups and three markers), so do not copy it there. The dispatcher
-// NAMES come from the library profile, which is what makes the sweep safe in a
-// directory toolbelt co-owns: a `kiro-cli*` prefix sweep deleted a live symlink.
-func kiroLegacyPurge() *pinstall.Purge {
-	return &pinstall.Purge{
-		Artifacts: []string{
+// journal, `.prev` backups and three markers), so do not copy it there. The
+// dispatchers in toolbelt's bin dir are named exactly, and the purge removes only a
+// regular file, so toolbelt's symlink at one of those names is spared.
+func kiroLegacyPurge() *pin.Purge {
+	return &pin.Purge{
+		Artifacts: append([]string{
 			".kiro-cli-update-in-progress",
 			".kiro-cli-installed",
 			".kiro-cli-installed.prev",
 			".kiro-cli-ready",
-			kiroLinkDir + "/.kiro-cli.prev",
-			kiroLinkDir + "/.kiro-cli.prev.absent",
-			kiroLinkDir + "/.kiro-cli-chat.prev",
-			kiroLinkDir + "/.kiro-cli-chat.prev.absent",
-			kiroLinkDir + "/.kiro-cli-term.prev",
-			kiroLinkDir + "/.kiro-cli-term.prev.absent",
-		},
-		Names:       kirocli.ShellEraDispatchers(),
+			toolbeltBinDir + "/.kiro-cli.prev",
+			toolbeltBinDir + "/.kiro-cli.prev.absent",
+			toolbeltBinDir + "/.kiro-cli-chat.prev",
+			toolbeltBinDir + "/.kiro-cli-chat.prev.absent",
+			toolbeltBinDir + "/.kiro-cli-term.prev",
+			toolbeltBinDir + "/.kiro-cli-term.prev.absent",
+		}, kiroLegacyDispatchers()...),
 		StagePrefix: legacyStagePrefix,
 		Marker:      legacyPurgeMarker,
+	}
+}
+
+// kiroLegacyDispatchers are the dispatchers the shell installer wrote into
+// toolbelt's bin dir, kiro-cli 2.x's sidecars included.
+func kiroLegacyDispatchers() []string {
+	return []string{
+		toolbeltBinDir + "/" + kiroName,
+		toolbeltBinDir + "/" + kiroName + "-chat",
+		toolbeltBinDir + "/" + kiroName + "-term",
 	}
 }
 
@@ -849,6 +877,9 @@ type baseTools struct {
 	// them anonymously. githubTokenEnv names the variable it came from.
 	githubToken    string
 	githubTokenEnv envx.Key
+	// trustedUIDs are TRUSTED_INSTALL_UIDS, the users whose write access to the
+	// tools tree does not fail the engine's integrity check.
+	trustedUIDs []int
 	// bundledToolsPaths are this app's own bundled-tools files, applied by the
 	// engine over every catalog it loads. A missing file is a hard engine
 	// failure by design: the four language servers the seed names live only
@@ -873,23 +904,22 @@ var requiredToolsList string
 // outside the container.
 type toolsRuntime struct {
 	engine *toolbelt.Engine
+	// stop cancels and joins the goroutines startTools started; nil when it started none.
+	stop func()
 	// syncing reports whether the boot convergence pass is still running; session
 	// creation is gated on it so the first kiro-cli never spawns before the
 	// manifest's tools are on PATH.
 	syncing func() bool
-	// state is the /api/health informational detail: syncing | ok | degraded. LIVE,
+	// state is the /healthz informational detail: syncing | ok | degraded. LIVE,
 	// not boot-only: after the boot verdict it tracks the engine's counted jobs.
 	state func() string
-	// missing is the WHOLE-TREE convergence signal, deliberately a second question
-	// from state: state answers "did the last job succeed, or are we still booting",
-	// which keeps monitoring from flapping through a long first-boot install, while
-	// this answers "is the tree actually converged". Reporting one as the other made
-	// state=ok readable as whole-tree health after a partial repair. ok is false until
-	// the first recount lands, so a premature zero cannot read as convergence.
+	// missing is whole-tree convergence, a separate question from state (did the
+	// last job succeed). ok is false until the first recount, so a premature zero
+	// cannot read as convergence.
 	missing func() (n int, ok bool)
 }
 
-// The three documented values of /api/health's informational tools field. Each is
+// The three documented values of /healthz's informational tools field. Each is
 // named rather than inlined because every one is written from more than one site
 // and a health consumer keys on the literal.
 const (
@@ -902,7 +932,7 @@ const (
 	toolsStateDegraded = "degraded"
 )
 
-// toolsStatus is the app-owned reducer behind /api/health's INFORMATIONAL tools field,
+// toolsStatus is the app-owned reducer behind /healthz's INFORMATIONAL tools field,
 // fed by the boot reconcile's verdict once and by the engine's OnJobChanged callback
 // thereafter — so a repair through the loopback API heals the field without a restart.
 //
@@ -937,7 +967,7 @@ func newToolsStatus() *toolsStatus {
 	return s
 }
 
-// get reads the current value for /api/health.
+// get reads the current value for /healthz.
 func (s *toolsStatus) get() string {
 	v, _ := s.state.Load().(string)
 	return v
@@ -977,14 +1007,10 @@ func (s *toolsStatus) watchConvergence(ctx context.Context, count func() (int, e
 	recount := func() {
 		n, err := count()
 		if err != nil {
-			// Return the field to UNKNOWN rather than freezing the last answer: the
-			// published contract is that tools_missing is absent when the count is
-			// not known, so a frozen 0 would assert a convergence the engine can no
-			// longer confirm. Warn, not Debug: Inventory's failure mode is an
-			// unreadable or unparseable manifest, which is persistent and
-			// operator-fixable.
+			// Back to unknown: tools_missing is absent when the count is not known, and an
+			// unreadable manifest is persistent and operator-fixable, hence Warn.
 			s.missing.Store(-1)
-			slog.Warn("tools: convergence recount failed; /api/health omits tools_missing until one succeeds",
+			slog.Warn("tools: convergence recount failed; /healthz omits tools_missing until one succeeds",
 				"error", err,
 				"hint", "fix the manifest (schema v2 JSON); an unreadable manifest also fails the tools engine outright on the next restart")
 			return
@@ -1048,12 +1074,8 @@ func (s *toolsStatus) recordBoot(v string) {
 // into the field. Fires from toolbelt's job worker under the queue lock, so it does
 // exactly one atomic store, one non-blocking poke, and never blocks.
 func (s *toolsStatus) observeJob(j *toolbelt.Job) {
-	// The convergence count is a fact about the TREE, so EVERY settled job asks for a
-	// recount — deliberately not filtered by toolsStatusCounts, which is the state
-	// VERDICT's policy. A disable, an uninstall and a half-finished update all change
-	// which enabled entries are installed without meaning the boot was degraded.
-	// Cancelled is settled too: a job cancelled after it already changed the tree
-	// would otherwise leave the count asserting the pre-job state.
+	// Every settled job changes the tree, so each asks for a recount, cancelled ones
+	// included; toolsStatusCounts is the state verdict's policy, not this.
 	switch j.State {
 	case toolbelt.JobDone, toolbelt.JobFailed, toolbelt.JobCancelled:
 		s.requestRecount()
@@ -1091,7 +1113,7 @@ func toolsStatusCounts(kind string) bool {
 
 // degradedRuntime is the engine-less runtime a startTools failure returns: engine
 // stays nil (no /api/tools mount) and syncing reports false (sessions ungated) while
-// state reports degraded so the failure is visible on /api/health instead of looking
+// state reports degraded so the failure is visible on /healthz instead of looking
 // like a deliberate disable.
 func degradedRuntime() toolsRuntime {
 	return toolsRuntime{
@@ -1103,7 +1125,12 @@ func degradedRuntime() toolsRuntime {
 	}
 }
 
+// close stops the runtime's goroutines and waits for them, then closes the engine,
+// so none of them logs or calls the engine after close returns.
 func (t *toolsRuntime) close() {
+	if t.stop != nil {
+		t.stop()
+	}
 	if t.engine != nil {
 		t.engine.Close()
 	}
@@ -1111,7 +1138,7 @@ func (t *toolsRuntime) close() {
 
 // warnIfToolsBinUnreachable warns when the engine's single PATH directory
 // (<toolsDir>/bin) is absent from this process's PATH. Every tool then provisions
-// successfully and /api/health reports tools=ok while no session, and therefore no
+// successfully and /healthz reports tools=ok while no session, and therefore no
 // kiro-cli PATH scan, can see any of it. Sessions inherit this process's environment,
 // so this process's PATH is the right thing to test. Warn, never fatal: in the
 // container the cause is a compose PATH override or an image whose ENV PATH dropped
@@ -1126,14 +1153,14 @@ func warnIfToolsBinUnreachable(toolsDir string) {
 			return
 		}
 	}
-	slog.Warn("the tools tree is not on PATH: every tool the manifest installs will be invisible to kiro-cli and to terminal sessions, even though /api/health will report tools=ok",
+	slog.Warn("the tools tree is not on PATH: every tool the manifest installs will be invisible to kiro-cli and to terminal sessions, even though /healthz will report tools=ok",
 		"tools_bin", binDir,
 		"hint", "add "+binDir+" to this process's PATH. In the container that means the image's ENV PATH (or a compose override of it) no longer leads with the tools tree entrypoint.sh hardened and exported; outside it, a bare `go run` inherits the developer's PATH, so the derived tree is expected to be absent from it.")
 }
 
 // logRootIntegrityFindings turns a toolbelt root-integrity refusal into one
 // operator-queryable line per offending root. toolbelt logs the refusal too, but as
-// a single joined string, so without this the degraded /api/health verdict is backed
+// a single joined string, so without this the degraded /healthz verdict is backed
 // only by a message nothing can be filtered on.
 func logRootIntegrityFindings(err error) {
 	var unfit *toolbelt.RootIntegrityError
@@ -1162,13 +1189,8 @@ func toolsConfig(cfg *baseTools, toolsRoot string, onJob func(*toolbelt.Job)) *t
 		ConfigDir:   toolsRoot,
 		ToolsDir:    toolsRoot,
 		CatalogPath: cfg.catalogPath,
-		// The tools this app BUNDLES, merged over every catalog the engine
-		// loads (baked, cached, fetched). The published catalog is a general
-		// reference and carries none of them: no registry packages gopls,
-		// typescript, typescript-language-server or pyright, and DefaultSeed
-		// below names all four, so without this the seeded templates would
-		// resolve to nothing at enable time. The image build gates the same
-		// file with `toolcatalog verify -overlay`.
+		// The published catalog carries none of the language servers DefaultSeed names,
+		// so without this overlay the seeded templates resolve to nothing.
 		CatalogOverlays: cfg.bundledToolsPaths,
 		Refresh: &toolbelt.CatalogRefresh{
 			URL:      cfg.catalogURL,
@@ -1179,13 +1201,11 @@ func toolsConfig(cfg *baseTools, toolsRoot string, onJob func(*toolbelt.Job)) *t
 		System:       []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash", "socat"},
 		Logger:       slog.Default(),
 		OnJobChanged: onJob,
+		TrustedUIDs:  cfg.trustedUIDs,
 		GitHubToken:  githubTokenSource(cfg.githubToken),
-		// Refuse to construct an engine over a managed root that is a symlink, is not a
-		// directory, is group/other-writable, or resolves outside the tree. The tree is an
-		// operator-controlled persistent volume, this process runs as root, and toolbelt's
-		// install probe EXECUTES what it finds in <ToolsDir>/bin with that dir first on PATH.
-		// ADDITIVE to entrypoint.sh: only the entrypoint can chmod and re-stat to prove a
-		// tightening took, and only the library covers a root reshaped AFTER it ran.
+		// Refuses a managed root writable by anyone but root, this process or TrustedUIDs:
+		// toolbelt's install probe executes what it finds in <ToolsDir>/bin, as root.
+		// Additive to entrypoint.sh, which cannot see a root reshaped after it ran.
 		VerifyRootIntegrity: true,
 	}
 }
@@ -1198,11 +1218,8 @@ func toolsConfig(cfg *baseTools, toolsRoot string, onJob func(*toolbelt.Job)) *t
 // update pass refreshes unpinned tools, and a boot warning nudges when no language
 // server is enabled (kiro-cli scans PATH for LSPs at session start).
 func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
-	// Three distinct outcomes, deliberately NOT collapsed: only a genuinely ABSENT
-	// directory is the intentionally-disabled out-of-container shape. A stat failure
-	// for any other reason, or a non-directory mounted at the config path, is a
-	// FAILED production subsystem — otherwise the operator reads a broken mount as
-	// "tools deliberately off".
+	// Only an absent dir is the out-of-container "tools off" shape; any other stat
+	// failure or a non-directory is a failed subsystem, never reported as off.
 	fi, statErr := os.Stat(cfg.configDir)
 	switch {
 	case errors.Is(statErr, fs.ErrNotExist):
@@ -1227,12 +1244,8 @@ func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
 			"config_dir", cfg.configDir)
 		return degradedRuntime()
 	}
-	// The tool subsystem's ONE root: the engine's ToolsDir, the directory whose bin/
-	// every session must find on PATH, AND the engine's ConfigDir. Those last two
-	// are the same path on purpose — toolbelt's three metadata files all describe
-	// the artifacts under ToolsDir, so a layout that let them sit in different
-	// volumes was one subsystem with two homes. Prefer the path the entrypoint
-	// hardened and exported; the derivation is the out-of-container fallback only.
+	// One root for both ToolsDir and ConfigDir, since toolbelt's metadata describes
+	// the artifacts under ToolsDir. The derivation is the out-of-container fallback.
 	toolsRoot := cfg.toolsDir
 	if toolsRoot == "" {
 		toolsRoot = filepath.Join(cfg.configDir, "tools")
@@ -1255,19 +1268,18 @@ func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
 		// class).
 		logRootIntegrityFindings(err)
 		// Unlike the missing-config-dir path, a FAILED production subsystem must
-		// stay visible on /api/health. The engine stays nil and syncing reports
+		// stay visible on /healthz. The engine stays nil and syncing reports
 		// false, so sessions remain ungated.
 		return degradedRuntime()
 	}
 	announceGitHubToken(cfg.githubTokenEnv)
-	go limits.run(ctx)
+	ctx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	wg.Go(func() { limits.run(ctx) })
 
-	// recordBoot BOTH arms the live reducer and lifts the session-create gate: the
-	// gate is derived from the reducer's one-way "syncing" state rather than kept in
-	// a second cell, so a request cannot observe tools=ok while session creation
-	// still refuses with "tools installing". A post-boot job failure stores only ok
-	// or degraded, so it can update the field without re-closing session creation.
-	// Boot failure lifting the gate is deliberate (degraded-not-dead).
+	// recordBoot arms the reducer and lifts the session-create gate, derived from
+	// the one-way "syncing" state, so tools=ok and "tools installing" never coexist.
+	// A boot failure lifts the gate too (degraded, not dead).
 	job, enqueued, rerr := eng.Reconcile(toolbelt.ReconcileMissing)
 	switch {
 	case rerr != nil:
@@ -1284,27 +1296,20 @@ func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
 		// which job to correlate with toolbelt's own job warnings.
 		slog.Info("tools: boot convergence started; session creation is gated until it finishes",
 			"job", job.ID,
-			"hint", "POST /api/sessions answers 503 \"tools installing\" (Retry-After 5) and /api/health reports tools=syncing until this converges")
-		go awaitBootConvergence(ctx, eng, job.ID, status.recordBoot, manifestPath)
+			"hint", "POST /api/sessions answers 503 \"tools installing\" (Retry-After 5) and /healthz reports tools=syncing until this converges")
+		wg.Go(func() { awaitBootConvergence(ctx, eng, job.ID, status.recordBoot, manifestPath) })
 	}
-	// Boot catalog fetch, explicitly AFTER the reconcile enqueue: the engine's
-	// schedule deliberately has no fire-on-start, because an immediate enqueue
-	// inside New would land ahead of the boot-critical reconcile on the
-	// single-flight queue and delay the session gate. Failure is routine before the
-	// publisher is reachable; keep-last-good absorbs it.
+	// After the reconcile enqueue, so the single-flight queue runs the boot-critical
+	// reconcile first. A failure is routine before the publisher is reachable.
 	if _, rerr := eng.RefreshCatalog(); rerr != nil {
 		slog.Warn("tools: boot catalog refresh not enqueued", "error", rerr)
 	}
-	// The convergence watcher is started here rather than beside the reducer, so
-	// it exists only for a runtime that actually has an engine to count. It gets
-	// the SHUTDOWN context, not context.Background(): the callee selects on
-	// ctx.Done() to return, and a Background context defeats that exit path at
-	// the call site, so the goroutine outlived every shutdown and the select arm
-	// was unreachable code.
-	go status.watchConvergence(ctx, countMissingTools(eng))
+	// Started only for a runtime that has an engine to count.
+	wg.Go(func() { status.watchConvergence(ctx, countMissingTools(eng)) })
 
 	return toolsRuntime{
 		engine:  eng,
+		stop:    func() { cancel(); wg.Wait() },
 		syncing: func() bool { return status.get() == toolsStateSyncing },
 		state:   status.get,
 		missing: status.missingCount,
@@ -1312,37 +1317,18 @@ func startTools(ctx context.Context, cfg *baseTools) toolsRuntime {
 }
 
 // awaitBootConvergence blocks on the boot reconcile job, records the verdict
-// (lifting the session-create gate via finish), then runs the post-convergence
-// tail: the freshness pass for unpinned entries (off the boot path — version-check
-// network never holds the session gate) and the language-server nudge. manifestPath
-// is threaded through purely for that nudge's operator-facing `manifest` field.
-//
-// ctx is the process shutdown context, not context.Background(): a goroutine
-// blocked on Wait for a job budgeted at up to 30 minutes must not survive the
-// signal that ends the process. A cancelled Wait is not a fault — the engine's
-// own Close cancels the running job on the same path — so it lands on the
-// same not-a-tool-failure record as JobCancelled.
+// (lifting the session-create gate via finish), then runs the freshness pass for
+// unpinned entries off the boot path and the language-server nudge, whose
+// `manifest` field is manifestPath. ctx is the process shutdown context, so a
+// Wait on a job budgeted at up to 30 minutes ends with the process; a cancelled
+// Wait is recorded like JobCancelled, as not a tool failure.
 func awaitBootConvergence(ctx context.Context, eng *toolbelt.Engine, jobID string, finish func(string), manifestPath string) {
 	final, werr := eng.Wait(ctx, jobID)
 	switch {
 	case errors.Is(werr, context.Canceled), errors.Is(werr, context.DeadlineExceeded):
-		// Shutdown won the race with convergence. Keyed on the ERROR Wait
-		// returned, not on ctx.Err(): Wait checks for a terminal job BEFORE it
-		// selects on ctx.Done() (toolbelt jobs.go), so a job that finished in
-		// the same instant SIGTERM arrived comes back as (job, nil) with a
-		// cancelled ctx — and a bare ctx.Err() arm would have recorded that
-		// SUCCESS as an abandoned, degraded pass.
-		//
-		// The verdict still degrades (this pass did not converge) but the
-		// RECORD stays Info for the same reason the JobCancelled arm below
-		// does: a restart during a first-boot install is routine, and a Warn
-		// here is the false broken-install alert every deploy would fire.
-		//
-		// Returns, like the JobCancelled arm: the post-convergence tail must
-		// not run. Update() enqueues a real network pass, and the pre-drain
-		// hook cancels this ctx while tools.close() is still pending in the
-		// deferred teardown, so the engine is still OPEN here and the enqueue
-		// would SUCCEED on a draining process.
+		// Keyed on Wait's error, not ctx.Err(): a job finished as SIGTERM arrived returns
+		// (job, nil). No post-convergence tail: Update() would start a network pass while
+		// the process drains.
 		slog.Info("tools: boot convergence abandoned at shutdown; not a tool failure",
 			"cause", context.Cause(ctx))
 		finish(toolsStateDegraded)
@@ -1351,12 +1337,9 @@ func awaitBootConvergence(ctx context.Context, eng *toolbelt.Engine, jobID strin
 		slog.Warn("tools: boot reconcile wait failed", "error", werr)
 		finish(toolsStateDegraded)
 	case final.State == toolbelt.JobCancelled:
-		// Cancellation is not a fault: toolbelt cancels the active job from Engine.Close, and
-		// otherwise only on an explicit operator CancelJob. Reporting it at Warn would be the
-		// same false broken-install alert the session-side exit hook gates away on every
-		// deploy. The verdict still degrades — the pass did not converge — but the RECORD
-		// stays Info, and the post-convergence tail is skipped because on the shutdown path
-		// Update() can only fail and the LSP nudge has no reader.
+		// Cancellation comes from Engine.Close or an operator CancelJob, not a fault, so
+		// Info. The verdict still degrades, and the tail is skipped: on shutdown Update()
+		// can only fail.
 		slog.Info("tools: boot convergence cancelled; not a tool failure",
 			"cause", final.CancelCause.String(),
 			"hint", "expected during shutdown (the engine cancels the running job on Close) or after an explicit tools-API job cancel")
@@ -1395,11 +1378,8 @@ func manifestPathFor(toolsRoot string) string {
 func warnIfNoLSPEnabled(e *toolbelt.Engine, manifestPath string) {
 	inv, err := e.Inventory()
 	if err != nil {
-		// Warn, not Debug: Inventory's only failure mode is an unreadable manifest, and
-		// toolbelt returns that error without logging it, so at the default level this
-		// would be the one record of a manifest an operator has just broken. Deliberately
-		// NOT the "no language servers enabled" wording — that is a different event, and a
-		// test counts Warns by that message.
+		// Warn: toolbelt returns this error without logging it. Not the "no language
+		// servers enabled" wording, a different event a test counts.
 		slog.Warn("tools: manifest unreadable; cannot tell whether a language server is enabled",
 			"error", err,
 			"manifest", manifestPath,
@@ -1452,73 +1432,59 @@ func canonicalPathGuardedRoute(p string) bool {
 // ServeMux matches patterns on unescaped segments: "/api/%74ools" is served 200.
 func canonicalPathGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		clean, canonical := webhttp.CanonicalRequestPath(r.URL.Path)
+		clean, canonical := httpserver.CanonicalRequestPath(r.URL.Path)
 		if canonical || !canonicalPathGuardedRoute(clean) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		webhttp.WriteError(w, r, http.StatusBadRequest, "non_canonical_path", canonicalPathRefusal)
+		httpserver.WriteError(w, r, http.StatusBadRequest, "non_canonical_path", canonicalPathRefusal)
 	})
 }
 
 // buildHandler wraps the route mux in the middleware stack: Logging -> Recoverer ->
-// wsAttachLog -> SecurityHeaders -> host allowlist -> CrossOriginProtection ->
+// Gzip -> wsAttachLog -> SecurityHeaders -> host allowlist -> CrossOriginProtection ->
 // canonicalPathGuard -> mux. The order is the contract: Logging outermost so it sees
-// every final status; Recoverer inside it so the line records the 500; wsAttachLog
+// every final status; Recoverer inside it so the line records the 500; Gzip inside
+// Recoverer so a panic before the body was sent still answers 500; wsAttachLog
 // outside the host gate so a rejected Host still leaves a record; SecurityHeaders
 // outside the origin gate so a rejected request still carries the headers; the host
 // allowlist BEFORE the origin gate, since rebinding makes Origin and Host agree.
-func buildHandler(mux http.Handler, trustedProxies []*net.IPNet, csp string, hostPolicy *webhttp.HostPolicy) http.Handler {
-	return webhttp.Chain(mux,
-		webhttp.Logging(
-			webhttp.WithLogger(slog.Default()),
-			// The /ws skip decides on an OUTCOME rather than a prediction: it
-			// suppresses the record only for a response that actually switched
-			// protocols, which is the state that makes the line a lie — the exchange
-			// ENDED at the handshake, so a line emitted hours later at socket close
-			// would carry a session-length duration and a status net/http never sent.
-			// Every refusal therefore keeps its line by construction, including the
-			// 426 for missing upgrade headers (the classic reverse-proxy
-			// misconfiguration).
-			webhttp.WithSkipUpgrades(true),
-			// SSE needs its own path-shaped skip because it never switches protocols: it
-			// is a plain 200 that does not return until the client disconnects, so
-			// WithSkipUpgrades cannot see it and its record would START being emitted.
-			//
-			// A predicate rather than WithSkipPaths, for the two conjuncts: skip rules run
-			// BEFORE the chain, so a bare path skip would also swallow the 403s
-			// hostPolicy.Middleware and CrossOriginProtection write — WriteError logs
-			// neither — leaving an attack on this unauthenticated PTY unrecorded (CWE-778).
-			webhttp.WithSkipFunc(func(r *http.Request) bool {
+func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, hostPolicy *httpserver.HostPolicy) http.Handler {
+	return httpserver.Chain(mux,
+		httpserver.Logging(
+			httpserver.WithLogger(slog.Default()),
+			// Skips only a response that switched protocols, whose line at socket close would
+			// carry a session-length duration; every refusal, the 426 included, keeps its line.
+			httpserver.WithSkipUpgrades(true),
+			// SSE is a plain 200 held open until disconnect, so it needs its own skip. A
+			// predicate, not WithSkipPaths: skip rules run before the chain, and a bare path
+			// skip would also hide the 403s the host and origin checks write (CWE-778).
+			httpserver.WithSkipFunc(func(r *http.Request) bool {
 				return r.Method == http.MethodGet &&
 					r.URL.Path == terminal.SessionEventsPath && hostPolicy.Allows(r)
 			}),
-			// /api/health is probed every 30s. ProbeLogLevel keeps healthy probes at
-			// Debug while a FAILING probe surfaces at Warn/Error with its status and
-			// request id.
-			webhttp.ProbeLogLevel(healthPath),
-			// The session-id-bearing subtree logs the route template the mux actually
-			// matched instead of the raw path, so a live capability token never reaches the
-			// access log. The prefix comes from the engine — the package that DECLARES those
-			// routes — and the template from r.Pattern, so a route the engine adds in a
-			// future version logs correctly with no change here.
-			webhttp.WithTemplatePathsUnder(terminal.SessionsSubtreePath),
-			webhttp.WithClientIP(trustedProxies...),
+			// /healthz is probed every 30s, so its access lines are Debug whatever the
+			// status; the startup and kiro-cli install lines report a fault once.
+			httpserver.WithProbeLogLevel(healthPath),
+			// The session subtree logs its matched route template, never the raw path, so a
+			// session id never reaches the access log. The engine declares the prefix.
+			httpserver.WithTemplatePathsUnder(terminal.SessionsSubtreePath),
+			httpserver.WithClientIP(trustedProxies...),
 		),
-		webhttp.Recoverer(webhttp.WithRecoverLogger(slog.Default())),
+		httpserver.Recoverer(httpserver.WithRecoverLogger(slog.Default())),
+		// The default JSON-only type list keeps the SSE stream (text/event-stream)
+		// unbuffered and identity; a /ws 101 is never a compression candidate and its
+		// hijack passes through; StaticHandler's assets arrive already gzipped.
+		httpserver.Gzip(),
 		wsAttachLog(trustedProxies),
-		webhttp.SecurityHeaders(
-			webhttp.WithCSP(csp),
-			// COOP severs window.opener for any cross-origin page a session opens. The
-			// terminal renders clickable OSC 8 hyperlinks straight out of untrusted child
-			// output, so a session can be induced to open an attacker page; the vendored UI
-			// already sets rel="noopener noreferrer", and this header plus the tightened
-			// Referrer-Policy make that guarantee independent of the Renovate-bumped UI pin.
-			// COOP and the Permissions-Policy features are secure-context-gated, so inert on
-			// a plain-HTTP LAN bind; Referrer-Policy is not, which is why it is useful there.
-			webhttp.WithCOOP("same-origin"),
-			webhttp.WithReferrerPolicy("same-origin"),
-			webhttp.WithPermissionsPolicy("camera=(), microphone=(), geolocation=()"),
+		httpserver.SecurityHeaders(
+			httpserver.WithCSP(csp),
+			// Untrusted child output renders clickable OSC 8 links, so COOP severs
+			// window.opener independently of the UI's rel="noopener". COOP is
+			// secure-context-gated; Referrer-Policy also applies on a plain-HTTP bind.
+			httpserver.WithCOOP("same-origin"),
+			httpserver.WithReferrerPolicy("same-origin"),
+			httpserver.WithPermissionsPolicy("camera=(), microphone=(), geolocation=()"),
 		),
 		hostPolicy.Middleware(),
 		http.NewCrossOriginProtection().Handler,
@@ -1537,14 +1503,14 @@ const wsAttachMsg = "terminal attach attempt"
 // leaked id could be replayed with nothing to show an operator afterwards (CWE-778).
 // Logged at request start, so a rejected Host or unknown-session close is recorded
 // too, and the attacker-chosen session param stays an attribute the handler quotes.
-func wsAttachLog(trustedProxies []*net.IPNet) func(http.Handler) http.Handler {
+func wsAttachLog(trustedProxies []netip.Prefix) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == terminal.WSPath && isWebSocketUpgrade(r) {
 				slog.Info(wsAttachMsg,
 					"session", terminal.LogID(terminal.SessionID(r.URL.Query().Get("session"))),
-					"client_ip", webhttp.ClientIP(r, trustedProxies...),
-					"request_id", webhttp.RequestIDFromContext(r.Context()))
+					"client_ip", httpserver.ClientIP(r, trustedProxies...),
+					"request_id", httpserver.RequestIDFromContext(r.Context()))
 			}
 			next.ServeHTTP(w, r)
 		})
@@ -1604,12 +1570,8 @@ const (
 func startContainment() *terminal.Containment {
 	c, err := terminal.NewContainment(containCgroupRoot, containCgroupPrefix, slog.Default())
 	if err != nil {
-		// WARN, not Info: entrypoint.sh has already logged that the cgroup tree was
-		// remounted rw, a claim about the mount and not about containment, and
-		// nothing else announces that containment is off. The container carries no
-		// mem_limit, so no memory alert catches stranded session trees either.
-		// Not fatal: reaping closes the process leak without containment, so the
-		// terminal must keep serving.
+		// Warn: nothing else announces that containment is off, and no memory alert
+		// covers stranded trees. Not fatal: marker-based reaping still closes the leak.
 		slog.Warn("per-session cgroup containment unavailable; session trees are still reaped, but per-session peak memory and task counts will not be reported",
 			"error", err,
 			"hint", "containment needs a writable cgroup v2 root, which needs CAP_SYS_ADMIN for a one-time remount. Not granted by default: the engine's marker-based reaping closes the process leak without it.")

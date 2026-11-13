@@ -2,8 +2,9 @@ package main
 
 // Tab titles come from kiro-cli's own session record, not terminal.WithInputTitle: rebuilding
 // a submitted line from raw bytes fuses text a discard key (Escape, Ctrl-U) dropped onto the
-// next prompt. The tab-to-session join is kiro's hook, which inherits WT_TITLE_HANDLE and gets
-// session_id on stdin; the KAS log or the process tree can reach the wrong session.
+// next prompt. The tab-to-session join starts at kiro's hook, which inherits WT_TITLE_HANDLE
+// and gets session_id on stdin (the KAS log or the process tree can reach the wrong session);
+// the hook only reports, and conversationOf decides.
 
 import (
 	"context"
@@ -17,22 +18,28 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
 const (
-	// titleStateDirName holds one hook-written file per tab, named for its title handle.
+	// titleStateDirName holds one hook-written report directory per tab, <title handle>.d,
+	// holding one empty file per kiro session the hook reported, its mtime the last report.
 	titleStateDirName = "session-titles"
 
-	// maxTitleFileBytes bounds a read of a mapping or a session.json; larger is corrupt or hostile.
+	// reportDirSuffix ends a tab's report directory name, after its title handle.
+	reportDirSuffix = ".d"
+
+	// maxTitleFileBytes bounds a read of a session.json; larger is corrupt or hostile.
 	maxTitleFileBytes = 64 * 1024
 
 	// placeholderTitle is kiro's "no title yet" value, read as absent.
@@ -61,9 +68,9 @@ type pushedTitle struct {
 	title  string
 }
 
-// sessionTitleSync pushes kiro-cli session titles onto the engine's client rung and names
-// each tab's URL alias after its kiro session. Live tabs are the engine's and mapped tabs are
-// whatever the hook wrote into stateDir; an unmapped tab keeps the automatic name.
+// sessionTitleSync decides which kiro-cli session each tab holds, pushes that session's title
+// onto the engine's client rung and names the tab's URL alias after it. Live tabs are the
+// engine's; a tab with no decision keeps the automatic name.
 type sessionTitleSync struct {
 	// Field order satisfies govet fieldalignment; re-run it when adding a field.
 	//
@@ -74,18 +81,22 @@ type sessionTitleSync struct {
 	// refusal logs once and is retried while the tab stays live and mapped.
 	aliased      map[terminal.SessionID]string
 	aliasRefused map[terminal.SessionID]string
+	// decided is each tab's conversation; poller-goroutine only.
+	decided map[terminal.SessionID]tabDecision
 	// mapped is the tab -> kiro-session pairing for readers on other goroutines, recorded
-	// at mapping time: a tab with no usable title yet is in mapped and absent from pushed.
+	// at decision time: a tab with no usable title yet is in mapped and absent from pushed.
 	mapped atomic.Pointer[map[terminal.SessionID]string]
 	// handleByTab and tabByHandle index one title handle both ways. A tab whose hook never
 	// ran leaves both entries behind; sweeping them against pass()'s liveness snapshot would
 	// drop a live tab's handle minted before the manager lists the session.
 	handleByTab map[terminal.SessionID]string
 	tabByHandle map[string]terminal.SessionID
-	stateDir    string
+	// seeds is a restored tab's conversation, set by the restorer before any report.
+	seeds    map[terminal.SessionID]string
+	stateDir string
 	// sessionsRoot is $HOME/.kiro/sessions; findSessionRecord scans its hash level.
 	sessionsRoot string
-	// mu guards handleByTab and tabByHandle only.
+	// mu guards handleByTab, tabByHandle and seeds only.
 	mu sync.Mutex
 }
 
@@ -103,8 +114,10 @@ func newSessionTitleSync(stateRoot, home string) *sessionTitleSync {
 		pushed:       make(map[terminal.SessionID]pushedTitle),
 		aliased:      make(map[terminal.SessionID]string),
 		aliasRefused: make(map[terminal.SessionID]string),
+		decided:      make(map[terminal.SessionID]tabDecision),
 		handleByTab:  make(map[terminal.SessionID]string),
 		tabByHandle:  make(map[string]terminal.SessionID),
+		seeds:        make(map[terminal.SessionID]string),
 	}
 }
 
@@ -125,7 +138,7 @@ func (s *sessionTitleSync) sessionEnv(tabID terminal.SessionID) []string {
 	}
 }
 
-// titleHandle returns this tab's title handle, minting it once: one mapping file per tab.
+// titleHandle returns this tab's title handle, minting it once: one report directory per tab.
 func (s *sessionTitleSync) titleHandle(tabID terminal.SessionID) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -149,24 +162,25 @@ func (s *sessionTitleSync) handleFor(tabID terminal.SessionID) (string, bool) {
 	return handle, ok
 }
 
-// seedMapping writes the mapping a kiro-cli hook would write for tabID, so a resumed tab,
-// whose kiro-cli fires no hook until the user's next prompt, is titled and mapped from the
-// first poller pass. It writes nothing for a tab without a title handle.
-func (s *sessionTitleSync) seedMapping(ctx context.Context, tabID terminal.SessionID, kiroID string) error {
-	handle, ok := s.handleFor(tabID)
-	if !ok {
-		return nil
+// seedConversation records kiroID as the conversation a restored tab holds until the hook
+// reports one, so a resumed tab, whose kiro-cli fires no hook until the user's next prompt,
+// is titled and mapped from the first poller pass. A tab without a title handle is skipped.
+func (s *sessionTitleSync) seedConversation(tabID terminal.SessionID, kiroID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.handleByTab[tabID]; ok {
+		s.seeds[tabID] = kiroID
 	}
-	_, err := atomicfile.WriteFile(ctx, filepath.Join(s.stateDir, handle), []byte(kiroID+"\n"), atomicfile.WithMode(0o600))
-	if err != nil {
-		slog.Debug("session title: could not seed a restored tab's mapping",
-			"title_handle", handle, "error", err)
-	}
-	return err
 }
 
-// tabForHandle resolves a mapping filename to its tab; a handle this process never minted
-// names none.
+func (s *sessionTitleSync) seedFor(tabID terminal.SessionID) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.seeds[tabID]
+}
+
+// tabForHandle resolves a report directory's handle to its tab; a handle this process never
+// minted names none.
 func (s *sessionTitleSync) tabForHandle(handle string) (terminal.SessionID, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -174,13 +188,14 @@ func (s *sessionTitleSync) tabForHandle(handle string) (terminal.SessionID, bool
 	return tabID, ok
 }
 
-// dropHandle forgets one handle in both indexes.
+// dropHandle forgets one handle in both indexes, with its tab's seed.
 func (s *sessionTitleSync) dropHandle(handle string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if tabID, ok := s.tabByHandle[handle]; ok {
 		delete(s.handleByTab, tabID)
 		delete(s.tabByHandle, handle)
+		delete(s.seeds, tabID)
 	}
 }
 
@@ -254,8 +269,8 @@ func enforceLevelMode(dir string) (os.FileMode, error) {
 		return 0, err
 	}
 	defer func() { _ = f.Close() }()
-	stored, err := atomicfile.EnforceMode(f, 0o700)
-	if errors.Is(err, atomicfile.ErrModeNotStored) {
+	stored, err := filesafe.EnforceMode(f, 0o700)
+	if errors.Is(err, filesafe.ErrModeNotStored) {
 		// Reported, not refused: refusing would turn titles off for good on such a mount.
 		return stored.Perm(), nil
 	}
@@ -278,72 +293,74 @@ func enableSessionTitles(titles *sessionTitleSync) func(tabID terminal.SessionID
 	return titles.sessionEnv
 }
 
-// pass runs one sweep: reclaim every mapping whose tab is gone, then for the ones that
-// remain, read that kiro session's title and push it if it changed.
+// pass runs one sweep: reclaim the reports of every tab that is gone, then decide each live
+// tab's conversation and push its title if it changed.
 func (s *sessionTitleSync) pass(ctx context.Context, mgr sessionNamer) {
-	entries, err := os.ReadDir(s.stateDir)
-	if err != nil {
-		// No ErrNotExist carve-out: ensureStateDir made it, so absence means something in
-		// /tmp removed it, and nothing re-creates it.
-		slog.Debug("session title: state dir unreadable; no tab can be mapped until it is back",
-			"dir", s.stateDir, "error", err)
-		// Publish empty: a stale pairing must not outlive the directory that refreshes it.
-		s.mapped.Store(&map[terminal.SessionID]string{})
-		return
-	}
-	// One liveness snapshot, so every mapping is judged against the same picture.
-	live := make(map[terminal.SessionID]struct{}, len(entries))
+	// One liveness snapshot, so every tab is judged against the same picture.
 	sessions := mgr.List()
+	live := make(map[terminal.SessionID]struct{}, len(sessions))
 	for i := range sessions {
 		live[sessions[i].ID] = struct{}{}
 	}
-	mapped := 0
-	pairs := make(map[terminal.SessionID]string, len(entries))
-	// mappingEntries, not len(entries): subdirectories and hook temps are not mappings.
-	mappingEntries := 0
-	for _, e := range entries {
-		if e.IsDir() {
+	reportDirs := s.reclaim(live)
+	pairs := make(map[terminal.SessionID]string, len(live))
+	for tabID := range live {
+		handle, ok := s.handleFor(tabID)
+		if !ok {
 			continue
 		}
-		if strings.HasPrefix(e.Name(), ".") {
-			// The hook's in-flight temp; reclaiming it would drop that prompt's update.
-			continue
-		}
-		mappingEntries++
-		tabID, known := s.tabForHandle(e.Name())
-		if !known {
-			s.forget(e.Name())
-			continue
-		}
-		if _, ok := live[tabID]; !ok {
-			delete(s.pushed, tabID)
-			s.forget(e.Name())
-			continue
-		}
-		mapped++
-		if kiroID := s.syncOne(ctx, mgr, e.Name(), tabID); kiroID != "" {
+		if kiroID := s.syncOne(ctx, mgr, handle, tabID); kiroID != "" {
 			pairs[tabID] = kiroID
-			s.syncAlias(mgr, tabID, e.Name(), kiroID)
+			s.syncAlias(mgr, tabID, handle, kiroID)
 		}
 	}
 	s.mapped.Store(&pairs)
 	s.pruneAliases(live)
-	if mapped == 0 && len(live) > 0 {
+	if len(pairs) == 0 && len(live) > 0 {
 		// Debug, not Warn: a tab at the device sign-in has no kiro session yet.
 		slog.Debug("session title: no live tab has a kiro session mapping; every tab keeps the automatic name ladder",
-			"live_tabs", len(live), "state_entries", mappingEntries, "dir", s.stateDir,
-			"hint", "kiro-cli's SessionStart/UserPromptSubmit hooks write these files; check $HOME/.kiro/hooks/web-terminal-session-title.json and hooks/session-title.sh. A tab still at the device-flow sign-in has no kiro session yet, so this is expected until chat starts.")
+			"live_tabs", len(live), "state_entries", reportDirs, "dir", s.stateDir,
+			"hint", "kiro-cli's SessionStart/UserPromptSubmit hooks write these reports; check $HOME/.kiro/hooks/web-terminal-session-title.json and hooks/session-title.sh. A tab still at the device-flow sign-in has no kiro session yet, so this is expected until chat starts.")
 	}
 }
 
-// syncOne maps one tab to its kiro session and pushes that session's title. It returns the
-// session id it resolved, "" for none, whatever the title outcome.
+// reclaim removes every report directory whose handle names no live tab, forgetting that
+// tab, and returns how many report directories it saw.
+func (s *sessionTitleSync) reclaim(live map[terminal.SessionID]struct{}) int {
+	entries, err := os.ReadDir(s.stateDir)
+	if err != nil {
+		// No ErrNotExist carve-out: ensureStateDir made it, so absence means something in
+		// /tmp removed it. The decisions stand; no new report is seen until it is back.
+		slog.Debug("session title: state dir unreadable; no new kiro session report is seen until it is back",
+			"dir", s.stateDir, "error", err)
+		return 0
+	}
+	reportDirs := 0
+	for _, e := range entries {
+		handle, ok := strings.CutSuffix(e.Name(), reportDirSuffix)
+		if !ok || !e.IsDir() {
+			continue
+		}
+		reportDirs++
+		tabID, known := s.tabForHandle(handle)
+		if known {
+			if _, ok := live[tabID]; ok {
+				continue
+			}
+			delete(s.pushed, tabID)
+		}
+		s.forget(handle)
+	}
+	return reportDirs
+}
+
+// syncOne decides one tab's conversation and pushes that session's title. It returns the
+// session id it decided, "" for none, whatever the title outcome.
 func (s *sessionTitleSync) syncOne(ctx context.Context, mgr sessionNamer, handle string, tabID terminal.SessionID) string {
-	mapped, ok := s.readMapping(ctx, handle)
-	if !ok {
+	kiroID, raw, state := s.conversationOf(ctx, handle, tabID)
+	if kiroID == "" {
 		return ""
 	}
-	kiroID, raw, state := s.tabSession(ctx, mapped)
 	previous, pushed := s.pushed[tabID]
 	repointed := pushed && previous.kiroID != kiroID
 	title := ""
@@ -416,38 +433,91 @@ func (s *sessionTitleSync) mappedSessions() map[terminal.SessionID]string {
 	return nil
 }
 
-// readMapping reads the session id the hook wrote for handle, validated because it becomes
-// a path component.
-func (s *sessionTitleSync) readMapping(ctx context.Context, handle string) (string, bool) {
-	raw, err := readSmallFile(ctx, filepath.Join(s.stateDir, handle), maxTitleFileBytes)
+// tabDecision is the conversation the server decided a tab holds and the report it came
+// from (zero for a seed), plus the reported sessions it proved to be workflow steps.
+type tabDecision struct {
+	reported time.Time
+	steps    map[string]struct{}
+	id       string
+}
+
+// conversationOf decides which kiro session tabID holds. KAS runs a workflow step's session
+// in the launching tab's kiro-cli process, so the tab's hook also reports its steps. The
+// decision is the newest report, no older than the current decision, whose record proves a
+// conversation and not a step; with none, the current decision (or the restorer's seed)
+// stands, so a record that cannot be read never becomes the tab's conversation. raw and state
+// are the decided session's record.
+func (s *sessionTitleSync) conversationOf(ctx context.Context, handle string, tabID terminal.SessionID) (id string, raw []byte, state recordState) {
+	d, ok := s.decided[tabID]
+	if !ok {
+		d = tabDecision{id: s.seedFor(tabID), steps: make(map[string]struct{})}
+	}
+	defer func() { s.decided[tabID] = d }()
+	for _, r := range s.reports(handle) {
+		if r.at.Before(d.reported) {
+			break
+		}
+		if _, step := d.steps[r.id]; step {
+			continue
+		}
+		_, rec, found := s.findSessionRecord(ctx, r.id)
+		if found != recordPresent {
+			continue
+		}
+		switch recordKind(rec) {
+		case proofStep:
+			d.steps[r.id] = struct{}{}
+		case proofConversation:
+			d.id, d.reported = r.id, r.at
+			return d.id, rec, found
+		case proofNone:
+		}
+	}
+	if d.id == "" {
+		return "", nil, recordMissing
+	}
+	_, raw, state = s.findSessionRecord(ctx, d.id)
+	return d.id, raw, state
+}
+
+// kiroReport is one session the hook reported in a tab, at its last report.
+type kiroReport struct {
+	at time.Time
+	id string
+}
+
+// reports lists the sessions the hook reported for handle, newest first. Each name is
+// validated because it becomes a path component.
+func (s *sessionTitleSync) reports(handle string) []kiroReport {
+	entries, err := os.ReadDir(filepath.Join(s.stateDir, handle+reportDirSuffix))
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			slog.Debug("session title: mapping file unreadable",
-				"title_handle", handle, "error", err)
+		if !errors.Is(err, fs.ErrNotExist) { // absent until the tab's first hook run
+			slog.Debug("session title: report directory unreadable", "title_handle", handle, "error", err)
 		}
-		return "", false
+		return nil
 	}
-	id := strings.TrimSpace(string(raw))
-	if !validKiroSessionID(id) {
-		if id != "" {
-			slog.Debug("session title: mapping file holds no usable session id",
-				"title_handle", handle)
+	out := make([]kiroReport, 0, len(entries))
+	for _, e := range entries {
+		info, err := e.Info()
+		if !validKiroSessionID(e.Name()) || err != nil || !info.Mode().IsRegular() {
+			slog.Debug("session title: report names no usable session id", "title_handle", handle)
+			continue
 		}
-		return "", false
+		out = append(out, kiroReport{id: e.Name(), at: info.ModTime()})
 	}
-	return id, true
+	slices.SortFunc(out, func(a, b kiroReport) int { return b.at.Compare(a.at) })
+	return out
 }
 
 // maxStepOwnerHops bounds tabSession's walk up a chain of step records. KAS refuses a
 // workflow launched from a step, so a real chain is one hop; the bound only stops a cycle.
 const maxStepOwnerHops = 4
 
-// tabSession returns the conversation a tab holds when its mapping names kiroID, with its
-// record. KAS runs a workflow step's session in the launching tab's kiro-cli process, so the
-// step's hooks write the step's id over the tab's mapping; a step resolves to its launcher.
-func (s *sessionTitleSync) tabSession(ctx context.Context, kiroID string) (id string, raw []byte, state recordState) {
-	id = kiroID
-	_, raw, state = s.findSessionRecord(ctx, id)
+// tabSession returns the conversation a saved tab entry naming kiroID holds: a step resolves
+// to its launcher. Images before conversationOf saved a step's id as a tab's Resume.
+func (s *sessionTitleSync) tabSession(ctx context.Context, kiroID string) string {
+	id := kiroID
+	_, raw, state := s.findSessionRecord(ctx, id)
 	for range maxStepOwnerHops {
 		if state != recordPresent {
 			break
@@ -459,28 +529,56 @@ func (s *sessionTitleSync) tabSession(ctx context.Context, kiroID string) (id st
 		id = owner
 		_, raw, state = s.findSessionRecord(ctx, id)
 	}
-	return id, raw, state
+	return id
+}
+
+// kiroRecordMeta is the part of a session.json that says whether it is a workflow step and
+// which session launched it.
+type kiroRecordMeta struct {
+	ID                 string `json:"id"`
+	RootConversationID string `json:"rootConversationId"`
+	Meta               struct {
+		Kiro struct {
+			Workflow struct {
+				Type string `json:"type"`
+			} `json:"workflow"`
+			ServerSession struct {
+				OwnerSessionID string `json:"ownerSessionId"`
+			} `json:"serverSession"`
+		} `json:"kiro"`
+	} `json:"_meta"`
+}
+
+const workflowStepType = "step"
+
+// recordProof is what a session record proves about the session it describes.
+type recordProof int
+
+const (
+	proofNone recordProof = iota
+	proofConversation
+	proofStep
+)
+
+// recordKind classifies one session.json; an undecodable record proves nothing.
+func recordKind(raw []byte) recordProof {
+	var rec kiroRecordMeta
+	switch {
+	case json.Unmarshal(raw, &rec) != nil:
+		return proofNone
+	case rec.Meta.Kiro.Workflow.Type == workflowStepType:
+		return proofStep
+	default:
+		return proofConversation
+	}
 }
 
 // stepOwner returns the launching session named by kiroID's step record raw, "" when raw is
 // not a step record or names no valid owner. Older records lack serverSession and carry only
 // rootConversationId, which a top-level session can also carry: only the step marker counts.
 func stepOwner(kiroID string, raw []byte) string {
-	var rec struct {
-		ID                 string `json:"id"`
-		RootConversationID string `json:"rootConversationId"`
-		Meta               struct {
-			Kiro struct {
-				Workflow struct {
-					Type string `json:"type"`
-				} `json:"workflow"`
-				ServerSession struct {
-					OwnerSessionID string `json:"ownerSessionId"`
-				} `json:"serverSession"`
-			} `json:"kiro"`
-		} `json:"_meta"`
-	}
-	if json.Unmarshal(raw, &rec) != nil || rec.ID != kiroID || rec.Meta.Kiro.Workflow.Type != "step" {
+	var rec kiroRecordMeta
+	if json.Unmarshal(raw, &rec) != nil || rec.ID != kiroID || rec.Meta.Kiro.Workflow.Type != workflowStepType {
 		return ""
 	}
 	owner := rec.Meta.Kiro.ServerSession.OwnerSessionID
@@ -572,32 +670,35 @@ func titleFromRecord(kiroID string, raw []byte) string {
 	}
 	// The engine's rung drops only C0 and DEL, so C1, Bidi and U+2028/29 are sanitized here,
 	// before the trim, so a control-only title reads as no title.
-	title := strings.TrimSpace(runesafe.SanitizeSingleLine(rec.Title))
+	title := strings.TrimSpace(textsafe.SanitizeSingleLine(rec.Title))
 	if title == placeholderTitle {
 		return ""
 	}
 	return title
 }
 
-// forget removes a dead tab's mapping file and handle. handle must be an os.ReadDir name of
-// stateDir, so it is one path component.
+// forget removes a dead tab's reports, handle and decision. handle must come from an
+// os.ReadDir name of stateDir or the handle index, so it is one path component.
 func (s *sessionTitleSync) forget(handle string) {
+	if tabID, ok := s.tabForHandle(handle); ok {
+		delete(s.decided, tabID)
+	}
 	s.dropHandle(handle)
-	if err := os.Remove(filepath.Join(s.stateDir, handle)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		slog.Debug("session title: could not drop a stale mapping",
+	if err := os.RemoveAll(filepath.Join(s.stateDir, handle+reportDirSuffix)); err != nil {
+		slog.Debug("session title: could not drop a closed tab's session reports",
 			"title_handle", handle, "error", err)
 	}
 }
 
 // readSmallFile reads one regular, non-symlink state file of at most limit bytes, refusing a
-// larger one. The caller picks the bound: a mapping is a line, a run record holds reports.
+// larger one. The caller picks the bound: a lock is a line, a run record holds reports.
 func readSmallFile(ctx context.Context, path string, limit int) ([]byte, error) {
-	f, _, err := atomicfile.OpenRegular(path)
+	f, _, err := filesafe.OpenRegularNoFollow(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }() // read-only
-	return atomicfile.ReadBoundedFile(ctx, f, int64(limit))
+	return filesafe.ReadBoundedFile(ctx, f, int64(limit))
 }
 
 // validKiroResumeID is the only shape passed to --resume-id: "sess_" plus a canonical UUID,
@@ -627,7 +728,7 @@ func isHexDigit(c byte) bool {
 	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
 }
 
-// validKiroSessionID gates an id from a mapping file or a record before it becomes a path
+// validKiroSessionID gates an id from a hook report or a record before it becomes a path
 // component.
 func validKiroSessionID(id string) bool {
 	rest, ok := strings.CutPrefix(id, "sess_")

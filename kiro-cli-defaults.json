@@ -1,0 +1,5 @@
+{
+  "telemetry.enabled": false,
+  "chat.fullscreenCopyOnSelect": false,
+  "app.warnOnElevatedPrivileges": false
+}

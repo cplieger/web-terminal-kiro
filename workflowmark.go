@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
@@ -63,9 +63,9 @@ const (
 // workflowState is the NARROW decode of one workflow-state.json. Every other field the
 // record carries -- workflowName, runLabel, inputs, artifacts, capturedOutputs -- is
 // deliberately absent: none of them is decoded, so none of them can reach a log sink, which
-// is what keeps the sanitize question answerable in one place (noteUnknownStatus). The two
-// id families that ARE decoded, parentSessionId and each node's sessionId, are gated by
-// validKiroSessionID before they are used and never logged, so the invariant survives them.
+// is what keeps the sanitize question answerable in one place (noteUnknownStatus). The one
+// id that IS decoded, parentSessionId, is gated by validKiroSessionID before it is used and
+// never logged, so the invariant survives it.
 type workflowState struct {
 	Status          string       `json:"status"`
 	ParentSessionID string       `json:"parentSessionId"`
@@ -73,11 +73,8 @@ type workflowState struct {
 }
 
 type workflowNode struct {
-	CompletionSignal string `json:"completionSignal"`
-	// The kiro session KAS created for this step. Decoded because the tab's mapping names
-	// the RUNNING step's session, not the launching one, for most of a run's life.
-	SessionID string         `json:"sessionId"`
-	Children  []workflowNode `json:"children"`
+	CompletionSignal string         `json:"completionSignal"`
+	Children         []workflowNode `json:"children"`
 }
 
 // workflowBeat is the NARROW decode of one run.beat, for workflowState's reason: neither
@@ -153,28 +150,14 @@ func anyNodeNeedsInput(root *workflowNode) bool {
 	return needsInput
 }
 
-// runSessionIDs returns the kiro sessions that OWN one run: the launching session first, then
-// every step's own session. Both families are the run, because KAS creates a step's session
-// inside the launching tab's kiro-cli process, and a COMPLETED step keeps its sessionId in the
-// tree -- which is what holds the mark lit over the gap between one step ending and the next
-// one prompting. Deduplicated, because a real record repeats one step's session id across
-// nodes and a repeat would count the same run twice in one tab's tally.
-func runSessionIDs(st *workflowState) []string {
-	seen := make(map[string]struct{}, 4)
-	owners := make([]string, 0, 4)
-	admit := func(id string) {
-		if _, dup := seen[id]; dup || !validKiroSessionID(id) {
-			return
-		}
-		seen[id] = struct{}{}
-		owners = append(owners, id)
+// runOwner returns the kiro session that launched one run, "" when the record names none.
+// A tab's mapping is its conversation, never a step (sessionTitleSync.conversationOf), so the
+// launching session is the run's one join to a tab.
+func runOwner(st *workflowState) string {
+	if !validKiroSessionID(st.ParentSessionID) {
+		return ""
 	}
-	admit(st.ParentSessionID)
-	walkWorkflowNodes(&st.Root, func(node *workflowNode) bool {
-		admit(node.SessionID)
-		return false
-	})
-	return owners
+	return st.ParentSessionID
 }
 
 // foldWorkflowMarks folds one tab's admitted runs. Precedence input > waiting > working.
@@ -214,7 +197,7 @@ type workflowSessions interface{ List() []terminal.SessionInfo }
 type workflowVerdict struct {
 	modTime time.Time
 	state   string
-	owners  []string
+	owner   string
 	size    int64
 }
 
@@ -321,20 +304,16 @@ func (w *workflowWatch) admit(ctx context.Context, live map[terminal.SessionID]t
 	return admitted
 }
 
-// A tab carries ONE mapped session, so no tab is reachable through two owners and the tally
-// cannot double-count a run.
 func admitRun(admitted map[terminal.SessionID][]string, verdict *workflowVerdict, written time.Time, live map[terminal.SessionID]time.Time, tabs map[string][]terminal.SessionID) {
 	if verdict.state == "" {
 		return
 	}
-	for _, owner := range verdict.owners {
-		for _, tab := range tabs[owner] {
-			// The third admission clause, and deliberately not a freshness window: a run
-			// legitimately sits paused awaiting input overnight. "Written after the tab
-			// started" still refuses a run abandoned before this tab existed.
-			if !written.Before(live[tab]) {
-				admitted[tab] = append(admitted[tab], verdict.state)
-			}
+	for _, tab := range tabs[verdict.owner] {
+		// The third admission clause, and deliberately not a freshness window: a run
+		// legitimately sits paused awaiting input overnight. "Written after the tab
+		// started" still refuses a run abandoned before this tab existed.
+		if !written.Before(live[tab]) {
+			admitted[tab] = append(admitted[tab], verdict.state)
 		}
 	}
 }
@@ -344,19 +323,9 @@ func admitRun(admitted map[terminal.SessionID][]string, verdict *workflowVerdict
 // which admit's mtime clause structurally cannot see; it rests on the run's writer being a
 // descendant of this process, so a per-session PID namespace would make every pid read dead.
 func (w *workflowWatch) refusesRun(ctx context.Context, path string, verdict *workflowVerdict, tabs map[string][]terminal.SessionID) bool {
-	// mapsToATab is an economy, not a gate -- admit iterates the owners, so a run no live tab
-	// maps to admits nothing anyway -- and it only spares the beat read.
-	return len(verdict.owners) == 0 || !mapsToATab(verdict.owners, tabs) || w.writerIsDead(ctx, path)
-}
-
-// mapsToATab reports whether any of a run's owner sessions names a live tab.
-func mapsToATab(owners []string, tabs map[string][]terminal.SessionID) bool {
-	for _, owner := range owners {
-		if len(tabs[owner]) > 0 {
-			return true
-		}
-	}
-	return false
+	// The no-live-tab clause is an economy, not a gate -- admitRun joins through the owner, so
+	// a run no live tab maps to admits nothing anyway -- and it only spares the beat read.
+	return len(tabs[verdict.owner]) == 0 || w.writerIsDead(ctx, path)
 }
 
 // verdictFor answers from the cache while the file still carries the identity the cached
@@ -463,7 +432,7 @@ func (w *workflowWatch) classify(ctx context.Context, path string, previous *wor
 	if !ok {
 		return workflowVerdict{}, true
 	}
-	return workflowVerdict{owners: runSessionIDs(&st), state: state}, true
+	return workflowVerdict{owner: runOwner(&st), state: state}, true
 }
 
 // writerIsDead reports the one liveness proof that withdraws a mark: this run's run.beat
@@ -553,10 +522,10 @@ func (w *workflowWatch) publish(marks map[terminal.SessionID]workflowMark) {
 }
 
 // noteUnknownStatus warns once per distinct unrecognized status, capped. The status is the
-// ONLY text from the file that reaches a sink, so it goes through runesafe's single-line
+// ONLY text from the file that reaches a sink, so it goes through textsafe's single-line
 // policy plus a byte cap first: the record is written by a process this app does not run.
 func (w *workflowWatch) noteUnknownStatus(status string) {
-	clean := runesafe.SanitizeSingleLineBounded(status, maxWorkflowStatusLogBytes)
+	clean := textsafe.SanitizeSingleLineBounded(status, maxWorkflowStatusLogBytes)
 	if _, warned := w.unknownStatuses[clean]; warned || len(w.unknownStatuses) >= unknownWorkflowStatusCap {
 		return
 	}

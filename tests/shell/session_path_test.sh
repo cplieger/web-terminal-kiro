@@ -13,9 +13,9 @@ set -u
 new_workdir >/dev/null
 
 # The PATH an image-built container really starts with (Dockerfile ENV PATH). The
-# three /config-resident dirs are the whole point: they are what the restore must
+# four /config-resident dirs are the whole point: they are what the restore must
 # preserve and what the regression dropped.
-IMAGE_PATH="/config/tools/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+IMAGE_PATH="/config/tools/kiro-cli-bin:/config/tools/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # --- the shipped statements, located by ROLE and extracted rather than retyped --
 # Every anchor below is structural: the capture is the first top-level

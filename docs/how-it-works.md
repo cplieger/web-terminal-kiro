@@ -1,6 +1,6 @@
 # How Web Terminal for Kiro works
 
-This page covers how the kiro-cli install, the health check and the startup log work, and which projects the app is built on, for readers running or debugging it.
+This page covers how the kiro-cli install and the startup log work, and which projects the app is built on, for readers running or debugging it.
 
 ## One process per tab
 
@@ -26,7 +26,9 @@ When a tab opens and kiro-cli is not signed in, the tab runs kiro-cli's device s
 
 kiro-cli is pinned to one version, downloaded on first start and checked against a pinned digest. It is not redistributed inside the image, and a newer version arrives by pulling a newer image tag. Automatic updates inside kiro-cli are turned off, because a binary that replaces itself would no longer match the digest.
 
-The download runs after the server starts listening, so the web page and `/api/health` answer at once. New tabs answer `503 {"error":"kiro-cli installing","code":"not_ready"}` until the install finishes, and the message names the stage when something goes wrong.
+A shell opened with `docker exec` finds the pinned kiro-cli through `/config/tools/kiro-cli-bin`, which comes before the tools folder `/config/tools/bin` on `PATH`. A tool in the tools list that is also named `kiro-cli` stays in `/config/tools/bin` and does not replace it.
+
+The download runs after the server starts listening, so the web page and `/healthz` answer at once. New tabs answer `503 {"error":"kiro-cli installing","code":"not_ready"}` until the install finishes, and the message names the stage when something goes wrong.
 
 `/config` must be on a filesystem that allows running programs. kiro-cli and every tool the container installs live there and run from there, so a `noexec` mount makes the install fail. The startup log reports that in one line that names the folder.
 
@@ -38,7 +40,7 @@ The compose file sets `init: true`, and it is required. A kiro-cli session start
 
 ## Health
 
-The image checks `/api/health` on loopback every 30 seconds, after a 20-minute start period that covers the first kiro-cli download. The check reports whether kiro-cli is ready, not only whether the server is listening, and a 503 body names the state. It is a readiness check. Nothing restarts on an unhealthy state, so a broken install shows as `unhealthy` in `docker ps` without a restart loop. The tool fields in the same answer are described in [Tools](tools.md#when-tabs-open). The `sandbox` field reports the command sandbox check, described in [Command sandbox](sandbox.md#the-startup-check).
+The image runs `web-terminal-kiro health` every 30 seconds, after a 20-minute start period that covers the first kiro-cli download. It is a readiness check, which waits for kiro-cli and not only for the listener. Nothing restarts on an unhealthy state, so a broken install shows as `unhealthy` in `docker ps` without a restart loop. [Knowing the app is alive](monitoring.md#knowing-the-app-is-alive) gives the answers, the fields beside them and who is told.
 
 ## Startup failures
 
@@ -52,10 +54,10 @@ A startup failure writes exactly one `ERROR` line, `web-terminal-kiro exited wit
 | `serve` | The web server stopped with an error. |
 | `unknown` | A failure no stage covers. |
 
-Base log searches and alert rules on `stage`, not on the message text. The stage values stay the same between releases, and the wording may change.
+Base log searches on `stage`, not on the message text. The stage values stay the same between releases, and the wording may change.
 
 ## Related projects
 
 - [web-terminal-engine](https://github.com/cplieger/web-terminal-engine) is the terminal engine behind this app, a Go server half and a TypeScript drawing half.
 - [web-terminal-ui](https://github.com/cplieger/web-terminal-ui) is the touch-first browser page this app is built on.
-- [pinstall](https://github.com/cplieger/pinstall) is the installer this app uses to download, verify and activate kiro-cli at runtime.
+- [toolbelt](https://github.com/cplieger/toolbelt) is the tools engine this app runs, and its `pin` package downloads, verifies and activates kiro-cli at runtime.

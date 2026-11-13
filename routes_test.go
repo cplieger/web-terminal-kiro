@@ -14,15 +14,17 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	"github.com/cplieger/go/health/v2"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
-	"github.com/cplieger/webhttp/v3"
 )
 
 // TestDebugRoutesNotExposed pins the route surface of registerRoutes: the
@@ -50,7 +52,7 @@ func TestDebugRoutesNotExposed(t *testing.T) {
 	}
 }
 
-// TestHealthEndpoint_reflectsReadiness pins the /api/health readiness gate:
+// TestHealthEndpoint_reflectsReadiness pins the /healthz readiness gate:
 // before ready is set the endpoint returns 503 (so a reverse proxy or
 // orchestrator holds traffic during startup and shutdown), and once ready it
 // returns 200. The atomic flag is the only thing that flips the branch.
@@ -60,7 +62,7 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 
 	get := func() *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
 		return rec
 	}
 
@@ -68,7 +70,7 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 		t.Errorf("before ready: status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
 	}
 
-	deps.ready.Set(true)
+	deps.ready.Store(true)
 	if rec := get(); rec.Code != http.StatusOK {
 		t.Errorf("after ready: status = %d, want %d", rec.Code, http.StatusOK)
 	}
@@ -76,7 +78,7 @@ func TestHealthEndpoint_reflectsReadiness(t *testing.T) {
 
 // TestHealthEndpoint_reflectsKiroCliReadiness pins the kiro-cli readiness
 // gate: when the server owns the install (main.go hands it the manager's
-// Ready), /api/health returns 503 while no version is active and 200 once
+// Ready), /healthz returns 503 while no version is active and 200 once
 // one is -- reflecting readiness from in-memory state, never launching
 // kiro-cli. Out-of-container runs get the composition root's permissive
 // (true, "") default instead of a nil policy, so they keep pure-listener
@@ -90,7 +92,7 @@ func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
 	}
 	status := func(mux *http.ServeMux) int {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
 		return rec.Code
 	}
 
@@ -115,8 +117,8 @@ func TestHealthEndpoint_reflectsKiroCliReadiness(t *testing.T) {
 // accepts it, mirroring the real page.
 const testIndexHTML = `<!doctype html><style>body{margin:0}</style><script type="importmap">{}</script>`
 
-// TestKiroCacheControl pins the cache POLICY handed to webhttp.StaticHandler (the ETag/gzip
-// mechanism now lives in webhttp and is tested there): a font whose name carries a
+// TestKiroCacheControl pins the cache POLICY handed to httpserver.StaticHandler (the ETag/gzip
+// mechanism now lives in httpserver and is tested there): a font whose name carries a
 // build-stamped content hash is immutable for a year, and everything else revalidates so a
 // deploy takes effect at once. Paths arrive normalized (no leading slash; "index.html" for
 // "/"), and the fonts prefix's trailing slash is load-bearing -- "vendor/fonts-list.json" must
@@ -154,7 +156,7 @@ func TestKiroCacheControl(t *testing.T) {
 // TestStaticETagRevalidation pins the embedded-bundle revalidation contract:
 // embed.FS reports a zero ModTime, so a bare http.FileServer emits no
 // validator and every full load would re-download the body.
-// webhttp.StaticHandler precomputes a content-hash ETag (served on the
+// httpserver.StaticHandler precomputes a content-hash ETag (served on the
 // default, non-font cache branch), so GET / returns a quoted ETag and a
 // conditional GET with a matching If-None-Match answers 304 with an
 // empty body instead of re-sending the bundle. Mirrors the sibling
@@ -189,17 +191,11 @@ func TestStaticETagRevalidation(t *testing.T) {
 	}
 }
 
-// TestSSEStreamsThroughLoggingMiddleware is the regression guard for the tab
-// status stream behind web-terminal-kiro's own middleware. webhttp.Logging wraps most
-// requests in a webhttp.StatusRecorder; if the SSE path were wrapped by
-// something opaque to streaming the engine's flush probe would fail and the
-// stream would 500. It is instead in Logging's WithSkipPaths set (like /ws), so
-// it flows through the streaming-transparent primitives. This drives
-// /api/sessions/events through the full production middleware stack
-// (buildHandler: Logging + Recoverer + SecurityHeaders + CrossOriginProtection)
-// and asserts the stream opens (200 + text/event-stream) and flushes an event
-// -- also proving the SecurityHeaders/Recoverer layers stay transparent to the
-// SSE stream.
+// TestSSEStreamsThroughLoggingMiddleware drives /api/sessions/events through
+// buildHandler with a gzip-offering client: a layer opaque to streaming would
+// fail the engine's flush probe and answer 500, and a compressing one would
+// buffer the stream. It asserts the stream opens as uncompressed
+// text/event-stream and flushes an event.
 func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	mux, _, csp, id := mustStartSession(t, newTestDeps(true))
 
@@ -209,6 +205,8 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/sessions/events", http.NoBody)
+	// Set by hand, so the transport leaves any Content-Encoding visible.
+	req.Header.Set("Accept-Encoding", "gzip")
 	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET /api/sessions/events: %v", err)
@@ -220,6 +218,9 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
 		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
 	}
+	if ce := resp.Header.Get("Content-Encoding"); ce != "" {
+		t.Fatalf("Content-Encoding = %q, want none (a compressed event stream is buffered, not streamed)", ce)
+	}
 	sc := bufio.NewScanner(resp.Body)
 	for sc.Scan() {
 		if line := sc.Text(); strings.HasPrefix(line, "data:") && strings.Contains(line, string(id)) {
@@ -229,10 +230,8 @@ func TestSSEStreamsThroughLoggingMiddleware(t *testing.T) {
 	t.Fatalf("SSE stream delivered no data through the logging middleware (scan err: %v)", sc.Err())
 }
 
-// sessionCreateBurst pins the burst of webhttp.SessionCreateRateLimit as THIS
-// app's documented contract (six creates, then 429). A deliberate tuning
-// change in the shared preset fails this test loudly so the app's docs and
-// expectations are updated consciously rather than drifting silently.
+// sessionCreateBurst pins sessionCreateGate's burst as this app's documented
+// contract (six creates, then 429), so a tuning change has to update the docs.
 const sessionCreateBurst = 6
 
 // TestCreateRateLimit pins the create throttle as registerRoutes actually
@@ -271,7 +270,7 @@ func TestCreateRateLimit(t *testing.T) {
 }
 
 // TestSecurityHeaders_presentOnNormalResponse pins the baseline headers
-// buildHandler sends through webhttp.SecurityHeaders: nosniff, X-Frame-Options
+// buildHandler sends through httpserver.SecurityHeaders: nosniff, X-Frame-Options
 // DENY (the UI is never framed), Referrer-Policy tightened to same-origin so a UI
 // bump that drops the vendored rel="noreferrer" cannot leak this server's
 // hostname to an OSC 8 link target, and the hash-pinned CSP buildCSPPolicy
@@ -282,10 +281,10 @@ func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 	mux, _, csp := mustRegisterRoutes(t, newTestDeps(true))
 
 	rec := httptest.NewRecorder()
-	buildHandler(mux, nil, csp, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
+	buildHandler(mux, nil, csp, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /api/health: status = %d, want %d", rec.Code, http.StatusOK)
+		t.Fatalf("GET /healthz: status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	for _, tc := range []struct{ header, want string }{
 		{"X-Content-Type-Options", "nosniff"},
@@ -299,7 +298,7 @@ func TestSecurityHeaders_presentOnNormalResponse(t *testing.T) {
 		}
 	}
 	// The CSP is hash-pinned from the embedded index.html (buildCSPPolicy via
-	// webhttp.InlineScriptHashes + inlineStyleHash): script-src carries 'self'
+	// httpserver.InlineScriptHashes + inlineStyleHash): script-src carries 'self'
 	// plus at least one sha256 token and never 'unsafe-inline'; style-src is
 	// likewise hash-pinned to the page's single loading-overlay <style>, so an
 	// injected style block or style attribute cannot obscure or spoof the
@@ -432,7 +431,7 @@ func TestAPICachePolicy_EveryAPIPathSetsNoStore(t *testing.T) {
 		// path nothing downstream decorates (GET without an Upgrade header is
 		// the engine's 426) — must carry nothing at all. Without this second
 		// row the scoping is unobservable: /index.html is a KNOWN asset whose
-		// Cache-Control webhttp.StaticHandler overwrites on its way out.
+		// Cache-Control httpserver.StaticHandler overwrites on its way out.
 		{"static asset", http.MethodGet, "/index.html", "", "no-cache, must-revalidate", "kiroCacheControl"},
 		{"websocket upgrade path", http.MethodGet, terminal.WSPath, "", "", "nobody (deliberately)"},
 	} {
@@ -562,7 +561,7 @@ func TestAPICachePolicy_UnmatchedAPIPathCarriesNoDirective(t *testing.T) {
 // TestCSPScriptHashesMatchEmbeddedInlineScripts is the anti-drift guard for
 // the script-src hardening, ported from web-terminal-server: it independently
 // re-extracts every inline <script> in the REAL embedded index.html with a
-// regexp (a different implementation from webhttp's byte scanner, so agreement
+// regexp (a different implementation from httpserver's byte scanner, so agreement
 // is a genuine cross-check) and asserts the sha256 hash of each appears in the
 // CSP buildCSPPolicy assembles. Hashes are computed from the embed, never
 // hardcoded, so the test tracks index.html automatically.
@@ -734,8 +733,8 @@ func TestWSAcceptsSameOrigin(t *testing.T) {
 // with no failing test anywhere. Asserting it THROUGH registerRoutes is the only
 // place that catches a dropped option.
 func TestSessionFactoryRequestsTheTitleEnv(t *testing.T) {
-	var ready webhttp.Ready
-	ready.Set(true)
+	var ready atomic.Bool
+	ready.Store(true)
 
 	var gotIDs []terminal.SessionID
 	staticSrv, _ := testStaticSurface()
@@ -769,6 +768,17 @@ func TestChildEnvComposesBothOverlays(t *testing.T) {
 		got := d.childEnv("tab7")
 		want := []string{"PATH=/pinned:/usr/bin", "WT_TITLE_HANDLE=tab7"}
 		if !slices.Equal(got, want) {
+			t.Errorf("childEnv = %v, want %v", got, want)
+		}
+	})
+	t.Run("the engine overlay rides between them", func(t *testing.T) {
+		d := &routeDeps{
+			sessionEnv:      func() []string { return []string{"PATH=/pinned"} },
+			engineEnv:       func() []string { return []string{kasNodePathKey + "=" + kasNodeLauncher} },
+			sessionTitleEnv: func(id terminal.SessionID) []string { return []string{"WT_TITLE_HANDLE=" + string(id)} },
+		}
+		want := []string{"PATH=/pinned", kasNodePathKey + "=" + kasNodeLauncher, "WT_TITLE_HANDLE=tab7"}
+		if got := d.childEnv("tab7"); !slices.Equal(got, want) {
 			t.Errorf("childEnv = %v, want %v", got, want)
 		}
 	})
@@ -825,103 +835,84 @@ func TestClassifyNotification(t *testing.T) {
 	}
 }
 
-// TestHealthEndpoint_reasonDistinguishesUnreadyCause pins the reason body of
-// every 503 path, which TestHealthEndpoint_reflectsReadiness and
-// TestHealthEndpoint_reflectsKiroCliReadiness leave unchecked: both assert only
-// the status code, so the startup 503 and the kiro-cli 503s are
-// indistinguishable in the suite. The reason is the operator-facing diagnostic
-// (documented as surfacing to docker ps / the monitoring probe), so a
-// regression that emitted the wrong reason on the wrong branch -- or the same
-// reason for every branch -- would lose the "wait for startup" vs "still
-// installing" vs "alert: kiro-cli broken" signal with no failing test.
-//
-// The kiro-cli reasons come from the install manager's own exported constants,
-// so this pins the pass-through, not a copy of the wording: a manager that
-// reworded a reason changes both sides at once, while a handler that dropped the
-// reason and hardcoded one fails here.
+// TestHealthEndpoint_reasonDistinguishesUnreadyCause pins the reasons of every
+// 503 path: the startup and kiro-cli faults must stay distinguishable, since an
+// operator reads them to tell "wait for startup" from "still installing" from
+// "kiro-cli broken". Every standing fault is listed, startup first.
 func TestHealthEndpoint_reasonDistinguishesUnreadyCause(t *testing.T) {
-	newMux := func(ready bool, verdict func() (bool, string)) *http.ServeMux {
+	reasonsOf := func(ready bool, verdict func() (bool, string)) (int, []string) {
+		t.Helper()
 		deps := newTestDeps(ready)
 		deps.kiroReady = verdict
 		mux, _, _ := mustRegisterRoutes(t, deps)
-		return mux
-	}
-	body := func(mux *http.ServeMux) (int, string) {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody))
-		return rec.Code, rec.Body.String()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
+		var body struct {
+			Status  string   `json:"status"`
+			Reasons []string `json:"reasons"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("health body %q: %v", rec.Body.String(), err)
+		}
+		return rec.Code, body.Reasons
 	}
 	unready := func(reason string) func() (bool, string) {
 		return func() (bool, string) { return false, reason }
 	}
+	const starting = "starting up or shutting down"
 
-	// Not-ready (startup/shutdown): the ready gate short-circuits before the
-	// kiro-cli check, so 503 with the startup reason regardless of the verdict.
-	code, b := body(newMux(false, unready(reasonUnavailable)))
-	if code != http.StatusServiceUnavailable || !strings.Contains(b, "starting up or shutting down") {
-		t.Errorf("not-ready: (status %d, body %q), want 503 with reason %q", code, b, "starting up or shutting down")
+	t.Run("starting with kiro-cli ready", func(t *testing.T) {
+		code, reasons := reasonsOf(false, func() (bool, string) { return true, "" })
+		if code != http.StatusServiceUnavailable || !slices.Equal(reasons, []string{starting}) {
+			t.Errorf("(status %d, reasons %q), want 503 with [%q]", code, reasons, starting)
+		}
+	})
+	for _, reason := range []string{reasonInstalling, reasonRetrying, reasonUnavailable, reasonSettings} {
+		t.Run("ready, "+reason, func(t *testing.T) {
+			code, reasons := reasonsOf(true, unready(reason))
+			if code != http.StatusServiceUnavailable || !slices.Equal(reasons, []string{reason}) {
+				t.Errorf("(status %d, reasons %q), want 503 with [%q] and no startup reason", code, reasons, reason)
+			}
+		})
+		t.Run("starting, "+reason, func(t *testing.T) {
+			code, reasons := reasonsOf(false, unready(reason))
+			if code != http.StatusServiceUnavailable || !slices.Equal(reasons, []string{starting, reason}) {
+				t.Errorf("(status %d, reasons %q), want 503 with [%q %q]", code, reasons, starting, reason)
+			}
+		})
 	}
-
-	// Ready, but the manager has no usable version. Each state reports a
-	// DIFFERENT reason: a first-boot download in flight is not an alert, an
-	// exhausted retry budget is, and unenforced required settings point at a
-	// third remedy entirely.
-	for _, reason := range []string{
-		reasonInstalling,
-		reasonRetrying,
-		reasonUnavailable,
-		reasonSettings,
-	} {
-		code, b = body(newMux(true, unready(reason)))
-		if code != http.StatusServiceUnavailable || !strings.Contains(b, reason) {
-			t.Errorf("kiro-cli %q: (status %d, body %q), want 503 with that reason", reason, code, b)
-		}
-		if strings.Contains(b, "starting up or shutting down") {
-			t.Errorf("kiro-cli %q: body %q reports the startup reason, which hides the real cause", reason, b)
-		}
+	// A refusal this app cannot name still answers 503, never a 200 with no reason.
+	for _, reason := range []string{"", "a reason no release names"} {
+		t.Run("unnamed kiro-cli reason "+strconv.Quote(reason), func(t *testing.T) {
+			code, reasons := reasonsOf(true, unready(reason))
+			if code != http.StatusServiceUnavailable || !slices.Equal(reasons, []string{reasonUnavailable}) {
+				t.Errorf("(status %d, reasons %q), want 503 with [%q]", code, reasons, reasonUnavailable)
+			}
+		})
 	}
 }
 
-// TestHealthEndpoint_envelopeMatchesTheLibrary pins the wire shape this app
-// shares with webhttp.ReadinessHandler. The verdict is composite, so the handler
-// cannot reuse the library's and keeps its key order ("status" before "reason")
-// by hand. It sets no-store itself, because a cached "ok" keeps traffic arriving
-// at an instance that has begun draining (RFC 9111 heuristic freshness), so this
-// asserts against the bare mux. The byte-exact bodies also pin the ready document
-// (an absent tools key means disabled, not degraded) and the status codes, which
-// are all the Docker HEALTHCHECK reads.
-func TestHealthEndpoint_envelopeMatchesTheLibrary(t *testing.T) {
+// TestHealthEndpoint_body pins the /healthz answer byte for byte: the status and
+// reasons the health library writes, followed by this app's informational tools,
+// tools_missing and sandbox keys, which never change the code.
+func TestHealthEndpoint_body(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		deps       *routeDeps
 		wantStatus int
 		wantBody   string
 	}{
-		{"unready", newTestDeps(false), http.StatusServiceUnavailable, `{"status":"unready","reason":"starting up or shutting down"}`},
+		{"unready", newTestDeps(false), http.StatusServiceUnavailable, `{"status":"unhealthy","reasons":["starting up or shutting down"]}`},
 		{"ready", newTestDeps(true), http.StatusOK, `{"status":"ok"}`},
-		// The informational tools field rides on the 503 bodies too: tool
-		// convergence never GATES readiness, but an operator diagnosing an unready
-		// instance needs to see whether tools are still syncing -- and that is
-		// exactly the moment the field used to disappear, because both unready paths
-		// returned before it was attached. Without this row, reverting
-		// handleHealth's healthResponse to the pre-fix early-return shape leaves the
-		// whole suite green.
-		{"unready carries the informational tools state", unreadyDepsWithTools(), http.StatusServiceUnavailable, `{"status":"unready","reason":"starting up or shutting down","tools":"syncing"}`},
-		// The whole-tree convergence count is the SECOND tools question, and the
-		// disagreement is the point: the last repair succeeded (tools "ok") while
-		// one enabled tool is still missing. Before this field existed, "ok" was
-		// the only signal and read as whole-tree health.
+		{"unready carries the informational tools state", unreadyDepsWithTools(), http.StatusServiceUnavailable, `{"status":"unhealthy","reasons":["starting up or shutting down"],"tools":"syncing"}`},
+		// The last repair succeeded (tools "ok") while one enabled tool is still
+		// missing: the count is the second, whole-tree question.
 		{"a partial repair reports ok alongside an outstanding count", depsWithToolsMissing(true, 1), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":1}`},
-		// Zero MUST be emitted rather than dropped: it is the converged answer,
-		// and omitempty on a plain int would erase exactly the good news.
+		// Zero is the converged answer, so it is written, never dropped.
 		{"a converged tree reports zero rather than omitting it", depsWithToolsMissing(true, 0), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":0}`},
-		// Unknown is absent, so "not counted yet" can never be misread as
-		// converged.
 		{"an uncounted tree omits the field", depsWithToolsMissing(false, 0), http.StatusOK, `{"status":"ok","tools":"ok"}`},
-		// The sandbox state is informational and last, on 200 and 503 alike: an
-		// operator reads "unavailable" while the instance is still starting.
 		{"ready carries the sandbox state last", withSandbox(depsWithToolsMissing(true, 0), sandboxAvailable), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":0,"sandbox":"available"}`},
-		{"unready carries the sandbox state", withSandbox(newTestDeps(false), sandboxUnavailable), http.StatusServiceUnavailable, `{"status":"unready","reason":"starting up or shutting down","sandbox":"unavailable"}`},
+		{"unready carries the sandbox state", withSandbox(newTestDeps(false), sandboxUnavailable), http.StatusServiceUnavailable, `{"status":"unhealthy","reasons":["starting up or shutting down"],"sandbox":"unavailable"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mux, _, _ := mustRegisterRoutes(t, tc.deps)
@@ -931,49 +922,91 @@ func TestHealthEndpoint_envelopeMatchesTheLibrary(t *testing.T) {
 			if rec.Code != tc.wantStatus {
 				t.Errorf("health status = %d, want %d", rec.Code, tc.wantStatus)
 			}
-			got := strings.TrimSpace(rec.Body.String())
-			if got != tc.wantBody {
-				t.Errorf("raw health body = %q, want %q (byte-exact: the key ORDER is the shared contract)", got, tc.wantBody)
+			if got := strings.TrimSpace(rec.Body.String()); got != tc.wantBody {
+				t.Errorf("health body = %q, want %q", got, tc.wantBody)
 			}
-			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
-				t.Errorf("Cache-Control = %q, want no-store: a cached readiness verdict defeats the gate", got)
-			}
-			// The "ready" and "unready" rows ARE the library's envelope; the tools row is
-			// this app's composite extension and has no library counterpart.
-			switch tc.name {
-			case "ready":
-				if libBody, libCC := libraryEnvelope(t, true); got != libBody || rec.Header().Get("Cache-Control") != libCC {
-					t.Errorf("ready envelope = %q/%q, webhttp.ReadinessHandler emits %q/%q; the two must agree byte-for-byte",
-						got, rec.Header().Get("Cache-Control"), libBody, libCC)
-				}
-			case "unready":
-				if libBody, libCC := libraryEnvelope(t, false); got != libBody || rec.Header().Get("Cache-Control") != libCC {
-					t.Errorf("unready envelope = %q/%q, webhttp.ReadinessHandler emits %q/%q; the reason string and key order are the shared contract",
-						got, rec.Header().Get("Cache-Control"), libBody, libCC)
+			for header, want := range map[string]string{
+				"Cache-Control":          "no-store",
+				"Content-Type":           "application/json",
+				"X-Content-Type-Options": "nosniff",
+			} {
+				if got := rec.Header().Get(header); got != want {
+					t.Errorf("%s = %q, want %q", header, got, want)
 				}
 			}
 		})
 	}
 }
 
-// readyStub adapts a bool to webhttp.ReadinessChecker so the library's own
-// handler can be driven here.
-type readyStub bool
+// TestHealthEndpoint_matchesTheLibrary compares the answer with no informational
+// key against health.CheckHandler's own output for the same check, so a library
+// change to the body, the code or a header shows here rather than in a probe.
+func TestHealthEndpoint_matchesTheLibrary(t *testing.T) {
+	for _, ready := range []bool{true, false} {
+		mux, _, _ := mustRegisterRoutes(t, newTestDeps(ready))
+		got := httptest.NewRecorder()
+		mux.ServeHTTP(got, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
 
-func (r readyStub) Ready() bool { return bool(r) }
+		want := httptest.NewRecorder()
+		health.CheckHandler(health.Check{Signal: health.SignalFunc(func() bool { return ready }), Reason: "starting up or shutting down"}).
+			ServeHTTP(want, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody))
 
-// libraryEnvelope returns webhttp.ReadinessHandler's body and Cache-Control
-// for the given readiness, so the assertions above compare this app's
-// hand-matched envelope against the REAL library output rather than against a
-// literal copied from it. A webhttp bump that reorders the keys, renames a
-// field, reworks the unready wording, or drops no-store fails HERE.
-func libraryEnvelope(t *testing.T, ready bool) (body, cacheControl string) {
-	t.Helper()
+		if got.Code != want.Code || got.Body.String() != want.Body.String() {
+			t.Errorf("ready=%v: app answers %d %q, the library %d %q", ready, got.Code, got.Body.String(), want.Code, want.Body.String())
+		}
+		for _, header := range []string{"Cache-Control", "Content-Type", "X-Content-Type-Options"} {
+			if got.Header().Get(header) != want.Header().Get(header) {
+				t.Errorf("ready=%v: %s = %q, the library sets %q", ready, header, got.Header().Get(header), want.Header().Get(header))
+			}
+		}
+	}
+}
+
+// TestHealthEndpoint_methods pins the route: GET and HEAD answer the verdict,
+// every other method 405 with no verdict, and the retired /api/health path is
+// no health route at all.
+func TestHealthEndpoint_methods(t *testing.T) {
+	for _, ready := range []bool{true, false} {
+		mux, _, csp := mustRegisterRoutes(t, newTestDeps(ready))
+		h := buildHandler(mux, nil, csp, nil)
+		wantCode := http.StatusOK
+		if !ready {
+			wantCode = http.StatusServiceUnavailable
+		}
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, loopbackRequest(method, healthPath, ""))
+			if rec.Code != wantCode {
+				t.Errorf("ready=%v %s %s: status %d, want %d", ready, method, healthPath, rec.Code, wantCode)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("ready=%v %s %s: Cache-Control = %q, want no-store", ready, method, healthPath, got)
+			}
+		}
+		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, loopbackRequest(method, healthPath, ""))
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Errorf("ready=%v %s %s: status %d, want 405", ready, method, healthPath, rec.Code)
+			}
+			if got := rec.Header().Get("Allow"); got != "GET, HEAD" {
+				t.Errorf("ready=%v %s %s: Allow = %q, want %q", ready, method, healthPath, got, "GET, HEAD")
+			}
+			if strings.Contains(rec.Body.String(), `"status"`) {
+				t.Errorf("ready=%v %s %s: body %q carries a verdict", ready, method, healthPath, rec.Body.String())
+			}
+		}
+	}
+
+	mux, _, csp := mustRegisterRoutes(t, newTestDeps(true))
 	rec := httptest.NewRecorder()
-	webhttp.ReadinessHandler(readyStub(ready)).ServeHTTP(
-		rec, httptest.NewRequest(http.MethodGet, healthPath, http.NoBody),
-	)
-	return strings.TrimSpace(rec.Body.String()), rec.Header().Get("Cache-Control")
+	buildHandler(mux, nil, csp, nil).ServeHTTP(rec, loopbackRequest(http.MethodGet, "/api/health", ""))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET /api/health: status %d, want 404", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), `"status"`) {
+		t.Errorf("GET /api/health: body %q carries a verdict", rec.Body.String())
+	}
 }
 
 // withDefaultPolicies fills the routeDeps POLICY functions with the
@@ -1016,8 +1049,8 @@ func testStaticSurface() (http.Handler, string) {
 // fixture, a ready flag, and a short-lived cat as the session command. Tests
 // tweak fields (cmd, kiroReady) before registering.
 func newTestDeps(ready bool) *routeDeps {
-	var r webhttp.Ready
-	r.Set(ready)
+	var r atomic.Bool
+	r.Store(ready)
 	staticSrv, _ := testStaticSurface()
 	return withDefaultPolicies(&routeDeps{
 		static:  staticSrv,
@@ -1109,15 +1142,13 @@ func mustRegisterRoutes(t *testing.T, deps *routeDeps) (*http.ServeMux, *termina
 // must call it.
 func quietTeardown(t *testing.T, deps *routeDeps) {
 	t.Helper()
-	t.Cleanup(func() { deps.ready.Set(false) })
+	t.Cleanup(func() { deps.ready.Store(false) })
 }
 
 // readMarkerWithin polls a marker file the session's child process writes and
 // returns its bytes once it holds at least minBytes, failing the test at the
-// deadline with what the child never did. The option pins that observe an engine
-// option THROUGH the child (working directory, DEC 1004 focus-out) both need this
-// wait, and neither should re-implement the deadline bookkeeping around its own
-// one-line assertion.
+// deadline with what the child never did, for the pins that observe an engine
+// option THROUGH the child.
 func readMarkerWithin(t *testing.T, path string, minBytes int, what string) []byte {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -1165,8 +1196,8 @@ func newToolsDeps(t *testing.T) *routeDeps {
 		t.Fatalf("toolbelt.New: %v", err)
 	}
 	t.Cleanup(eng.Close)
-	var ready webhttp.Ready
-	ready.Set(true)
+	var ready atomic.Bool
+	ready.Store(true)
 	staticSrv, _ := testStaticSurface()
 	return withDefaultPolicies(&routeDeps{
 		static:  staticSrv,
@@ -1230,13 +1261,13 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("remote peer: status = %d, want 403 (body %s)", rec.Code, rec.Body.String())
 	}
-	// The refusal must be the webhttp.WriteError envelope with code
+	// The refusal must be the httpserver.WriteError envelope with code
 	// loopback_only (CONTRIBUTING "Rules"). An http.Error body would still be
 	// a 403 and pass every other assertion here.
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Errorf("remote peer: Content-Type = %q, want application/json (webhttp.WriteError envelope)", ct)
+		t.Errorf("remote peer: Content-Type = %q, want application/json (httpserver.WriteError envelope)", ct)
 	}
-	var denied webhttp.ErrorResponse
+	var denied httpserver.ErrorResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &denied); err != nil {
 		t.Fatalf("remote peer: body %q is not the standard envelope: %v", rec.Body.String(), err)
 	}
@@ -1286,7 +1317,7 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	// above uses an IP literal, so deleting that arm keeps the whole suite
 	// green while the tools API becomes unreachable from the only client it
 	// exists for. Case folding is part of the same arm's contract
-	// (webhttp.CanonicalHost lowercases), and a bare Host with no port must
+	// (httpserver.CanonicalHost lowercases), and a bare Host with no port must
 	// pass too.
 	for _, host := range []string{"localhost:9848", "localhost", "LocalHost:9848"} {
 		req = httptest.NewRequest(http.MethodGet, "/api/tools", http.NoBody)
@@ -1306,7 +1337,7 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	// half alone; without this case, deleting the loopbackHost conjunct keeps the
 	// suite green while the tools API (which executes manual install strings as
 	// root) becomes reachable from a browser. The empty and malformed Hosts pin
-	// the fail-closed path through webhttp.CanonicalHost.
+	// the fail-closed path through httpserver.CanonicalHost.
 	for _, host := range []string{
 		"evil.example", "evil.example:9848", "kiro.lan", "", "127.0.0.1:garbage",
 		// Name-confusion shapes. Admission is exact-name equality, and every
@@ -1337,12 +1368,12 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 		}
 	}
 
-	// The provenance leg (webhttp.ProxiedRequest): a request that passes BOTH
+	// The provenance leg (httpserver.ProxiedRequest): a request that passes BOTH
 	// loopback legs but carries proxy or browser evidence is refused. The deny
-	// lives in the library since the webhttp.LoopbackOnly adoption (the app-local
+	// lives in the library since the httpserver.LoopbackOnly adoption (the app-local
 	// proxiedOrigin / proxyProvenanceHeaders copies are deleted), so these rows
 	// pin that loopbackOnly still COMPOSES that middleware: rewiring it around
-	// webhttp.LoopbackRequest alone -- the shape it had before the adoption's
+	// httpserver.LoopbackRequest alone -- the shape it had before the adoption's
 	// library existed -- keeps the rest of the suite green while a same-loopback
 	// proxy that rewrites Host to its upstream address readmits the API that runs
 	// `manual` install strings as root. Refuse-only by design: a header can never
@@ -1397,6 +1428,38 @@ func TestToolsAPI_LoopbackOnly_malformedPeerFailsClosed(t *testing.T) {
 	}
 }
 
+// TestToolsAPI_ErrorCarriesRequestID pins that a toolbelt error envelope correlates
+// with its access-log line through the real chain. httpserver's request-id context key
+// is private to each major, so a toolbelt built against a different major than the
+// app's Logging writes request_id empty with every other test green.
+func TestToolsAPI_ErrorCarriesRequestID(t *testing.T) {
+	deps := newToolsDeps(t)
+	mux, _, csp := mustRegisterRoutes(t, deps)
+	quietTeardown(t, deps)
+	h := buildHandler(mux, nil, csp, nil)
+
+	req := httptest.NewRequest(http.MethodPost, toolsPath, strings.NewReader("not json"))
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Host = "localhost:9848"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST %s with an undecodable body: status = %d, want 400 (body %s)", toolsPath, rec.Code, rec.Body.String())
+	}
+	var got httpserver.ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body %q is not the httpserver error envelope: %v", rec.Body.String(), err)
+	}
+	header := rec.Header().Get("X-Request-ID")
+	if got.RequestID == "" {
+		t.Errorf("envelope request_id is empty (X-Request-ID %q); a tools-API error must correlate with its access-log line", header)
+	}
+	if got.RequestID != header {
+		t.Errorf("envelope request_id = %q, want the X-Request-ID response header %q", got.RequestID, header)
+	}
+}
+
 // TestToolsAPI_AbsentWithoutEngine pins the no-engine shape (bare `go run`
 // / tests outside the container): /api/tools is simply not a registered
 // pattern, falling through to the static catch-all.
@@ -1435,9 +1498,9 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("create during sync: status = %d, want 503 (body %s)", rec.Code, rec.Body.String())
 	}
-	// The 503 speaks the standard webhttp error envelope with a machine-readable
+	// The 503 speaks the standard httpserver error envelope with a machine-readable
 	// code, the same dialect as the app's 403 gates — not a hand-rolled body.
-	var env webhttp.ErrorResponse
+	var env httpserver.ErrorResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("create during sync: body %q is not the standard envelope: %v", rec.Body.String(), err)
 	}
@@ -1446,7 +1509,7 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 	}
 
 	// Health stays reachable and reports the informational tools state.
-	hreq := httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody)
+	hreq := httptest.NewRequest(http.MethodGet, healthPath, http.NoBody)
 	hrec := httptest.NewRecorder()
 	mux.ServeHTTP(hrec, hreq)
 	if hrec.Code != http.StatusOK || !strings.Contains(hrec.Body.String(), `"tools":"syncing"`) {
@@ -1511,7 +1574,7 @@ func TestComposeGate_narrowsToCreateOnly(t *testing.T) {
 		{name: "POST create is gated", method: http.MethodPost, path: terminal.SessionsPath, wantCode: http.StatusServiceUnavailable, wantNext: false},
 		{name: "GET list passes through", method: http.MethodGet, path: terminal.SessionsPath, wantCode: http.StatusCreated, wantNext: true},
 		{name: "DELETE close passes through", method: http.MethodDelete, path: terminal.SessionsPath + "/abc", wantCode: http.StatusCreated, wantNext: true},
-		{name: "POST to another path passes through", method: http.MethodPost, path: "/api/health", wantCode: http.StatusCreated, wantNext: true},
+		{name: "POST to another path passes through", method: http.MethodPost, path: healthPath, wantCode: http.StatusCreated, wantNext: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1547,7 +1610,7 @@ func (f failOpenFS) Open(name string) (fs.File, error) {
 // TestBuildStaticSurface_failsLoudOnUnreadableStaticTree pins the static-handler
 // leg of buildStaticSurface's fail-loud contract, which
 // TestBuildStaticSurface_failsLoudOnMalformedStatic (the CSP leg) does not reach:
-// webhttp.StaticHandler walks and hashes every file at construction, so a
+// httpserver.StaticHandler walks and hashes every file at construction, so a
 // static tree with an unreadable file (a malformed build) must abort startup
 // with an error rather than serve a partial site. index.html
 // itself stays readable so the CSP build succeeds and the failure is
@@ -1597,7 +1660,7 @@ func TestComposeGate_syncingRefusalPreservesCreateBudget(t *testing.T) {
 	var syncing atomic.Bool
 	syncing.Store(true)
 	creates := 0
-	gated := composeGate(webhttp.SessionCreateRateLimit(terminal.SessionsPath),
+	gated := composeGate(sessionCreateGate(),
 		func() (bool, string) { return syncing.Load(), "tools installing" })(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			creates++
@@ -1633,10 +1696,10 @@ func TestComposeGate_syncingRefusalPreservesCreateBudget(t *testing.T) {
 // TestKiroRescan_reportsUnreadyOnlyWhenAVerdictWasReached pins the two non-ok
 // outcomes, neither of which any other test reaches, and the property that
 // separates them: BOTH answer 503, and only the one that reached a verdict speaks
-// about the install. pinstall's ORDINARY refusal is (false, nil) -- no candidate
+// about the install. pin's ORDINARY refusal is (false, nil) -- no candidate
 // selected, and recording that verdict succeeded -- which answers the manager's
 // own reason. A context error means the request was ABANDONED before any verdict
-// (the caller's own cancellation while queued for pinstall's operation slot, or
+// (the caller's own cancellation while queued for pin's operation slot, or
 // this server's shutdown pre-drain cancelling the BaseContext every request is
 // built on; an ADMITTED rescan detaches with context.WithoutCancel, and a probe or
 // assertion that times out surfaces as *exec.ExitError, not as a context error),
@@ -1692,7 +1755,7 @@ func TestKiroRescan_reportsUnreadyOnlyWhenAVerdictWasReached(t *testing.T) {
 	}
 }
 
-// The cancellable-wait and detached-rescan behaviors are pinstall's own
+// The cancellable-wait and detached-rescan behaviors are pin's own
 // (pinned there by TestRescanQueuedCallerCanAbandon and
 // TestAdmittedRescanIgnoresCallerCancellation). What is still this app's to get
 // wrong is the one line below: the handler must hand the REQUEST context to the
@@ -1721,11 +1784,11 @@ func TestKiroRescan_PassesTheRequestContextThrough(t *testing.T) {
 	}
 
 	// Cancelling the REQUEST must be visible to the manager: that is what lets
-	// pinstall drop a caller still queued for its operation slot.
+	// pin drop a caller still queued for its operation slot.
 	cancel()
 	select {
 	case <-got.Done():
 	default:
-		t.Error("cancelling the request did not reach the context handed to pinstall; the handler is detaching it itself, which defeats the library's cancellable wait and restores the unbounded-queue hazard")
+		t.Error("cancelling the request did not reach the context handed to pin; the handler is detaching it itself, which defeats the library's cancellable wait and restores the unbounded-queue hazard")
 	}
 }
