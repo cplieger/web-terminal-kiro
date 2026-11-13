@@ -815,7 +815,7 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 
 	// Returns the engine and the RESOLVED manifest path, which is both what
 	// warnIfNoLSPEnabled must echo in its `manifest` field and the file the
-	// inventory-failure subtest corrupts.
+	// held-manifest subtest corrupts.
 	newEngine := func(t *testing.T, manifest, catalog string) (*toolbelt.Engine, string) {
 		t.Helper()
 		dir := t.TempDir()
@@ -874,30 +874,24 @@ func TestWarnIfNoLSPEnabled(t *testing.T) {
 		}
 	})
 
-	t.Run("inventory failure reports itself, not the nudge", func(t *testing.T) {
-		eng, manifestPath := newEngine(t, `{"version":2,"tools":{}}`, "")
-		// Corrupt the manifest AFTER engine start: Inventory re-reads it from
-		// disk, so the read now fails. The property pinned here is that the
-		// failure must NOT surface as the LSP nudge Warn (the nudge's absence
-		// would otherwise be read as "a language server is enabled"); it
-		// reports itself under its own message instead.
+	t.Run("a manifest broken after start reads as the last good one", func(t *testing.T) {
+		eng, manifestPath := newEngine(t,
+			`{"version":2,"tools":{"gopls":{}}}`,
+			`{"entries":{"gopls":{"name":"gopls","source":"go:golang.org/x/tools/gopls","lsp":true}}}`)
+		// toolbelt holds the manifest it last applied while the file on disk is
+		// unreadable (until SyncManifest adopts a new read), so Inventory still
+		// answers the enabled gopls: neither the nudge nor the read-failure Warn.
 		if err := os.WriteFile(manifestPath, []byte("{not json"), 0o644); err != nil {
 			t.Fatalf("corrupt manifest: %v", err)
 		}
 		records := capture.Default(t)
 		warnIfNoLSPEnabled(eng, manifestPath)
 		if got := records.CountLevel(slog.LevelWarn, warnMsg); got != 0 {
-			t.Errorf("log = %q; an inventory failure must not produce the LSP Warn (got %d)", records.Messages(), got)
+			t.Errorf("log = %q; the held manifest enables gopls, so the nudge must stay silent (got %d)", records.Messages(), got)
 		}
 		const readFailMsg = "tools: manifest unreadable; cannot tell whether a language server is enabled"
-		if got := records.CountLevel(slog.LevelWarn, readFailMsg); got != 1 {
-			t.Errorf("log = %q, want exactly one %q Warn (the read failure must not regress to Debug; got %d)", records.Messages(), readFailMsg, got)
-		}
-		// Same regression pin as the nudge above: this record is the one telling
-		// an operator which file to repair, so it must name the resolved manifest
-		// rather than a path spelled into the hint.
-		if got, ok := records.AttrValueExact(readFailMsg, "manifest"); !ok || got != manifestPath {
-			t.Errorf("manifest attr = %q (present=%t), want %q; the unreadable-manifest Warn must name the file to repair", got, ok, manifestPath)
+		if got := records.CountLevel(slog.LevelWarn, readFailMsg); got != 0 {
+			t.Errorf("log = %q; Inventory answers the held manifest, so no read-failure Warn (got %d)", records.Messages(), got)
 		}
 	})
 }
