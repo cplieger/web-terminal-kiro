@@ -15,20 +15,20 @@ Run `kiro-cli settings <key> <value>` in a tab to change one of these defaults, 
 | Variable | Description | Default |
 | --- | --- | --- |
 | `ALLOWED_HOSTS` | Comma-separated hostnames and IPs you open the terminal at. Any other host name is refused. Unset accepts every host and logs a warning. | _(unset)_ |
-| `TRUSTED_PROXIES` | Reverse-proxy CIDRs or IPs whose `X-Forwarded-For` the access log trusts to name the real client. | _(unset)_ |
+| `TRUSTED_PROXIES` | Your reverse proxy's IPs or address ranges. The access log then takes the real client address from the proxy's `X-Forwarded-For` header. | _(unset)_ |
 | `LISTEN_ADDR` | Listen address as `host:port`. The healthcheck asks the same address, or `127.0.0.1` when the host part is empty. | `:9848` |
 | `KIRO_CLI_CHAT_ARGS` | Extra flags added to every tab's `kiro-cli chat` command, separated by spaces, for example `--effort high`. | _(unset)_ |
-| `KIRO_CLI_HIGH_THROUGHPUT` | Experimental. `true` starts each tab's kiro-cli agent engine with two Node.js flags, a larger young generation and AsyncLocalStorage without promise hooks, when kiro-cli's Node.js is the version they were tested on. They pay off when one tab runs many sessions at once, such as workflows and subagents. [KIRO_CLI_HIGH_THROUGHPUT](#kiro_cli_high_throughput) has the numbers. | `false` |
+| `KIRO_CLI_HIGH_THROUGHPUT` | Experimental. `true` tunes each tab's kiro-cli for speed when it runs many sessions at once, as workflows and subagents do. | `false` |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error`. An unknown value falls back to `info` with a warning. | `info` |
 | `WORK_DIR` | The folder each new tab starts in. It must exist. | `/workspace` |
-| `SCROLLBACK` | Lines of history kept per tab. kiro-cli wipes history when it redraws the whole screen, so in practice a tab keeps about 3000 lines. | `100000` |
+| `SCROLLBACK` | Lines of history kept per tab. kiro-cli clears history on each full-screen redraw, so a tab keeps at most about 3000 lines. | `100000` |
 | `TOOL_CATALOG_REFRESH` | How often the tool catalog is refreshed, as a duration such as `24h`. `off` or `0` stops the schedule. | `24h` |
 | `TOOL_CATALOG_URL` | Where catalog refreshes come from. Point it at a fork or a mirror of the catalog. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest release |
 | `TOOL_CATALOG_PATH` | The catalog built into the image, used at first start and offline until a fetched catalog replaces it. | `/app/tool-catalog.json` |
 | `BUNDLED_TOOLS_PATH` | The file in the image naming the four language servers no registry carries, merged over every loaded catalog. | `/app/bundled-tools.json` |
 | `GH_TOKEN` | A GitHub token for tool version checks, which raises GitHub's limit of 60 requests an hour. Every tab sees it. Takes precedence over `GITHUB_TOKEN`. | _(unset)_ |
 | `GITHUB_TOKEN` | Read in place of `GH_TOKEN` when that one is unset or empty. | _(unset)_ |
-| `TRUSTED_INSTALL_UIDS` | Numeric user IDs allowed to write to the tools folder that holds kiro-cli and your installed tools. Leave it unset unless the install check refuses a volume you know is safe. | _(unset)_ |
+| `TRUSTED_INSTALL_UIDS` | Numeric user IDs trusted to write the folder holding kiro-cli and your tools. Leave it unset unless the startup check refuses a folder you trust. | _(unset)_ |
 | `KIRO_CLI_SANDBOX` | Check at start that kiro-cli's command sandbox can run, and give it bubblewrap when it can. Needs the profiles in [Command sandbox](sandbox.md). | `false` |
 
 ## ALLOWED_HOSTS
@@ -57,7 +57,9 @@ Off unless you set it. With it on, each tab's kiro-cli starts its agent engine w
 
 The flags were measured on Node.js 22.23.4, the version kiro-cli 2.37.1 and 3.0.0 bundle. Before each tab starts, the server checks kiro-cli's unpacked Node.js against its `node.sha256`, against the hash the active kiro-cli embeds, and against that version. When any check fails, the tab starts as stock kiro-cli and the log carries one warning naming the reason, or both versions. A tab started before kiro-cli unpacked its Node.js also starts stock, and that start is what unpacks it. A `KIRO_KAS_NODE_PATH` already set on the container is left alone, with a warning, and the setting does nothing.
 
-The gain depends on how many sessions one engine carries. Against a scratch engine driven with 32 concurrent sessions and a 4 GB heap, the flags raised throughput from 2.6-3.0 to 10.1 prompts a second, cut time in garbage collection from 36-43% to 12%, and cut event-loop lag from 14-35 seconds to 4 seconds. With one or two concurrent sessions, the load of a tab you type in, they halved the time in garbage collection (about 5% to 2.5%) and gave no throughput gain. Turn it on for tabs that run workflows or many subagents. `--experimental-async-context-frame` is experimental in Node.js 22 and the default from Node.js 24.
+The gain depends on how many sessions one engine carries. The test drove a scratch engine with 32 concurrent sessions and a 4 GB heap. There the flags raised throughput from 2.6-3.0 to 10.1 prompts a second, cut time in garbage collection from 36-43% to 12%, and cut event-loop lag from 14-35 seconds to 4 seconds.
+
+With one or two concurrent sessions, the load of a tab you type in, they cut the time in garbage collection from about 5% to 2.5% and gave no throughput gain. Turn it on for tabs that run workflows or many subagents. `--experimental-async-context-frame` is experimental in Node.js 22 and the default from Node.js 24.
 
 ## LOG_LEVEL
 
@@ -65,7 +67,7 @@ The value is read in any case, so `DEBUG` works too. `debug` adds the diagnostic
 
 ## SCROLLBACK
 
-History is held in memory and grows as a session produces it, so a large value costs nothing until a tab reaches it. kiro-cli clears its history on every full-screen repaint. A tab therefore keeps roughly 3000 lines whatever you set here, and raising it gains nothing. `0` keeps nothing beyond the live screen. A value from `1` to `2000` is raised to `2001` with a warning. Below that depth, the browser keeps its whole buffer instead. This variable has the same name and meaning in every app built on [web-terminal-engine](https://github.com/cplieger/web-terminal-engine).
+History is held in memory and grows as a session produces it, so a large value costs nothing until a tab reaches it. kiro-cli clears its history on every full-screen repaint. A tab therefore keeps at most about 3000 lines, and raising it gains nothing. `0` keeps nothing beyond the live screen. A value from `1` to `2000` is raised to `2001` with a warning. Below that depth, the browser keeps its whole buffer instead. This variable has the same name and meaning in every app built on [web-terminal-engine](https://github.com/cplieger/web-terminal-engine).
 
 ## TOOL_CATALOG_REFRESH
 
@@ -87,7 +89,9 @@ Each user ID you list states that the account is already as privileged as this s
 
 ## KIRO_CLI_SANDBOX
 
-Set it to `true` once the container runs with both the seccomp and AppArmor profiles from [Command sandbox](sandbox.md), which needs a host with AppArmor. At each start the server then checks that the container runs under that AppArmor profile, runs one command in kiro-cli's sandbox, and logs whether both worked. Only when it worked does kiro-cli get a working bubblewrap, so `/sandbox` does not report a sandbox that cannot run. `true`, `yes`, `on` and `1` turn it on, in any letter case, and `false`, `no`, `off` and `0` leave it off. Any other value also leaves it off, with a warning. `/healthz` reports the result in its `sandbox` field.
+Set it to `true` once the container runs with both the seccomp and AppArmor profiles from [Command sandbox](sandbox.md), which needs a host with AppArmor. At each start the server then checks that the container runs under that AppArmor profile, runs one command in kiro-cli's sandbox, and logs whether both worked. Only when it worked does kiro-cli get a working bubblewrap, so `/sandbox` does not report a sandbox that cannot run.
+
+`true`, `yes`, `on` and `1` turn it on, in any letter case, and `false`, `no`, `off` and `0` leave it off. Any other value also leaves it off, with a warning. `/healthz` reports the result in its `sandbox` field.
 
 ## Uploads
 
@@ -95,4 +99,6 @@ When you paste an image into a tab, the page uploads it to `/uploads` and types 
 
 The container image creates the folder itself, so pasting works with no volume. Without a volume, though, the files are lost when the container is recreated. Mount a volume, writable by the user the container runs as, to keep them.
 
-Each image is named `pasted-<date>T<time>` in UTC, ending in `.png`, `.jpg` or `.webp`. The browser scales an image larger than 2000 pixels on its long edge down to 2000 before the upload. It refuses an image it cannot convert to one of those three types. One paste uploads at most 25 images, and the page says how many it skipped. The server refuses a paste larger than 256 MiB. The Paste item in the right-click and long-press menu still pastes text only.
+Each image is named `pasted-<date>T<time>` in UTC, ending in `.png`, `.jpg` or `.webp`. Ctrl+Shift+V reads the clipboard directly, which a browser allows only over HTTPS or on `localhost`. Elsewhere it shows `Clipboard unavailable`, and Ctrl+V and Cmd+V still paste.
+
+The browser scales an image larger than 2000 pixels on its long edge down to 2000 before the upload. It refuses an image it cannot convert to one of those three types. One paste uploads at most 25 images, and the page says how many it skipped. The server refuses a paste larger than 256 MiB. The Paste item in the right-click and long-press menu still pastes text only.

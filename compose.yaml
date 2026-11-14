@@ -4,13 +4,12 @@ services:
     image: ghcr.io/cplieger/web-terminal-kiro:latest
     container_name: web-terminal-kiro
     restart: unless-stopped
-    # Required. An init at PID 1 cleans up the processes each session leaves behind.
+    # Required. It removes the finished processes that sessions leave behind. Without it, they pile up until the container stops.
     init: true
 
     environment:
-      # Optional. Put a GitHub token in .env as GH_TOKEN or GITHUB_TOKEN to
-      # raise GitHub's limit on tool version checks. Every terminal tab can
-      # read it.
+      # Optional. A GitHub token in .env as GH_TOKEN or GITHUB_TOKEN raises
+      # GitHub's limit on tool version checks. Every terminal tab can read it.
       - GH_TOKEN
       - GITHUB_TOKEN
 
