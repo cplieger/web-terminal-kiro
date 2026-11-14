@@ -281,11 +281,11 @@ func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 }
 
 // childEnv is the environment overlay for one tab's kiro-cli process: the active version's
-// PATH lead, the agent-engine overlay, and the two variables a hook needs to report which
-// kiro session this tab is running. Built as a fresh slice rather than appending to
-// sessionEnv's return, so one session's overlay can never alias another's backing array.
+// PATH lead, the agent-engine overlay, the two variables a hook needs to report which kiro
+// session this tab is running, and kiroSpawnEnv's self-update switch. Built as a fresh slice
+// rather than appending to sessionEnv's return, so one session's overlay can never alias
+// another's backing array.
 func (d *routeDeps) childEnv(id terminal.SessionID) []string {
-	base := d.sessionEnv()
 	var engine, title []string
 	if d.engineEnv != nil {
 		engine = d.engineEnv()
@@ -293,10 +293,7 @@ func (d *routeDeps) childEnv(id terminal.SessionID) []string {
 	if d.sessionTitleEnv != nil {
 		title = d.sessionTitleEnv(id)
 	}
-	if len(engine) == 0 && len(title) == 0 {
-		return base
-	}
-	return slices.Concat(base, engine, title)
+	return kiroSpawnEnv(slices.Concat(d.sessionEnv(), engine, title))
 }
 
 // newSessionBuilder returns the per-session handler factory for one resume id ("" starts

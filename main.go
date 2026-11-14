@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -746,7 +747,18 @@ const (
 	kiroName        = "kiro-cli"
 	kiroURLTemplate = "https://desktop-release.q.us-east-1.amazonaws.com/{version}/kirocli-{arch}.zip"
 	kiroNotice      = "kiro-cli is proprietary AWS Content; by installing it you accept the AWS Customer Agreement at https://kiro.dev/license/"
+	// noAutoUpdateVar turns kiro-cli's self-updater off under any HOME. Without it, or HOME's
+	// app.disableAutoupdates, the updater replaces the executable the process ran from when it
+	// exits, a pinned version directory included.
+	noAutoUpdateVar = "KIRO_NO_AUTO_UPDATE"
 )
+
+// kiroSpawnEnv is env with kiro-cli's self-updater turned off as its last entry, which wins over
+// an earlier value because os/exec keeps a key's last one. Every kiro-cli process this server
+// starts takes its environment overlay from here. env is not modified.
+func kiroSpawnEnv(env []string) []string {
+	return append(slices.Clip(env), noAutoUpdateVar+"=1")
+}
 
 // kiroInstallConfig is this app's install of the kiro-cli release: the profile, the
 // pins, the tools tree, the taint observation and the local policy.
@@ -776,7 +788,9 @@ func kiroInstallConfig(cfg *baseKiro) *pin.Config {
 		LinkDir:        kiroLinkDir,
 		FormerLinkDirs: []string{toolbeltBinDir},
 		Assertions:     kiroSettings(),
-		Purge:          kiroLegacyPurge(),
+		// The probe and the assertions run before app.disableAutoupdates is set, and under any HOME.
+		Env:   kiroSpawnEnv(nil),
+		Purge: kiroLegacyPurge(),
 		// With the taint set, no pre-existing version directory may be activated at
 		// all: a forgeable sentinel is worthless evidence on a tree another host
 		// user could write. marotte deliberately leaves this UNSET — it has no
