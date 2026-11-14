@@ -2982,7 +2982,6 @@ func TestKiroDefaultSettingsFile(t *testing.T) {
 	}
 	want := map[string]any{
 		"telemetry.enabled":            false,
-		"chat.fullscreenCopyOnSelect":  false,
 		"app.warnOnElevatedPrivileges": false,
 	}
 	if !maps.Equal(got, want) {

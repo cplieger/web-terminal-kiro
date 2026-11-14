@@ -14,15 +14,19 @@ import (
 	"testing"
 
 	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/web-terminal-engine/v6/osc52copy"
 )
 
-// TestMain lets a test run this package's test binary as the launcher, the way
-// the image's kas-node link runs the server binary.
+// TestMain lets a test run this package's test binary as the launcher or the
+// clipboard stand-in, the way the image's kas-node and xclip links run the server binary.
 func TestMain(m *testing.M) {
 	if filepath.Base(os.Args[0]) == kasNodeLauncherName {
 		err := execKasNode(os.Getenv(kasRealNodeKey), os.Args[1:])
 		fmt.Fprintln(os.Stderr, kasNodeLauncherName+":", err)
 		os.Exit(127)
+	}
+	if slices.Contains(osc52copy.Names(), filepath.Base(os.Args[0])) {
+		os.Exit(clipboardCopy())
 	}
 	os.Exit(m.Run())
 }
