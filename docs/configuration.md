@@ -10,6 +10,8 @@ The image also ships three kiro-cli defaults in `/etc/kiro-cli/default-settings.
 
 Run `kiro-cli settings <key> <value>` in a tab to change one of these defaults, and your value stays after a restart. Four other kiro-cli settings are reset at every start, because the app relies on them: `app.disableAutoupdates`, `chat.enableNotifications`, `chat.notificationMethod` and `chat.terminalTitle`.
 
+The image also sets `KIRO_NO_AUTO_UPDATE=1`, so kiro-cli never updates itself, whichever `HOME` it runs under. A kiro-cli started from a tab or a `docker exec` shell cannot replace the installed version with a newer release. Image updates move kiro-cli to a new version.
+
 ## Every setting
 
 | Variable | Description | Default |

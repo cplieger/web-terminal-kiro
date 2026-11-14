@@ -549,6 +549,11 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
 # pin (a copy under the data dir) protects nothing; the server purges old ones.
 ENV HOME=/config/home
 ENV KIRO_SKIP_BINARY_PINNING=1
+# kiro-cli's self-updater rewrites the executable it ran from on exit, and
+# app.disableAutoupdates covers one HOME only, so any process here running the
+# pinned binary under another HOME would replace it. The server sets this on its
+# own kiro-cli spawns too, for a parent that clears the environment.
+ENV KIRO_NO_AUTO_UPDATE=1
 # PATH leads with the kiro-cli install manager's link dir, so the pinned kiro-cli
 # keeps its bare name over a tools-engine tool of that name, then the
 # engine-managed bin dir. runtimes/{go,node}/bin stay off
