@@ -766,7 +766,7 @@ func TestChildEnvComposesBothOverlays(t *testing.T) {
 			sessionTitleEnv: func(id terminal.SessionID) []string { return []string{"WT_TITLE_HANDLE=" + string(id)} },
 		}
 		got := d.childEnv("tab7")
-		want := []string{"PATH=/pinned:/usr/bin", "WT_TITLE_HANDLE=tab7"}
+		want := []string{"PATH=/pinned:/usr/bin", "WT_TITLE_HANDLE=tab7", noAutoUpdateVar + "=1"}
 		if !slices.Equal(got, want) {
 			t.Errorf("childEnv = %v, want %v", got, want)
 		}
@@ -777,15 +777,15 @@ func TestChildEnvComposesBothOverlays(t *testing.T) {
 			engineEnv:       func() []string { return []string{kasNodePathKey + "=" + kasNodeLauncher} },
 			sessionTitleEnv: func(id terminal.SessionID) []string { return []string{"WT_TITLE_HANDLE=" + string(id)} },
 		}
-		want := []string{"PATH=/pinned", kasNodePathKey + "=" + kasNodeLauncher, "WT_TITLE_HANDLE=tab7"}
+		want := []string{"PATH=/pinned", kasNodePathKey + "=" + kasNodeLauncher, "WT_TITLE_HANDLE=tab7", noAutoUpdateVar + "=1"}
 		if got := d.childEnv("tab7"); !slices.Equal(got, want) {
 			t.Errorf("childEnv = %v, want %v", got, want)
 		}
 	})
 	t.Run("nil title env is harmless", func(t *testing.T) {
 		d := &routeDeps{sessionEnv: func() []string { return []string{"PATH=/pinned"} }}
-		if got := d.childEnv("tab7"); !slices.Equal(got, []string{"PATH=/pinned"}) {
-			t.Errorf("childEnv = %v, want the PATH overlay alone", got)
+		if got := d.childEnv("tab7"); !slices.Equal(got, []string{"PATH=/pinned", noAutoUpdateVar + "=1"}) {
+			t.Errorf("childEnv = %v, want the PATH overlay and the self-update switch alone", got)
 		}
 	})
 	t.Run("one session's overlay cannot alias another's", func(t *testing.T) {

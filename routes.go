@@ -78,8 +78,7 @@ type routeDeps struct {
 	// version can change while the server runs.
 	cmd func() []string
 	// sessionEnv returns the per-session environment overlay (the active version
-	// directory leading PATH). A nil result leaves the child with the server's own
-	// environment.
+	// directory leading PATH). A nil result adds no PATH lead.
 	sessionEnv func() []string
 	// engineEnv returns the high-throughput overlay for kiro-cli's agent engine
 	// (engineTuning.env); nil, or a nil result, adds nothing.
@@ -241,10 +240,9 @@ const reasonRescanAbandoned = "kiro-cli rescan not performed: request abandoned 
 func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		// pin owns both halves this handler used to hand-roll: WAITING for its
-		// operation slot honours this context, while an ADMITTED rescan runs detached, so
-		// a Ctrl-C or --max-time cannot make every candidate probe fail and have the
-		// manager record "no usable version".
+		// pin owns both halves: WAITING for its operation slot honours this context, while
+		// an ADMITTED rescan runs detached, so a Ctrl-C or --max-time cannot make every
+		// candidate probe fail and have the manager record "no usable version".
 		ok, err := deps.kiroRescan(r.Context())
 		if ok {
 			httpserver.WriteJSON(w, kiroRescanBody{Status: "ok"})
@@ -281,11 +279,11 @@ func handleKiroRescan(deps *routeDeps) http.HandlerFunc {
 }
 
 // childEnv is the environment overlay for one tab's kiro-cli process: the active version's
-// PATH lead, the agent-engine overlay, and the two variables a hook needs to report which
-// kiro session this tab is running. Built as a fresh slice rather than appending to
-// sessionEnv's return, so one session's overlay can never alias another's backing array.
+// PATH lead, the agent-engine overlay, the two variables a hook needs to report which kiro
+// session this tab is running, and kiroSpawnEnv's self-update switch. Built as a fresh slice
+// rather than appending to sessionEnv's return, so one session's overlay can never alias
+// another's backing array.
 func (d *routeDeps) childEnv(id terminal.SessionID) []string {
-	base := d.sessionEnv()
 	var engine, title []string
 	if d.engineEnv != nil {
 		engine = d.engineEnv()
@@ -293,10 +291,7 @@ func (d *routeDeps) childEnv(id terminal.SessionID) []string {
 	if d.sessionTitleEnv != nil {
 		title = d.sessionTitleEnv(id)
 	}
-	if len(engine) == 0 && len(title) == 0 {
-		return base
-	}
-	return slices.Concat(base, engine, title)
+	return kiroSpawnEnv(slices.Concat(d.sessionEnv(), engine, title))
 }
 
 // newSessionBuilder returns the per-session handler factory for one resume id ("" starts
@@ -335,9 +330,7 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 			terminal.WithWorkDir(deps.workDir),
 			terminal.WithLogger(sessionLogger),
 			terminal.WithCommandLogValue("[redacted]"),
-			// The active kiro-cli version's own directory first on the child's PATH, plus
-			// the two variables that let a kiro-cli hook report which kiro session this
-			// tab is running. The engine appends WithEnv LAST, so this PATH wins.
+			// childEnv owns the overlay; the engine appends WithEnv LAST, so its entries win.
 			//
 			// The engine's input-stream title deriver is deliberately NOT requested: every
 			// discard key it does not model fuses abandoned text onto the next prompt.
