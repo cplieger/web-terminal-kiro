@@ -14,6 +14,8 @@ A workflow launched in a tab runs each step in its own kiro-cli session, whose h
 
 Every two seconds the server saves the open tabs to `/config/tabs.json`. The file holds their order, each tab's address name, its pinned name and its kiro-cli session id, and the split layout. At the next start it opens the same tabs in the same order. Each tab runs `kiro-cli chat --resume-id <session id>`, so kiro-cli replays the conversation, and the tab keeps its address, so a bookmarked address still opens it. The split view and the selected pane come back too. A page that is open during the restart waits until the tabs are back, then shows them.
 
+Stopping the container ends every kiro-cli process, so a reply or command still running at that moment does not continue after the restart. The tab reopens the conversation as kiro-cli saved it.
+
 A tab whose conversation no longer exists, for example one deleted with `kiro-cli chat --delete-session`, opens a fresh chat under a new address instead. A tab whose kiro-cli chat had not started yet, for example one still at its sign-in prompt, keeps its address and opens a fresh chat. When two tabs held the same conversation, only one comes back, the one whose address names it. The output of `!` shell commands and anything else outside kiro-cli's own transcript is not restored. A tab whose kiro-cli quit cleanly, for example after `/quit`, is not brought back. A tab whose kiro-cli crashed is.
 
 When kiro-cli is signed out at boot, for example because its token expired, every restored tab starts its own device sign-in at once. Confirm the code in each tab, and each tab then resumes its conversation. Closing a tab that is still at its sign-in prompt drops it from the saved tabs, as any close does.
