@@ -276,15 +276,15 @@ RUN set -e; mkdir -p static/vendor/fonts; \
 # Both packages ship TS source only; they are extracted side by side under
 # static-src/node_modules/@cplieger so tsc resolves the UI's engine import.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.5.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.6.0-dev.1
 # sha256 of the tarball: npm's dist.integrity is SHA-512, so this digest cannot be
 # copied from the registry; a hand bump of the version re-runs scripts/repin-sha.sh.
 # repin: dep=@cplieger/web-terminal-engine url=https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=432d761dbb9ed6d08ced5be926cfc1c4f0936af2b46e6eceef93ed7c92579e1a
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_SHA256=1a1bc084481f510ffba26c9eac4fddf6b479b6142c56b9c412a98e8fa5456504
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=9.0.0
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=9.1.0-dev.1
 # repin: dep=@cplieger/web-terminal-ui url=https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-{version}.tgz
-ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=e1733e7e64b49db36674b7a909e1cd5fb32055b2ac3fb5293cd20ee7ce42559a
+ARG CPLIEGER_WEB_TERMINAL_UI_SHA256=9c4dfc5abac27013ff31dd7ffa9c3ec809e328b7e8a7156c99378c3169fb77a8
 # The served bundle is built from the ARG pins while local dev compiles against
 # static-src/package.json, and nothing else fails when the two disagree. go.mod
 # is deliberately not compared: the engine's Go module and npm package version
@@ -549,6 +549,11 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
 # pin (a copy under the data dir) protects nothing; the server purges old ones.
 ENV HOME=/config/home
 ENV KIRO_SKIP_BINARY_PINNING=1
+# kiro-cli's self-updater rewrites the executable it ran from on exit, and
+# app.disableAutoupdates covers one HOME only, so any process here running the
+# pinned binary under another HOME would replace it. The server sets this on its
+# own kiro-cli spawns too, for a parent that clears the environment.
+ENV KIRO_NO_AUTO_UPDATE=1
 # PATH leads with the kiro-cli install manager's link dir, so the pinned kiro-cli
 # keeps its bare name over a tools-engine tool of that name, then the
 # engine-managed bin dir. runtimes/{go,node}/bin stay off

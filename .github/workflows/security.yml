@@ -28,6 +28,6 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    uses: cplieger/ci/.github/workflows/security-scan.yaml@c736bfa6ca8fa1679f95212a90440919525c40a7 # v3
+    uses: cplieger/ci/.github/workflows/security-scan.yaml@7ca43b6ae1cb5106eb19ecf35849d3c9eaeb1517 # v3
     with:
       runner: ${{ vars.CI_RUNNER }}

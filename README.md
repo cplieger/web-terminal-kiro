@@ -30,7 +30,7 @@ Web Terminal for Kiro is free software under the MPL-2.0 license.
 
 ## Quick start
 
-The image is on GitHub Container Registry and Docker Hub, for `amd64` and `arm64`. This is the [`compose.yaml`](compose.yaml) in this repository.
+The image is on GitHub Container Registry and on Docker Hub as `cplieger/web-terminal-kiro`, for `amd64` and `arm64`. This is the [`compose.yaml`](compose.yaml) in this repository.
 
 ```yaml
 services:

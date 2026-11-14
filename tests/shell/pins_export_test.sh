@@ -196,6 +196,13 @@ grep -q 'skipBinaryPinningKey = "KIRO_SKIP_BINARY_PINNING"' "$GO_SOURCE_ROOT/kir
   && ok "the purge is gated on the same exact value" \
   || no "purge gate" "kirodata.go no longer gates the purge on KIRO_SKIP_BINARY_PINNING = 1"
 
+# --- the image default that turns kiro-cli's self-updater off -----------------
+# Every process in the image inherits it; the Dockerfile ENV comment says why.
+update_env=$(awk '/^FROM /{n=0} /^ENV KIRO_NO_AUTO_UPDATE=/{n++; v=$0} END{print n "|" v}' "$DOCKERFILE")
+[ "$update_env" = "1|ENV KIRO_NO_AUTO_UPDATE=1" ] \
+  && ok "the runtime stage sets ENV KIRO_NO_AUTO_UPDATE=1 exactly once" \
+  || no "self-update ENV" "final stage reads '$update_env'; a kiro-cli run under a HOME without app.disableAutoupdates rewrites the pinned version directory's binary"
+
 # --- every GitHub token variable the server reads reaches it from compose -----
 # githubtoken.go reads GH_TOKEN, else GITHUB_TOKEN, from its own environment, and
 # a key-only compose line is the only path from .env into the container. A name

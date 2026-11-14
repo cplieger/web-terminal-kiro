@@ -487,7 +487,7 @@ func TestSandboxRuntime_sessionEnv(t *testing.T) {
 			sessionTitleEnv: func(id terminal.SessionID) []string { return []string{"WT_TITLE_HANDLE=" + string(id)} },
 		}
 		got := d.childEnv("tab1")
-		want := []string{"PATH=" + sandboxBinDir + ":/v:/usr/bin", "WT_TITLE_HANDLE=tab1"}
+		want := []string{"PATH=" + sandboxBinDir + ":/v:/usr/bin", "WT_TITLE_HANDLE=tab1", noAutoUpdateVar + "=1"}
 		if !slices.Equal(got, want) {
 			t.Errorf("childEnv = %q, want %q", got, want)
 		}
