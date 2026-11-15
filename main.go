@@ -241,7 +241,6 @@ func main() {
 	}
 }
 
-// clipboardCopy runs osc52copy's stand-in for the command named by argv[0].
 func clipboardCopy() int {
 	return osc52copy.Main(os.Args[0], os.Args[1:], osc52copy.Streams{Stdin: os.Stdin, TTY: controllingTTY{}, Stderr: os.Stderr})
 }
@@ -251,12 +250,22 @@ func clipboardCopy() int {
 type controllingTTY struct{}
 
 func (controllingTTY) Write(p []byte) (int, error) {
-	f, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	f, err := openBlockingWrite("/dev/tty")
 	if err != nil {
 		return 0, err
 	}
 	n, err := f.Write(p)
 	return n, errors.Join(err, f.Close())
+}
+
+// Not os.OpenFile: its poller makes a tty fd non-blocking, and a split write
+// lets other output land inside the OSC 52 sequence.
+func openBlockingWrite(path string) (*os.File, error) {
+	fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	return os.NewFile(uintptr(fd), path), nil
 }
 
 // shutdownGrace bounds the whole graceful stop: the drain, then the session

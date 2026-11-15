@@ -46,7 +46,7 @@ func TestXclipDispatch(t *testing.T) {
 		code       int
 		mentionTTY bool
 	}{
-		{"copy with no terminal fails on /dev/tty", []string{"-selection", "clipboard"}, 1, true},
+		{"copy with no terminal fails at the tty open", []string{"-selection", "clipboard"}, 1, true},
 		{"paste is refused before the terminal is opened", []string{"-o"}, 1, false},
 	}
 	for _, tc := range cases {
@@ -65,6 +65,54 @@ func TestXclipDispatch(t *testing.T) {
 				t.Errorf("xclip %v stderr = %q; mentions /dev/tty = %v, want %v", tc.args, stderr, got, tc.mentionTTY)
 			}
 		})
+	}
+}
+
+// TestOpenBlockingWriteLeavesFdBlocking: a non-blocking fd splits one large
+// OSC 52 write into several write(2) calls. A FIFO stands in for the tty,
+// since Go's poller takes both.
+func TestOpenBlockingWriteLeavesFdBlocking(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "tty")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := syscall.Open(fifo, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Close(reader) })
+
+	f, err := openBlockingWrite(fifo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	conn, err := f.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var flags uintptr
+	var errno syscall.Errno
+	// SyscallConn, not f.Fd: Fd switches the fd back to blocking.
+	if err := conn.Control(func(fd uintptr) {
+		flags, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if errno != 0 {
+		t.Fatalf("fcntl F_GETFL: %v", errno)
+	}
+	if flags&syscall.O_NONBLOCK != 0 {
+		t.Error("openBlockingWrite returned a non-blocking fd")
+	}
+}
+
+func TestOpenBlockingWriteNamesPathOnFailure(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent")
+	_, err := openBlockingWrite(missing)
+	var pe *os.PathError
+	if !errors.As(err, &pe) || pe.Op != "open" || pe.Path != missing {
+		t.Errorf("openBlockingWrite(%q) error = %v, want an open PathError naming the path", missing, err)
 	}
 }
 
