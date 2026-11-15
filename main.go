@@ -35,6 +35,7 @@ import (
 	"github.com/cplieger/go/slogx"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/pin"
+	"github.com/cplieger/web-terminal-engine/v6/osc52copy"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
@@ -222,6 +223,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, kasNodeLauncherName+":", err)
 		os.Exit(127)
 	}
+	// Started through the image's xclip link, this binary is the clipboard tool
+	// kiro-cli copies with.
+	if slices.Contains(osc52copy.Names(), filepath.Base(os.Args[0])) {
+		os.Exit(clipboardCopy())
+	}
 	if len(os.Args) == 2 && os.Args[1] == "health" {
 		os.Exit(healthCommand(os.Stderr, listenAddr()))
 	}
@@ -232,6 +238,38 @@ func main() {
 		// prose is rewritten by any edit to the message, a stage token is not.
 		slog.Error("web-terminal-kiro exited with error", "stage", stageOf(err), "error", err)
 		os.Exit(1)
+	}
+}
+
+func clipboardCopy() int {
+	return osc52copy.Main(os.Args[0], os.Args[1:], osc52copy.Streams{Stdin: os.Stdin, TTY: controllingTTY{}, Stderr: os.Stderr})
+}
+
+// controllingTTY writes to /dev/tty, opened at the write, so a copy refused
+// before it needs no terminal.
+type controllingTTY struct{}
+
+func (controllingTTY) Write(p []byte) (int, error) {
+	f, err := openBlockingWrite("/dev/tty")
+	if err != nil {
+		return 0, err
+	}
+	n, err := f.Write(p)
+	return n, errors.Join(err, f.Close())
+}
+
+// Not os.OpenFile: its poller makes a tty fd non-blocking, and a split write
+// lets other output land inside the OSC 52 sequence.
+func openBlockingWrite(path string) (*os.File, error) {
+	for {
+		fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_CLOEXEC, 0)
+		if errors.Is(err, syscall.EINTR) {
+			continue
+		}
+		if err != nil {
+			return nil, &os.PathError{Op: "open", Path: path, Err: err}
+		}
+		return os.NewFile(uintptr(fd), path), nil
 	}
 }
 

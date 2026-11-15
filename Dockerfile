@@ -605,9 +605,12 @@ COPY --chmod=755 sandbox/bwrap-unavailable.sh /opt/web-terminal-kiro/sandbox/una
 # may run as a non-root user, and sticky world-writable like /tmp for the same reason.
 # A volume mounted here hides it and must be writable by that user.
 # The kas-node link makes the server binary kiro-cli's agent-engine node launcher
-# when KIRO_CLI_HIGH_THROUGHPUT is on (enginetuning.go kasNodeLauncher).
+# when KIRO_CLI_HIGH_THROUGHPUT is on (enginetuning.go kasNodeLauncher). The xclip
+# link makes it the clipboard tool kiro-cli copies with, which writes the copy to
+# the terminal as OSC 52 (main.go clipboardCopy).
 RUN mkdir -p /uploads /opt/web-terminal-kiro/engine && chmod 1777 /uploads && \
-    ln -s /app/web-terminal-kiro /opt/web-terminal-kiro/engine/kas-node
+    ln -s /app/web-terminal-kiro /opt/web-terminal-kiro/engine/kas-node && \
+    ln -s /app/web-terminal-kiro /usr/local/bin/xclip
 
 WORKDIR /workspace
 EXPOSE 9848
