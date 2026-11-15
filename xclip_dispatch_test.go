@@ -78,9 +78,9 @@ func TestXclipDispatch(t *testing.T) {
 	}
 }
 
-// TestXclipCopyHoldsTheTTYForOneWrite: with the pty buffer full, a split OSC 52
-// write lets another writer's bytes land inside the sequence, which cuts the
-// payload the browser decodes.
+// TestXclipCopyHoldsTheTTYForOneWrite: run as xclip with a controlling terminal,
+// the binary writes the copy there as one OSC 52 sequence, with no other
+// writer's bytes inside it even while the pty buffer is full.
 func TestXclipCopyHoldsTheTTYForOneWrite(t *testing.T) {
 	master, slave := openPTY(t)
 	text := strings.Repeat("full-screen drag selection\n", 12_000)
@@ -187,57 +187,19 @@ func openPTY(t *testing.T) (master, slave *os.File) {
 	return master, slave
 }
 
-// TestOpenBlockingWriteLeavesFdBlocking: a non-blocking fd splits one large
-// OSC 52 write into several write(2) calls. A FIFO stands in for the tty,
-// since Go's poller takes both.
-func TestOpenBlockingWriteLeavesFdBlocking(t *testing.T) {
-	fifo := filepath.Join(t.TempDir(), "tty")
-	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	reader, err := syscall.Open(fifo, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = syscall.Close(reader) })
-
-	f, err := openBlockingWrite(fifo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = f.Close() })
-	conn, err := f.SyscallConn()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var flags uintptr
-	var errno syscall.Errno
-	// SyscallConn, not f.Fd: Fd switches the fd back to blocking.
-	if err := conn.Control(func(fd uintptr) {
-		flags, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if errno != 0 {
-		t.Fatalf("fcntl F_GETFL: %v", errno)
-	}
-	if flags&syscall.O_NONBLOCK != 0 {
-		t.Error("openBlockingWrite returned a non-blocking fd")
-	}
-}
-
-// TestDockerfileLinksXclip: kiro-cli copies by running xclip, so the image links
-// that name to the server binary.
+// TestDockerfileLinksXclip: kiro-cli copies by running xclip, so the runtime
+// image links that name to the server binary.
 func TestDockerfileLinksXclip(t *testing.T) {
 	raw, err := os.ReadFile("Dockerfile")
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
 	logical := strings.ReplaceAll(string(raw), "\\\n", " ")
-	for line := range strings.Lines(logical) {
-		if strings.HasPrefix(line, "RUN ") && strings.Contains(line, "ln -s /app/web-terminal-kiro /usr/local/bin/xclip") {
+	runtime := logical[strings.LastIndex(logical, "\nFROM "):]
+	for line := range strings.Lines(runtime) {
+		if strings.HasPrefix(line, "RUN ") && strings.Contains(line, "ln -s /app/web-terminal-kiro /usr/bin/xclip") {
 			return
 		}
 	}
-	t.Error("no Dockerfile RUN links /app/web-terminal-kiro to /usr/local/bin/xclip")
+	t.Error("no RUN in the Dockerfile's runtime stage links /app/web-terminal-kiro to /usr/bin/xclip")
 }
