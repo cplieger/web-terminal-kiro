@@ -261,11 +261,16 @@ func (controllingTTY) Write(p []byte) (int, error) {
 // Not os.OpenFile: its poller makes a tty fd non-blocking, and a split write
 // lets other output land inside the OSC 52 sequence.
 func openBlockingWrite(path string) (*os.File, error) {
-	fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	for {
+		fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_CLOEXEC, 0)
+		if errors.Is(err, syscall.EINTR) {
+			continue
+		}
+		if err != nil {
+			return nil, &os.PathError{Op: "open", Path: path, Err: err}
+		}
+		return os.NewFile(uintptr(fd), path), nil
 	}
-	return os.NewFile(uintptr(fd), path), nil
 }
 
 // shutdownGrace bounds the whole graceful stop: the drain, then the session
