@@ -28,8 +28,8 @@ github.com/cplieger/go/urlform v1.2.0 h1:AQkwiRasHq1e57dzpFyrSRZWgp503XNPJ0DikXQ
 github.com/cplieger/go/urlform v1.2.0/go.mod h1:o7cRPRmslS3o05jpTJHqGKebD4eawAV7rIOB4AdGLao=
 github.com/cplieger/toolbelt/v3 v3.16.0-dev.4 h1:XpgBKBzy0LhfASO8eiD1jP73KHKAY1/RdFGynZMz+Zg=
 github.com/cplieger/toolbelt/v3 v3.16.0-dev.4/go.mod h1:6Q0kRMr90EW/L23Fg442ejx6eMA/6wsF8tjWiNXIGug=
-github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.3 h1:m4ecookrXtoEoHSJnTUascE0RscSrvmdOknT3+SSSFg=
-github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.3/go.mod h1:Q9FfHBKIYRzkwHND2f1/psB2MeZtO9CgA8lev7LLx6c=
+github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.4 h1:9wPfxHpBZE2zJOMW+0P1bOPzwXDCw2mSwBV+gAkU7VI=
+github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.4/go.mod h1:Q9FfHBKIYRzkwHND2f1/psB2MeZtO9CgA8lev7LLx6c=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
 github.com/expr-lang/expr v1.17.8 h1:W1loDTT+0PQf5YteHSTpju2qfUfNoBt4yw9+wOEU9VM=
