@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
+	"github.com/cplieger/web-terminal-kiro/internal/testchild"
 )
 
 // gatePackage is the gate's package path as the Dockerfile spells it, in the
@@ -744,7 +745,7 @@ func TestGateProcessReadsTheManifestFlagTheDockerfilePasses(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// #nosec G204 -- os.Args[0] is this test binary; no external input.
 			cmd := exec.Command(os.Args[0], "-manifest="+tc.manifest(t))
-			cmd.Env = append(os.Environ(), subprocessEnv+"=1")
+			cmd.Env = testchild.Env(subprocessEnv + "=1")
 			out, err := cmd.CombinedOutput()
 			var exitErr *exec.ExitError
 			if err != nil && !errors.As(err, &exitErr) {
@@ -785,7 +786,7 @@ func TestGateHelpIsNotReportedAsABrokenGate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// #nosec G204 -- os.Args[0] is this test binary; no external input.
 			cmd := exec.Command(os.Args[0], tc.arg)
-			cmd.Env = append(os.Environ(), subprocessEnv+"=1")
+			cmd.Env = testchild.Env(subprocessEnv + "=1")
 			out, err := cmd.CombinedOutput()
 			var exitErr *exec.ExitError
 			if err != nil && !errors.As(err, &exitErr) {

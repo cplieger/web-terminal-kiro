@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/cplieger/web-terminal-kiro/internal/testchild"
 )
 
 // xclipCommand runs this test binary as the image's xclip link, in a new
@@ -25,6 +27,7 @@ func xclipCommand(t *testing.T, stdin string, args ...string) *exec.Cmd {
 	}
 	cmd := exec.CommandContext(t.Context(), self, args...)
 	cmd.Args[0] = filepath.Join(t.TempDir(), "xclip")
+	cmd.Env = testchild.Env()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = strings.NewReader(stdin)
 	return cmd

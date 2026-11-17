@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/web-terminal-kiro/internal/testchild"
 )
 
 // The fixture is a MINIMAL stand-in for the served bundle, not a copy of it:
@@ -943,7 +945,7 @@ func TestMain(m *testing.M) {
 func runGate(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), os.Args[0], args...)
-	cmd.Env = append(os.Environ(), gateEnvVar+"=1")
+	cmd.Env = testchild.Env(gateEnvVar + "=1")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return 0, string(out)
