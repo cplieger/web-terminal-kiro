@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cplieger/web-terminal-kiro/internal/testchild"
 )
 
 // The locks under testdata/kirolocks were written by kiro-cli 3.1.0 on one host: v3-tui*
@@ -50,6 +52,7 @@ func readCaptured(t *testing.T, file string) string {
 func exitedPID(t *testing.T) int {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^$")
+	cmd.Env = testchild.Env()
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("run a child to free its pid: %v", err)
 	}
