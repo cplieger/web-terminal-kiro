@@ -69,6 +69,8 @@ Declare each Debian package as its own `apt:` entry:
 
 Compared with running `apt-get install` in a session, the entry is kept on the `/config` volume. Recreating the container reinstalls the package instead of losing it, and the entry reports the installed version.
 
+An `apt:` entry needs a writable root, so leave out `read_only: true` while the list has one. [Read-only root](hardening.md#read-only-root) explains why.
+
 Use plain package names only. Each of these is refused with the reason:
 
 - a version pin such as `pkg=1.2`, or `pkg:arch` or `pkg/release`

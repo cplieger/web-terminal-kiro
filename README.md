@@ -169,7 +169,7 @@ Web Terminal for Kiro serves no metrics and ships no alert rules. The image has 
 
 - [Configuration](docs/configuration.md) lists every setting.
 - [Tools](docs/tools.md) covers the tool list, the catalog and the in-container commands.
-- [Security](docs/hardening.md) covers the reverse proxy, stored scrollback and the image contents.
+- [Security](docs/hardening.md) covers the proxy, scrollback, a read-only root and the image.
 - [Command sandbox](docs/sandbox.md) explains the profiles and the startup check.
 - [Features](docs/features.md) lists what the terminal supports on desktop and touch.
 - [Monitoring and alerts](docs/monitoring.md) says how to know the terminal is up.
