@@ -934,12 +934,13 @@ type toolsRuntime struct {
 	// creation is gated on it so the first kiro-cli never spawns before the
 	// manifest's tools are on PATH.
 	syncing func() bool
-	// state is the /healthz informational detail: syncing | ok | degraded. LIVE,
-	// not boot-only: after the boot verdict it tracks the engine's counted jobs.
+	// state is the reducer's verdict: syncing | ok | degraded. LIVE, not
+	// boot-only: after the boot verdict it tracks the engine's counted jobs.
+	// toolsHealth folds it with missing for /healthz.
 	state func() string
-	// missing is whole-tree convergence, a separate question from state (did the
-	// last job succeed). ok is false until the first recount, so a premature zero
-	// cannot read as convergence.
+	// missing is whole-tree convergence: enabled entries not installed. ok is
+	// false until the first recount, so a premature zero cannot read as
+	// convergence.
 	missing func() (n int, ok bool)
 }
 
@@ -951,10 +952,21 @@ const (
 	// window in which POST /api/sessions answers 503 "tools installing").
 	toolsStateSyncing = "syncing"
 	toolsStateOK      = "ok"
-	// toolsStateDegraded is the verdict for a tools subsystem that FAILED, as
-	// opposed to one deliberately absent (which omits the field entirely).
+	// toolsStateDegraded is the verdict for a tools subsystem or job that FAILED,
+	// or a tree with tools missing, as opposed to one deliberately absent (which
+	// omits the field entirely).
 	toolsStateDegraded = "degraded"
 )
+
+// toolsHealth is /healthz's tools value for one read of the reducer's state and
+// the convergence count: "ok" stands only when a count says nothing is missing,
+// so the field never contradicts the tools_missing written beside it.
+func toolsHealth(state string, missing int, counted bool) string {
+	if state == toolsStateOK && (!counted || missing > 0) {
+		return toolsStateDegraded
+	}
+	return state
+}
 
 // toolsStatus is the app-owned reducer behind /healthz's INFORMATIONAL tools field,
 // fed by the boot reconcile's verdict once and by the engine's OnJobChanged callback
@@ -1034,7 +1046,7 @@ func (s *toolsStatus) watchConvergence(ctx context.Context, count func() (int, e
 			// Back to unknown: tools_missing is absent when the count is not known, and an
 			// unreadable manifest is persistent and operator-fixable, hence Warn.
 			s.missing.Store(-1)
-			slog.Warn("tools: convergence recount failed; /healthz omits tools_missing until one succeeds",
+			slog.Warn("tools: convergence recount failed; /healthz reports tools=degraded and omits tools_missing until one succeeds",
 				"error", err,
 				"hint", "fix the manifest (schema v2 JSON); an unreadable manifest also fails the tools engine outright on the next restart")
 			return
