@@ -6,7 +6,7 @@ This page lists every setting of Web Terminal for Kiro and what each one changes
 
 Settings are environment variables on the container, under `environment:` in `compose.yaml`. The server reads them once at start, so recreate the container after a change. No setting is required, and the image ships working defaults. A malformed value logs a warning that names the variable, never the value, and the server falls back to the default. `ALLOWED_HOSTS` is the exception, described below.
 
-The image also ships two kiro-cli defaults in `/etc/kiro-cli/default-settings.json`. They turn off telemetry and the warning that kiro-cli runs as root, since every tab runs as root by design. When kiro-cli copies text, it runs the image's `xclip`, which sends the text to the terminal as `OSC 52`. The browser tab then puts it on your clipboard, as far as your browser's clipboard permissions allow.
+The image also ships one kiro-cli default in `/etc/kiro-cli/default-settings.json`, which turns off telemetry. When the container runs as root, kiro-cli warns in each tab that it runs as root. Run `kiro-cli settings app.warnOnElevatedPrivileges false` in a tab to turn the warning off, or run the container as another user, as [Running without root](hardening.md#running-without-root) describes. When kiro-cli copies text, it runs the image's `xclip`, which sends the text to the terminal as `OSC 52`. The browser tab then puts it on your clipboard, as far as your browser's clipboard permissions allow.
 
 Run `kiro-cli settings <key> <value>` in a tab to change one of these defaults, and your value stays after a restart. Four other kiro-cli settings are reset at every start, because the app relies on them: `app.disableAutoupdates`, `chat.enableNotifications`, `chat.notificationMethod` and `chat.terminalTitle`.
 
@@ -85,9 +85,9 @@ Every tab inherits the server's environment, so `gh` and other programs in a ter
 
 ## TRUSTED_INSTALL_UIDS
 
-Before installing kiro-cli, and before the tools engine starts, the server checks who can write each folder on the way to `/config/tools`. It refuses when another account can, because what lands there later runs as root. The same list applies to both checks. Leave this unset, which makes no exception, for almost every setup. Set it only when the check refuses a volume you know is safe.
+Before installing kiro-cli, and before the tools engine starts, the server checks who can write each folder on the way to `/config/tools`. It refuses when an account other than root and the container's own user can, because what lands there later runs as the container's user, root by default. The same list applies to both checks. Leave this unset, which makes no exception, for almost every setup. Set it only when the check refuses a volume you know is safe.
 
-Each user ID you list states that the account is already as privileged as this server. Listing an account that is not hands it a way to run code as root. An entry that is not a whole number above `0` is skipped with a warning that names the variable and how many entries were dropped.
+Each user ID you list states that the account is already as privileged as this server. Listing an account that is not hands it a way to run code as the container's user. An entry that is not a whole number above `0` is skipped with a warning that names the variable and how many entries were dropped.
 
 ## KIRO_CLI_SANDBOX
 

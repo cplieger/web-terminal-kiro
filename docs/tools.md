@@ -69,7 +69,7 @@ Declare each Debian package as its own `apt:` entry:
 
 Compared with running `apt-get install` in a session, the entry is kept on the `/config` volume. Recreating the container reinstalls the package instead of losing it, and the entry reports the installed version.
 
-An `apt:` entry needs a writable root, so leave out `read_only: true` while the list has one. [Read-only root](hardening.md#read-only-root) explains why.
+An `apt:` entry needs the container to run as root with a writable root, so leave out a `user:` line and `read_only: true` while the list has one. Otherwise each entry fails at once, and the log names the cause. [Running without root](hardening.md#running-without-root) and [Read-only root](hardening.md#read-only-root) explain why.
 
 Use plain package names only. Each of these is refused with the reason:
 
@@ -92,7 +92,7 @@ New tabs wait for the first install pass at start, so the first tab sees every e
 
 The tools engine does not start over a tools folder it cannot trust. It refuses a folder it manages that is a symlink, is not a folder, or can be changed by another account through its owner, its mode or an access-control list. The container's start script tightens modes, but it changes no owner and removes no access-control list.
 
-Fix an owner inside the container with `chown root:root <folder>`. Remove an access-control-list grant on the host, because the image has no ACL tools: `setfacl -b <folder>` for a POSIX list, or the host's NFSv4 ACL tool for an NFSv4 list, as on ZFS or NFS. Replace a symlink or a file with a real folder.
+Fix an owner inside the container with `chown root:root <folder>`. With a `user:` line, run `chown <uid>:<gid> <folder>` on the host instead, with that line's IDs. Remove an access-control-list grant on the host, because the image has no ACL tools: `setfacl -b <folder>` for a POSIX list, or the host's NFSv4 ACL tool for an NFSv4 list, as on ZFS or NFS. Replace a symlink or a file with a real folder.
 
 For a user that owns a folder or holds a grant on it, you can list its uid in `TRUSTED_INSTALL_UIDS` instead. That never clears a group grant, or a managed folder that is itself a symlink or a file. Then restart the container. Until then the engine stays off, tabs still open, and `/healthz` reports `"tools": "degraded"`.
 

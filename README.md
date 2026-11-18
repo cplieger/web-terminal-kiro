@@ -70,7 +70,7 @@ Run `docker logs web-terminal-kiro`. You should see `web-terminal-kiro listening
 
 Each image release pins one kiro-cli version, which the server downloads and checks against a recorded digest. A newer kiro-cli comes with a newer image. Installing kiro-cli means you accept the [AWS Customer Agreement](https://kiro.dev/license/).
 
-Leave out any `user:` line. The image runs as root so that `git`, `gh` and SSH work. Files it writes to the mounted folders belong to root on the host. Tabs come back after a restart, each resuming its kiro-cli conversation, as [How it works](docs/how-it-works.md#tabs-after-a-restart) explains.
+The image runs as root, which Debian packages from the tools list need, so its files on the host belong to root. [Running without root](docs/hardening.md#running-without-root) shows how to change that. Tabs come back after a restart, each resuming its kiro-cli conversation, as [How it works](docs/how-it-works.md#tabs-after-a-restart) explains.
 
 ## Adding tools and language servers
 
@@ -139,7 +139,7 @@ Settings are environment variables, read once at start, so recreate the containe
 
 ## Security
 
-Web Terminal for Kiro has no login. Anyone who reaches the port gets a root shell with your files, your kiro-cli sign-in and SSH keys. Everyone who opens it shares that one sign-in.
+Web Terminal for Kiro has no login. Anyone who reaches the port gets a shell with your files, your kiro-cli sign-in and SSH keys. Everyone who opens it shares that one sign-in.
 
 - Put it behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, at least HTTP Basic auth, and passes WebSockets through. Keep the port on loopback or a private network.
 - Set `ALLOWED_HOSTS` to the exact names you open it at. A malicious web page can otherwise reach even a loopback-only terminal through your browser, a trick called DNS rebinding.

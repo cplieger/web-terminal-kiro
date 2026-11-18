@@ -2980,9 +2980,10 @@ func TestKiroDefaultSettingsFile(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("kiro-cli-defaults.json is not a JSON object: %v", err)
 	}
+	// app.warnOnElevatedPrivileges stays kiro-cli's own: root is an operator choice, so
+	// kiro-cli's warning about it is accurate.
 	want := map[string]any{
-		"telemetry.enabled":            false,
-		"app.warnOnElevatedPrivileges": false,
+		"telemetry.enabled": false,
 	}
 	if !maps.Equal(got, want) {
 		t.Errorf("kiro-cli-defaults.json = %v, want %v", got, want)
