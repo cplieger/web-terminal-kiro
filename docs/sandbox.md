@@ -8,6 +8,8 @@ kiro-cli's `/sandbox` setting runs each command the agent starts inside [bubblew
 
 kiro-cli does the sandboxing. Web Terminal for Kiro ships bubblewrap and `socat`, the profiles that let them work inside a container, and the startup check below.
 
+The sandbox covers only the agent's commands. To make the whole container's own files read-only, [Read-only root](hardening.md#read-only-root) has the compose settings.
+
 ## Why Docker blocks it
 
 The server and every tab run as root, without the `CAP_SYS_ADMIN` capability. bubblewrap then needs a user namespace, which the image asks for on every `bwrap` call. That namespace gives bubblewrap the capabilities it needs over its new namespaces and nothing outside them. Docker's default profiles refuse every step:

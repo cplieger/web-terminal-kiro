@@ -1,6 +1,6 @@
 # Security
 
-This page covers what an exposed Web Terminal for Kiro gives away, how to put it behind a reverse proxy, and what the image contains, for anyone opening it beyond their own machine.
+This page is for anyone opening Web Terminal for Kiro beyond their own machine. It covers what an exposed terminal gives away, how to put it behind a reverse proxy, how to run it with a read-only root, and what the image contains.
 
 ## What a tab can reach
 
@@ -69,6 +69,41 @@ A damaged or unreadable file is logged and moved to `/config/tabs.json.unreadabl
 ## Root, and files on the host
 
 The image runs as root so `git`, `gh` and SSH work, and it finds your `~/.ssh` under `/config/home`. Do not add a `user:` line. Files the container writes to `/config` and `/workspace` belong to root on the host.
+
+## Read-only root
+
+Web Terminal for Kiro runs with `read_only: true` as long as `tools.json` lists no `apt:` entry. `read_only: true` stops anything inside the container from changing the image's own files. The image then needs one `tmpfs` beside the three folders the example already mounts. A `tmpfs` is a folder kept in memory that is emptied when the container stops. Add `read_only: true` and the `tmpfs:` line to the service:
+
+```yaml
+services:
+  web-terminal-kiro:
+    image: ghcr.io/cplieger/web-terminal-kiro:latest
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:exec,mode=1777,size=256m
+    volumes:
+      - "/opt/appdata/web-terminal-kiro/config:/config"
+      - "/opt/appdata/web-terminal-kiro/workspace:/workspace"
+      - "/opt/appdata/web-terminal-kiro/uploads:/uploads"
+```
+
+Each folder holds this:
+
+- `/tmp` holds the server's tab titles in `/tmp/web-terminal-kiro`, plus whatever the programs in your tabs write there. The server itself uses a few KB, so the 256 MB are room for those programs. Docker mounts a `tmpfs` with `noexec` by default, so the line adds `exec`, the only setting this profile was checked with.
+- `/config` holds the kiro-cli sign-in and install, the tools the tools engine installs, your settings and the saved tabs.
+- `/workspace` holds your repositories.
+- `/uploads` holds the images you paste. Under `read_only: true` it must stay a mount, because the image's own `/uploads` is on the read-only root.
+
+Each `tmpfs` counts against the container's memory limit. A program in a tab that writes anywhere else, such as `/var/tmp`, gets `Read-only file system`.
+
+An `apt:` entry from [Tools](tools.md#os-packages) does not install on a read-only root. apt and dpkg write to four places. The package lists go to `/var/lib/apt/lists`, the downloads to `/var/cache/apt`, the package database to `/var/lib/dpkg`, and the package's own files under `/usr`. A `tmpfs` covers the first two only.
+
+The package database must describe the programs already in the image, so a `tmpfs` over it would hide that record, and a mounted copy breaks as soon as dpkg fails to write `/usr`. `/usr` holds the image's own programs, so no `tmpfs` or mount can stand in for it. Leave out `read_only: true` when `tools.json` lists an `apt:` entry.
+
+When an `apt:` entry fails this way, the Docker healthcheck still shows `healthy`. `/healthz` answers `"tools":"degraded"`, and the error on the tool's row reads `Unable to locate package`. The log's earlier warning about the package index names the read-only cause.
+
+The [command sandbox](sandbox.md) is separate from this setting. It makes the system read-only for the agent's commands only, inside their own namespaces. This profile was checked without the sandbox profiles.
 
 ## What the image contains
 
