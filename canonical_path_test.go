@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
 
@@ -88,8 +88,8 @@ func TestCanonicalPathGuard_refusesNonCanonicalControlPlanePath(t *testing.T) {
 				t.Fatalf("%s %s: body %q is not the app's JSON error envelope: %v",
 					tc.method, tc.target, rec.Body.String(), err)
 			}
-			if got.Error != canonicalPathRefusal {
-				t.Errorf("%s %s: error = %q, want %q", tc.method, tc.target, got.Error, canonicalPathRefusal)
+			if got.Message != canonicalPathRefusal {
+				t.Errorf("%s %s: error = %q, want %q", tc.method, tc.target, got.Message, canonicalPathRefusal)
 			}
 			if got.Code != "non_canonical_path" {
 				t.Errorf("%s %s: code = %q, want %q (a refusal a script can branch on)",
@@ -102,8 +102,8 @@ func TestCanonicalPathGuard_refusesNonCanonicalControlPlanePath(t *testing.T) {
 			// The refusal must not leak the caller's own request target back into
 			// the body: net/http carries up to MaxHeaderBytes of request line, so
 			// echoing it would make the response caller-sized.
-			if strings.Contains(got.Error, tc.target) {
-				t.Errorf("%s %s: error body echoes the request path: %q", tc.method, tc.target, got.Error)
+			if strings.Contains(got.Message, tc.target) {
+				t.Errorf("%s %s: error body echoes the request path: %q", tc.method, tc.target, got.Message)
 			}
 		})
 	}

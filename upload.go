@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/filesafe"
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 )
 
 // Image paste uploads. The browser posts a clipboard image here and types the returned

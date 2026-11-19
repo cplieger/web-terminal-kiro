@@ -30,7 +30,7 @@ kiro-cli is pinned to one version, downloaded on first start and checked against
 
 A shell opened with `docker exec` finds the pinned kiro-cli through `/config/tools/kiro-cli-bin`, which comes before the tools folder `/config/tools/bin` on `PATH`. A tool in the tools list that is also named `kiro-cli` stays in `/config/tools/bin` and does not replace it.
 
-The download runs after the server starts listening, so the web page and `/healthz` answer at once. New tabs answer `503 {"error":"kiro-cli installing","code":"not_ready"}` until the install finishes, and the message names the stage when something goes wrong.
+The download runs after the server starts listening, so the web page and `/healthz` answer at once. New tabs answer `503` with the code `not_ready` and the message `kiro-cli installing` until the install finishes, and the message names the stage when something goes wrong.
 
 `/config` must be on a filesystem that allows running programs. kiro-cli and every tool the container installs live there and run from there, so a `noexec` mount makes the install fail. The startup log reports that in one line that names the folder.
 

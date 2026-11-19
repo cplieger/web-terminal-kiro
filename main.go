@@ -31,7 +31,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/envx"
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/go/slogx"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/pin"
@@ -81,6 +81,12 @@ func parseTrustedProxies() []netip.Prefix {
 	return prefixes
 }
 
+// hostRefusal answers a refused Host with the envelope's host_not_allowed code
+// and a message that names the setting an operator changes.
+func hostRefusal(w http.ResponseWriter, r *http.Request, status int, code httpserver.ErrorCode, _ string) {
+	httpserver.WriteError(w, r, status, code, "host not allowed. Add it to ALLOWED_HOSTS to serve this hostname")
+}
+
 // parseAllowedHosts reads the comma-separated ALLOWED_HOSTS list of exact hostnames
 // / IPs this server answers for into a httpserver.HostPolicy. It closes the DNS-rebinding
 // hole a same-origin check alone leaves open: rebinding makes Origin and Host AGREE, so
@@ -92,8 +98,7 @@ func parseAllowedHosts() *httpserver.HostPolicy {
 	const key = "ALLOWED_HOSTS"
 	policy, invalid := httpserver.ParseHostList(strings.Split(envx.String(key), ","),
 		httpserver.WithLoopbackExempt(true),
-		httpserver.WithHostAllowlistError("host_not_allowed",
-			"host not allowed. Add it to ALLOWED_HOSTS to serve this hostname"))
+		httpserver.WithHostResponder(hostRefusal))
 	if len(invalid) > 0 {
 		// Count-only, like parseTrustedProxies.
 		slog.Warn("dropping malformed "+key+" entries; they cannot match any browser-sent Host",
@@ -488,10 +493,9 @@ func run() error {
 	mgr := registerRoutes(mux, deps, build(""))
 	shutdownSessions := newSessionShutdown(cancelBase, mgr)
 
-	var lc net.ListenConfig
-	ln, err := lc.Listen(context.Background(), "tcp", addr)
+	ln, err := httpserver.Listen(context.Background(), httpserver.ListenSetting{Name: "LISTEN_ADDR", Addr: addr})
 	if err != nil {
-		return atStage(stageListen, fmt.Errorf("listen on %s: %w", addr, err))
+		return atStage(stageListen, err)
 	}
 
 	// WithSlogErrorLog keeps net/http's own diagnostics in the slog stream; Warn, not
