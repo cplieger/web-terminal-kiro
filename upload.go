@@ -145,26 +145,26 @@ func respondUploadError(w http.ResponseWriter, r *http.Request, err error, maxBy
 	}
 	if _, ok := errors.AsType[*http.MaxBytesError](err); ok || errors.Is(err, filesafe.ErrFileTooLarge) {
 		slog.Warn("image upload too large", "limit", maxBytes)
-		httpserver.WriteError(w, r, http.StatusRequestEntityTooLarge, "upload_too_large", "image is too large to upload")
+		errorResponder(w, r, http.StatusRequestEntityTooLarge, "upload_too_large", "image is too large to upload")
 		return
 	}
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		slog.Warn("image upload timed out", "timeout", uploadReadTimeout)
-		httpserver.WriteError(w, r, http.StatusRequestTimeout, "upload_timeout", "image upload took too long")
+		errorResponder(w, r, http.StatusRequestTimeout, "upload_timeout", "image upload took too long")
 		return
 	}
 	if errors.Is(err, errInvalidFilename) {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_filename", "file name is not a pasted image name")
+		errorResponder(w, r, http.StatusBadRequest, "invalid_filename", "file name is not a pasted image name")
 		return
 	}
 	// A body that ends inside a part is malformed, not a server fault.
 	if errors.Is(err, errInvalidUpload) || errors.Is(err, io.ErrUnexpectedEOF) {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_upload",
+		errorResponder(w, r, http.StatusBadRequest, "invalid_upload",
 			"expected a multipart body of 1 to 25 files in the \"files\" field")
 		return
 	}
 	slog.Warn("image upload failed", "error", err)
-	httpserver.WriteError(w, r, http.StatusInternalServerError, "upload_failed", "image upload failed")
+	errorResponder(w, r, http.StatusInternalServerError, "upload_failed", "image upload failed")
 }
 
 // countingReader counts the bytes a write consumed, for the upload log line.

@@ -12,6 +12,8 @@ github.com/cplieger/go/httpclient v1.2.0 h1:E+lbIpiNkUkcq3fxdMDYn116cwx6tU1XWmn4
 github.com/cplieger/go/httpclient v1.2.0/go.mod h1:couTQSCNdgNwOotbaQREGcM4CjUKZJ4Bdb7FSkNwL8U=
 github.com/cplieger/go/httpserver/v2 v2.0.0-dev.9 h1:1tu6QwPi6eQuMX5mqI+q1yOe6Lqzmlw8Lgf/PS481To=
 github.com/cplieger/go/httpserver/v2 v2.0.0-dev.9/go.mod h1:MBXpBuVO/zdiyXOcq5eRMRJVmdryzDfH7DFo+olLF88=
+github.com/cplieger/go/httpwire v1.0.0-dev.2 h1:ehsOG466Fow5a/+bgs4T0PHHm0OWa0+xuqITfBnZGRA=
+github.com/cplieger/go/httpwire v1.0.0-dev.2/go.mod h1:LltJfJOZ9zP8VO9DZxNo6i4+Ofm62y8sGcQ0zKh16J0=
 github.com/cplieger/go/keyenc v1.3.0 h1:v0zvHSY4ZOZapGNYGAkghEXPz1SeifT/Trg0b9A8IBU=
 github.com/cplieger/go/keyenc v1.3.0/go.mod h1:EI1v4Q6FU1Y9hUWTE6kp1n3Mozrm0ws5GOT+Vt/x1+w=
 github.com/cplieger/go/masked v1.0.0-dev.1 h1:Do4+avpvVJP//Jm4LLH1y468Rxrz966dAgESVp/z7wU=
@@ -28,8 +30,8 @@ github.com/cplieger/go/textsafe v1.1.0 h1:D+p7ZDBQmABv/empI2TNMZfvhMXNlfii8E2e5V
 github.com/cplieger/go/textsafe v1.1.0/go.mod h1:x29RmZpMO2yjPt1zRbjtcXWVdkekukl+jA5FN1wXUlI=
 github.com/cplieger/go/urlform v1.2.0 h1:AQkwiRasHq1e57dzpFyrSRZWgp503XNPJ0DikXQLt1E=
 github.com/cplieger/go/urlform v1.2.0/go.mod h1:o7cRPRmslS3o05jpTJHqGKebD4eawAV7rIOB4AdGLao=
-github.com/cplieger/toolbelt/v3 v3.16.0-dev.12 h1:cGbxcpgFlCklWg7swK8jF8tMOfoqIu5c8GoSMffcf/0=
-github.com/cplieger/toolbelt/v3 v3.16.0-dev.12/go.mod h1:CNEt8mcq4d5BLj0Ut38n1+EjUDbmnxej4/+iy+0OxJw=
+github.com/cplieger/toolbelt/v3 v3.16.0-dev.13 h1:hkdlkXKSrnydr0LidkdkldGr2hID1vDliY1knzx6zgA=
+github.com/cplieger/toolbelt/v3 v3.16.0-dev.13/go.mod h1:CNEt8mcq4d5BLj0Ut38n1+EjUDbmnxej4/+iy+0OxJw=
 github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.5 h1:46NJV+8YN+HsmWajdafxtPrn526Gvya+yzOsHSqPk8E=
 github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.5/go.mod h1:Q9FfHBKIYRzkwHND2f1/psB2MeZtO9CgA8lev7LLx6c=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=

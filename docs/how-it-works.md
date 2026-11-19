@@ -58,6 +58,10 @@ A startup failure writes exactly one `ERROR` line, `web-terminal-kiro exited wit
 
 Base log searches on `stage`, not on the message text. The stage values stay the same between releases, and the wording may change.
 
+## Refusals
+
+A refusal from the server is a JSON body with `code`, `message`, `remediation` and `request_id`. `remediation` says what to change before trying again. The codes are `host_not_allowed` (403), `cross_origin_refused` (403), `loopback_only` (403, the tools API from outside the container), `rate_limited` (429, too many new tabs at once), `too_many_auth_failures` (429), `not_ready` (503, the install or the tab restore is still running), `non_canonical_path` (400), `method_not_allowed` (405), the image upload's `upload_too_large`, `upload_timeout`, `invalid_filename`, `invalid_upload` and `upload_failed`, the tools API's own codes, and `internal_error` (500). Refusals from the terminal routes themselves, such as an unknown tab id, are still plain text.
+
 ## Related projects
 
 - [web-terminal-engine](https://github.com/cplieger/web-terminal-engine) is the terminal engine behind this app, a Go server half and a TypeScript drawing half.
