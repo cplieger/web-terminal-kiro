@@ -1046,7 +1046,7 @@ func (s *toolsStatus) watchConvergence(ctx context.Context, count func() (int, e
 			// Back to unknown: tools_missing is absent when the count is not known, and an
 			// unreadable manifest is persistent and operator-fixable, hence Warn.
 			s.missing.Store(-1)
-			slog.Warn("tools: convergence recount failed; /healthz reports tools=degraded and omits tools_missing until one succeeds",
+			slog.Warn("tools: convergence recount failed; /healthz omits tools_missing until a recount succeeds and reports tools=degraded once the start pass ends",
 				"error", err,
 				"hint", "fix the manifest (schema v2 JSON); an unreadable manifest also fails the tools engine outright on the next restart")
 			return

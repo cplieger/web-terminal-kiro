@@ -78,6 +78,7 @@ With the setting off, tabs keep their `PATH` as it is. The server then warns at 
 ## Inside the sandbox
 
 - Commands run as the container's user inside their own user namespace, which maps only that user. A workspace file owned by another host user shows as owned by `nobody`, and the command can change it only through its group or other write permission.
+- Under a `user:` line, the passwd entry the container gives its user through nss_wrapper ([Running without root](hardening.md#running-without-root)) does not reach sandboxed commands, because kiro-cli clears their environment and gives them an empty `/tmp`. `ssh`, and `git` or `gh` over SSH, fail there with `No user exists for uid`.
 - `/proc` inside the sandbox is empty, because Docker's hidden `/proc` paths stop a fresh one from mounting. Tools that read `/proc`, such as `ps`, see nothing.
 - In "block all" mode the command has its own network with only a loopback device. In "common dependencies" mode kiro-cli runs a local proxy with an allowlist, through `socat` and a socket under `/run/user/<uid>`, which the server creates for its own user ID when the sandbox is available. In "allow all" mode the command uses the container's network.
 - The profiles work with `security_opt: ["no-new-privileges"]` and with `cap_add: [SYS_ADMIN]`. With `SYS_ADMIN` granted, the processes that keep it, the container's init and `docker exec` shells, can also make the mounts above in the container itself, which `docker-default` would refuse.

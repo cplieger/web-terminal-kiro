@@ -49,14 +49,14 @@ logfmt_value() {
   printf '%s' "$safe"
 }
 
-# Gives the running uid a passwd entry homed at $HOME when it has none, since
-# OpenSSH resolves "~" (and so ~/.ssh) through getpwuid(), never $HOME, and exits
-# "No user exists for uid" without one. /etc/passwd is root-owned and possibly
-# read-only, so the entry lives in private copies that nss_wrapper
-# (https://cwrap.org/nss_wrapper.html) serves through LD_PRELOAD to every
-# dynamically linked descendant. ld.so ignores LD_PRELOAD in setuid programs
-# (ld.so(8), secure-execution mode), so this changes only this uid's own view.
-# Warns and exports nothing when it cannot: the terminal still serves.
+# Gives the running uid a passwd entry homed at $HOME when it has none: OpenSSH
+# resolves ~/.ssh through getpwuid(), never $HOME. /etc/passwd may be read-only,
+# so nss_wrapper (https://cwrap.org/nss_wrapper.html) serves private copies via
+# LD_PRELOAD to every dynamically linked descendant that keeps the environment
+# (kiro-cli's sandbox clears it). ld.so ignores LD_PRELOAD in setuid programs
+# (ld.so(8)), so only this uid's view changes. An earlier start's copies are
+# removed first, since a writable root keeps /tmp across restarts. Warns and
+# exports nothing when it cannot: the terminal still serves.
 provide_passwd_entry() {
   local uid=$1 gid=$2 home=$3 tmp=${4:-${TMPDIR:-/tmp}} passwd=${5:-/etc/passwd} group=${6:-/etc/group}
   local dir reason=''
@@ -66,6 +66,9 @@ provide_passwd_entry() {
   case "$home" in
     *:* | *$'\n'*) reason='HOME holds a character a passwd field cannot carry' ;;
   esac
+  if [ -z "$reason" ]; then
+    find "$tmp" -maxdepth 1 -name 'nss_wrapper.*' -type d -user "$uid" -exec rm -rf -- {} + 2>/dev/null
+  fi
   if [ -z "$reason" ] && ! dir=$(mktemp -d "$tmp/nss_wrapper.XXXXXX" 2>/dev/null); then
     reason="cannot create a private directory under $tmp"
   fi

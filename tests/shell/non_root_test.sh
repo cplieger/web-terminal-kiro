@@ -228,4 +228,18 @@ rc=$?
   && ok "a non-root owner's chmod tightens both trees" \
   || no "a non-root owner's chmod tightens both trees" "tools=$(stat -c '%a' "$WORK/own/tools") home=$(stat -c '%a' "$WORK/own/home")"
 
+# --- 11. a restart replaces the earlier start's copies -------------------------
+# The running uid owns what mktemp creates, so it is the uid passed in; a HOME
+# other than the fixture's makes even root need copies.
+fixture
+mkdir "$WORK/tmp/keep.d"
+run_provide "$EUID" "$(id -g)" /config/elsewhere
+run_provide "$EUID" "$(id -g)" /config/elsewhere
+copies=$(find "$WORK/tmp" -maxdepth 1 -name 'nss_wrapper.*' -type d | wc -l)
+[ "$copies" -eq 1 ] && [ -d "${NSS_WRAPPER_PASSWD%/*}" ] \
+  && ok "repeated starts leave one nss_wrapper directory, the current one" \
+  || no "repeated starts leave one nss_wrapper directory" "count=$copies $(ls -A "$WORK/tmp")"
+[ -d "$WORK/tmp/keep.d" ] && ok "the cleanup leaves other temp entries alone" \
+  || no "the cleanup leaves other temp entries alone" "$(ls -A "$WORK/tmp")"
+
 report
