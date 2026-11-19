@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/health/v2"
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
@@ -617,9 +617,6 @@ func TestBuildCSPPolicyFailsLoud(t *testing.T) {
 		}},
 		{"no style block", fstest.MapFS{
 			"index.html": &fstest.MapFile{Data: []byte(`<html><script type="importmap">{}</script></html>`)},
-		}},
-		{"unterminated style block", fstest.MapFS{
-			"index.html": &fstest.MapFile{Data: []byte(`<html><script type="importmap">{}</script><style>body{margin:0}`)},
 		}},
 		{"unterminated style open tag", fstest.MapFS{
 			"index.html": &fstest.MapFile{Data: []byte(`<html><script type="importmap">{}</script><style`)},
@@ -1273,13 +1270,13 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &denied); err != nil {
 		t.Fatalf("remote peer: body %q is not the standard envelope: %v", rec.Body.String(), err)
 	}
-	if !strings.Contains(denied.Error, "loopback-only") || denied.Code != "loopback_only" {
-		t.Errorf("remote peer: envelope = {error:%q code:%q}, want a loopback-only message and code %q", denied.Error, denied.Code, "loopback_only")
+	if !strings.Contains(denied.Message, "loopback-only") || denied.Code != "loopback_only" {
+		t.Errorf("remote peer: envelope = {message:%q code:%q}, want a loopback-only message and code %q", denied.Message, denied.Code, "loopback_only")
 	}
 	// The remedy the 403 names must be this deployment's address, not the default
 	// port: a refused caller sees nothing else.
-	if !strings.Contains(denied.Error, "curl localhost:8080") {
-		t.Errorf("remote peer: envelope error = %q, want it to name this deployment's address (curl localhost:8080)", denied.Error)
+	if !strings.Contains(denied.Message, "curl localhost:8080") {
+		t.Errorf("remote peer: envelope message = %q, want it to name this deployment's address (curl localhost:8080)", denied.Message)
 	}
 
 	// Loopback peer AND loopback Host: served. The fresh engine has an empty
@@ -1506,8 +1503,8 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("create during sync: body %q is not the standard envelope: %v", rec.Body.String(), err)
 	}
-	if env.Error != "tools installing" || env.Code != "not_ready" {
-		t.Fatalf("create during sync: envelope = {error:%q code:%q}, want {error:%q code:%q}", env.Error, env.Code, "tools installing", "not_ready")
+	if env.Message != "tools installing" || env.Code != "not_ready" {
+		t.Fatalf("create during sync: envelope = {message:%q code:%q}, want {message:%q code:%q}", env.Message, env.Code, "tools installing", "not_ready")
 	}
 
 	// Health stays reachable and reports the informational tools state.

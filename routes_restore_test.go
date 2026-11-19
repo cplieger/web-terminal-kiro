@@ -126,7 +126,7 @@ func TestCreateGate_restoringLayer(t *testing.T) {
 	layout := terminal.SessionsSubtreePath + "layout"
 	expect503 := func(t *testing.T, rec *httptest.ResponseRecorder, what, reason, retry string) {
 		t.Helper()
-		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"error":"`+reason+`"`) {
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"message":"`+reason+`"`) {
 			t.Errorf("%s = %d %s, want 503 %q", what, rec.Code, rec.Body.String(), reason)
 		}
 		if got := rec.Header().Get("Retry-After"); got != retry {

@@ -148,13 +148,13 @@ func TestSessionCreateGate_kiroReasonPerState(t *testing.T) {
 				t.Fatalf("create while %s: status = %d, want 503 (body %s)", reason, rec.Code, rec.Body.String())
 			}
 			var env struct {
-				Error string `json:"error"`
+				Message string `json:"message"`
 			}
 			if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 				t.Fatalf("create while %s: body %q is not the standard envelope: %v", reason, rec.Body.String(), err)
 			}
-			if env.Error != reason {
-				t.Errorf("create while %s: envelope error = %q, want the manager's own reason", reason, env.Error)
+			if env.Message != reason {
+				t.Errorf("create while %s: envelope message = %q, want the manager's own reason", reason, env.Message)
 			}
 			if got := rec.Header().Get("Retry-After"); got != "5" {
 				t.Errorf("create while %s: Retry-After = %q, want %q", reason, got, "5")
