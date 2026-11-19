@@ -6,14 +6,14 @@ require (
 	github.com/cplieger/go/envx/v2 v2.0.0-dev.1
 	github.com/cplieger/go/filesafe v1.2.0-dev.2
 	github.com/cplieger/go/health/v2 v2.0.0
-	github.com/cplieger/go/httpserver/v2 v2.0.0-dev.10
+	github.com/cplieger/go/httpserver/v2 v2.0.0-dev.11
 	github.com/cplieger/go/httpwire v1.0.0-dev.3
 	github.com/cplieger/go/masked v1.0.0-dev.1
 	github.com/cplieger/go/pathinside v1.1.0
 	github.com/cplieger/go/slogx v1.1.0
 	github.com/cplieger/go/textsafe v1.1.0
 	github.com/cplieger/toolbelt/v3 v3.16.0-dev.15
-	github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.5
+	github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.6
 )
 
 require (
