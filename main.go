@@ -30,8 +30,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/envx/v2"
 	"github.com/cplieger/go/httpserver/v2"
+	"github.com/cplieger/go/masked"
 	"github.com/cplieger/go/slogx"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/pin"
@@ -901,9 +902,9 @@ type baseTools struct {
 	toolsDir    string
 	catalogPath string
 	catalogURL  string
-	// githubToken is sent with the engine's api.github.com requests; "" sends
+	// githubToken is sent with the engine's api.github.com requests; the zero value sends
 	// them anonymously. githubTokenEnv names the variable it came from.
-	githubToken    string
+	githubToken    masked.Secret
 	githubTokenEnv envx.Key
 	// trustedUIDs are TRUSTED_INSTALL_UIDS, the users whose write access to the
 	// tools tree does not fail the engine's integrity check.
@@ -1482,7 +1483,7 @@ func canonicalPathGuard(next http.Handler) http.Handler {
 }
 
 // buildHandler wraps the route mux in the middleware stack: Logging -> Recoverer ->
-// Gzip -> wsAttachLog -> SecurityHeaders -> host allowlist -> CrossOriginProtection ->
+// Gzip -> wsAttachLog -> SecurityHeaders -> host allowlist -> CrossOrigin ->
 // canonicalPathGuard -> mux. The order is the contract: Logging outermost so it sees
 // every final status; Recoverer inside it so the line records the 500; Gzip inside
 // Recoverer so a panic before the body was sent still answers 500; wsAttachLog
@@ -1527,10 +1528,14 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 			httpserver.WithPermissionsPolicy("camera=(), microphone=(), geolocation=()"),
 		),
 		hostPolicy.Middleware(),
-		http.NewCrossOriginProtection().Handler,
+		crossOrigin,
 		canonicalPathGuard,
 	)
 }
+
+// crossOrigin refuses an unsafe cross-site write with the cross_origin_refused
+// envelope, where the standard library's guard answers plain text.
+func crossOrigin(next http.Handler) http.Handler { return httpserver.CrossOrigin(next, nil) }
 
 // wsAttachMsg is the message of the /ws attach record wsAttachLog emits. A const so
 // a test can pin the exact wording without a second copy of the literal (goconst).

@@ -9,7 +9,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/envx/v2"
+	"github.com/cplieger/go/masked"
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/toolbelt/v3"
 )
@@ -37,8 +38,8 @@ func TestGitHubToken_readsGHTokenThenGITHUBToken(t *testing.T) {
 			t.Setenv("GH_TOKEN", tc.ghToken)
 			t.Setenv("GITHUB_TOKEN", tc.githubToken)
 			token, key := githubToken()
-			if token != tc.wantToken || key != tc.wantKey {
-				t.Errorf("githubToken() = (%q, %q), want (%q, %q)", token, key, tc.wantToken, tc.wantKey)
+			if token.Reveal() != tc.wantToken || key != tc.wantKey {
+				t.Errorf("githubToken() = (%q, %q), want (%q, %q)", token.Reveal(), key, tc.wantToken, tc.wantKey)
 			}
 		})
 	}
@@ -46,7 +47,7 @@ func TestGitHubToken_readsGHTokenThenGITHUBToken(t *testing.T) {
 
 func TestToolsConfig_sendsTheConfiguredGitHubToken(t *testing.T) {
 	t.Parallel()
-	cfg := toolsConfig(&baseTools{githubToken: "gh-tok", githubTokenEnv: "GH_TOKEN"}, t.TempDir(), nil)
+	cfg := toolsConfig(&baseTools{githubToken: masked.NewSecret("gh-tok"), githubTokenEnv: "GH_TOKEN"}, t.TempDir(), nil)
 	if cfg.GitHubToken == nil {
 		t.Fatal("toolsConfig(token gh-tok).GitHubToken = nil, want a source returning the token")
 	}
@@ -77,7 +78,7 @@ func TestStartTools_namesTheTokenVariableNeverTheToken(t *testing.T) {
 	rt := startTools(t.Context(), &baseTools{
 		configDir:      dir,
 		catalogPath:    filepath.Join(dir, "absent-catalog.json"),
-		githubToken:    secret,
+		githubToken:    masked.NewSecret(secret),
 		githubTokenEnv: "GH_TOKEN",
 	})
 	if rt.engine == nil {

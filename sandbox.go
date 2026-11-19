@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/envx/v2"
 )
 
 const (
