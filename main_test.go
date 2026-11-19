@@ -2988,3 +2988,23 @@ func TestKiroDefaultSettingsFile(t *testing.T) {
 		}
 	}
 }
+
+// TestCrossOriginWriteAnswersTheEnvelope pins the refusal's body: a cross-site
+// write to a guarded route answers 403 with the cross_origin_refused envelope
+// and a request id, never the standard library's plain-text body.
+func TestCrossOriginWriteAnswersTheEnvelope(t *testing.T) {
+	var hit bool
+	h := buildHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = true }), nil, "default-src 'self'", nil)
+	req := httptest.NewRequest(http.MethodPost, "http://localhost:9848/api/sessions", http.NoBody)
+	req.Header.Set("Origin", "http://attacker.example")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var body httpserver.ErrorResponse
+	if rec.Code != http.StatusForbidden || json.Unmarshal(rec.Body.Bytes(), &body) != nil || body.Code != "cross_origin_refused" || body.RequestID == "" {
+		t.Errorf("cross-site POST = %d %q, want 403 with the cross_origin_refused envelope", rec.Code, rec.Body.String())
+	}
+	if hit {
+		t.Error("the cross-site POST reached the handler")
+	}
+}

@@ -5,7 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/envx/v2"
+	"github.com/cplieger/go/masked"
 	"github.com/cplieger/toolbelt/v3"
 )
 
@@ -14,22 +15,22 @@ import (
 // order for github.com. Only an empty value counts as unset. The bytes are sent
 // as set, because GitHub compares them: a value net/http cannot put in a header
 // fails each request rather than authenticating as something not configured.
-func githubToken() (token string, key envx.Key) {
+func githubToken() (token masked.Secret, key envx.Key) {
 	for _, k := range [...]envx.Key{"GH_TOKEN", "GITHUB_TOKEN"} {
 		if v := envx.String(k); v != "" {
-			return v, k
+			return masked.NewSecret(v), k
 		}
 	}
-	return "", ""
+	return masked.Secret{}, ""
 }
 
-// githubTokenSource adapts a fixed token to toolbelt.Config.GitHubToken. Nil
-// for "" is toolbelt's anonymous mode.
-func githubTokenSource(token string) func(context.Context) (string, error) {
-	if token == "" {
+// githubTokenSource adapts a fixed token to toolbelt.Config.GitHubToken,
+// revealing it per request. Nil for the zero token is toolbelt's anonymous mode.
+func githubTokenSource(token masked.Secret) func(context.Context) (string, error) {
+	if token.IsZero() {
 		return nil
 	}
-	return func(context.Context) (string, error) { return token, nil }
+	return func(context.Context) (string, error) { return token.Reveal(), nil }
 }
 
 // announceGitHubToken records which variable supplied the GitHub token, never
