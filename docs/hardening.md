@@ -1,10 +1,10 @@
 # Security
 
-This page is for anyone opening Web Terminal for Kiro beyond their own machine. It covers what an exposed terminal gives away, how to put it behind a reverse proxy, how to run it with a read-only root, and what the image contains.
+This page is for anyone opening Web Terminal for Kiro beyond their own machine. It covers what an exposed terminal gives away, how to put it behind a reverse proxy, how to run it without root or with a read-only root, and what the image contains.
 
 ## What a tab can reach
 
-A browser tab is an interactive root shell. It reads and writes your files under `/workspace`, and it can read kiro-cli's stored sign-in plus the SSH keys and git config under `/config/home`. Anyone who can reach the port can use it, and Web Terminal for Kiro has no login of its own. Everyone who opens it shares one kiro-cli sign-in and one set of files. Before you expose it beyond your own machine, do at least one of these, and ideally both:
+A browser tab is an interactive shell, running as root unless the service has a `user:` line. It reads and writes your files under `/workspace`, and it can read kiro-cli's stored sign-in plus the SSH keys and git config under `/config/home`. Anyone who can reach the port can use it, and Web Terminal for Kiro has no login of its own. Everyone who opens it shares one kiro-cli sign-in and one set of files. Before you expose it beyond your own machine, do at least one of these, and ideally both:
 
 - Put it behind a reverse proxy that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik.
 - Keep the published port on loopback or a private network.
@@ -47,7 +47,7 @@ A proxy usually logs the full request address by default, such as Caddy's `uri` 
 
 ## Pasted images
 
-The page posts a pasted image to `/api/uploads`. That address passes the same host check and cross-origin check as the terminal, and it has no login either. It grants nothing a tab does not already have, since a tab is a root shell. The server writes only to `/uploads`, under a name that must match the `pasted-<date>T<time>` pattern, and refuses a request larger than 256 MiB.
+The page posts a pasted image to `/api/uploads`. That address passes the same host check and cross-origin check as the terminal, and it has no login either. It grants nothing a tab does not already have, since a tab is a shell with the same access. The server writes only to `/uploads`, under a name that must match the `pasted-<date>T<time>` pattern, and refuses a request larger than 256 MiB.
 
 ## Stored scrollback
 
@@ -66,13 +66,30 @@ The server keeps the open tabs in `/config/tabs.json` so it can bring them back 
 
 A damaged or unreadable file is logged and moved to `/config/tabs.json.unreadable`, and the next save writes a fresh one. A file saved by a newer version is moved aside the same way, so renaming it back after you upgrade again restores it. A symlink in place of the file is refused on read and on write, logged, and moved aside. The link is moved, never its target.
 
-## Root, and files on the host
+## Running without root
 
-The image runs as root so `git`, `gh` and SSH work, and it finds your `~/.ssh` under `/config/home`. Do not add a `user:` line. Files the container writes to `/config` and `/workspace` belong to root on the host.
+The image runs as root by default, so the files the container writes to `/config`, `/workspace` and `/uploads` belong to root on the host. A `user:` line runs the server and every tab as that user instead:
+
+```yaml
+services:
+  web-terminal-kiro:
+    image: ghcr.io/cplieger/web-terminal-kiro:latest
+    init: true
+    user: "1000:1000"
+```
+
+Before the next start, give that user the three host folders, for example with `sudo chown -R 1000:1000 /opt/appdata/web-terminal-kiro/config /opt/appdata/web-terminal-kiro/workspace /opt/appdata/web-terminal-kiro/uploads`. When the user cannot write a folder, the container exits at start, and the log names the folder and the user ID. The server also refuses a folder on the way to `/config/tools` that an account other than root and this user can write, as [`TRUSTED_INSTALL_UIDS`](configuration.md#trusted_install_uids) describes.
+
+Under another user, these things change:
+
+- SSH finds your keys as it does under root. OpenSSH looks up `~/.ssh` in the system's user list, which in the image names root only. At start, the container gives the running user an entry named `kiro` with the home folder `/config/home`, served by [nss_wrapper](https://cwrap.org/nss_wrapper.html). The entry lives in a private folder under `/tmp`, and dynamically linked programs started from a tab read it, so `getent passwd`, `ssh`, and `git` and `gh` over SSH all see it. Commands run in kiro-cli's [command sandbox](sandbox.md#inside-the-sandbox) do not, because kiro-cli clears their environment and gives them an empty `/tmp`. The log confirms it with `serving a passwd entry homed at HOME for this uid through nss_wrapper`. A user that the image already lists keeps its entry, with the home folder changed to `/config/home`.
+- Debian packages from the tools list do not install, because apt needs root. Each `apt:` entry fails at once. The log says `toolbelt: apt packages are unavailable` once at start, and the failed install, in the log and in `GET localhost:9848/api/tools/jobs`, ends with `apt packages need the container to run as root`. Tools from the catalog install as before.
+- kiro-cli's warning about running as root does not appear, since kiro-cli no longer runs as root. [Configuration](configuration.md#where-settings-live) describes that warning.
+- The start log warns `cannot remount /sys/fs/cgroup rw`, as it does under root. The server then reports no per-tab memory or process counts, and it still cleans up the processes a closed tab leaves behind. `cap_add` cannot change this for a user other than root.
 
 ## Read-only root
 
-Web Terminal for Kiro runs with `read_only: true` as long as `tools.json` lists no `apt:` entry. `read_only: true` stops anything inside the container from changing the image's own files. The image then needs one `tmpfs` beside the three folders the example already mounts. A `tmpfs` is a folder kept in memory that is emptied when the container stops. Add `read_only: true` and the `tmpfs:` line to the service:
+Web Terminal for Kiro runs with `read_only: true` as long as `tools.json` lists no `apt:` entry, as root or with a `user:` line from [Running without root](#running-without-root). `read_only: true` stops anything inside the container from changing the image's own files. The image then needs one `tmpfs` beside the three folders the example already mounts. A `tmpfs` is a folder kept in memory that is emptied when the container stops. Add `read_only: true` and the `tmpfs:` line to the service:
 
 ```yaml
 services:
@@ -90,7 +107,7 @@ services:
 
 Each folder holds this:
 
-- `/tmp` holds the server's tab titles in `/tmp/web-terminal-kiro`, plus whatever the programs in your tabs write there. The server itself uses a few KB, so the 256 MB are room for those programs. Docker mounts a `tmpfs` with `noexec` by default, so the line adds `exec`, the only setting this profile was checked with.
+- `/tmp` holds the server's tab titles in `/tmp/web-terminal-kiro`, plus whatever the programs in your tabs write there. With a `user:` line it also holds that user's entry in the user list, which `mode=1777` lets the user write. The server itself uses a few KB, so the 256 MB are room for those programs. Docker mounts a `tmpfs` with `noexec` by default, so the line adds `exec`, the only setting this profile was checked with.
 - `/config` holds the kiro-cli sign-in and install, the tools the tools engine installs, your settings and the saved tabs.
 - `/workspace` holds your repositories.
 - `/uploads` holds the images you paste. Under `read_only: true` it must stay a mount, because the image's own `/uploads` is on the read-only root.
@@ -101,7 +118,7 @@ An `apt:` entry from [Tools](tools.md#os-packages) does not install on a read-on
 
 The package database must describe the programs already in the image, so a `tmpfs` over it would hide that record, and a mounted copy breaks as soon as dpkg fails to write `/usr`. `/usr` holds the image's own programs, so no `tmpfs` or mount can stand in for it. Leave out `read_only: true` when `tools.json` lists an `apt:` entry.
 
-When an `apt:` entry fails this way, the Docker healthcheck still shows `healthy`. `/healthz` answers `"tools":"degraded"`, and the error on the tool's row reads `Unable to locate package`. The log's earlier warning about the package index names the read-only cause.
+When an `apt:` entry fails this way, the Docker healthcheck still shows `healthy`, and `/healthz` answers `"tools":"degraded"`. The log says `toolbelt: apt packages are unavailable` once at start, with the folder that refused the write. The failed install, in the log and in `GET localhost:9848/api/tools/jobs`, ends with `apt packages need a writable root filesystem`. With a `user:` line, it ends with the reason from [Running without root](#running-without-root) instead.
 
 The [command sandbox](sandbox.md) is separate from this setting. It makes the system read-only for the agent's commands only, inside their own namespaces. This profile was checked without the sandbox profiles.
 

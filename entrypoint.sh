@@ -1,14 +1,10 @@
 #!/bin/bash
-# Prepares persistent user/tool state, hardens paths root executes from,
-# prunes superseded KAS runtimes, seeds the Kiro theme and session-title
-# hook, prepares per-session containment, exports the Renovate-pinned
-# kiro-cli version and digests, and execs the Go web server.
-#
-# Does NOT install kiro-cli: the server owns that (cplieger/toolbelt's pin,
-# wired in main.go), after the listener binds, so a slow first-boot
-# download answers 503 instead of refusing connections. Fetched at
-# runtime rather than baked into the image because we do not redistribute
-# proprietary AWS Content; the user accepts the license on first boot.
+# Prepares persistent user/tool state, hardens paths the server executes from,
+# seeds the Kiro theme and session-title hook, prepares per-session containment,
+# exports the Renovate-pinned kiro-cli version and digests, and execs the server.
+# Does NOT install kiro-cli: the server does (toolbelt's pin, main.go) after the
+# listener binds, so a slow first-boot download answers 503. It is fetched at
+# runtime because the image does not redistribute proprietary AWS Content.
 
 set -u
 
@@ -53,31 +49,52 @@ logfmt_value() {
   printf '%s' "$safe"
 }
 
-# Warns on a non-root run instead of failing: the image is root-by-design (the
-# Dockerfile repoints root's /etc/passwd home to /config/home so OpenSSH's
-# getpwuid()-based "~" finds the persisted ~/.ssh), and a compose `user:` line
-# selects a UID with no passwd entry rather than a supported mode. Degraded, not
-# impossible: /config stays writable and the terminal still serves, only the
-# getpwuid-dependent and root-only paths break -- outside both cases "Failure
-# posture" reserves fatal for. Said HERE, before any of the four resulting
-# failures (ssh, make_config_dir, apt, containment pre-flight) can each blame
-# something else instead of the `user:` line.
-#
-# uid/gid are parameters rather than reads of $EUID so the branch is testable.
-# Always returns 0: nothing consumes the verdict.
-warn_if_not_root() {
-  local uid=${1:-$EUID} gid=${2:-${GROUPS[0]:-unknown}}
-  if [ "$uid" -eq 0 ]; then
+# Gives the running uid a passwd entry homed at $HOME when it has none: OpenSSH
+# resolves ~/.ssh through getpwuid(), never $HOME. /etc/passwd may be read-only,
+# so nss_wrapper (https://cwrap.org/nss_wrapper.html) serves private copies via
+# LD_PRELOAD to every dynamically linked descendant that keeps the environment
+# (kiro-cli's sandbox clears it). ld.so ignores LD_PRELOAD in setuid programs
+# (ld.so(8)), so only this uid's view changes. An earlier start's copies are
+# removed first, since a writable root keeps /tmp across restarts. Warns and
+# exports nothing when it cannot: the terminal still serves.
+provide_passwd_entry() {
+  local uid=$1 gid=$2 home=$3 tmp=${4:-${TMPDIR:-/tmp}} passwd=${5:-/etc/passwd} group=${6:-/etc/group}
+  local dir reason=''
+  if NSS_HOME=$home awk -F: -v uid="$uid" '$3 == uid && $6 == ENVIRON["NSS_HOME"] { found = 1 } END { exit !found }' "$passwd"; then
     return 0
   fi
-  # Single-quoted inside the hint: logfmt closes a field on the first unescaped double quote.
-  printf 'level=warn msg="running as a non-root user, but this image is root-by-design; several subsystems will fail" uid=%s gid=%s hint="%s" component=entrypoint\n' \
-    "$uid" "$gid" \
-    'git and gh over ssh fail with '\''No user exists for uid'\'' because only root has a passwd entry pointing at /config/home; apt installs cannot run; session containment cannot engage (dropping CAP_SYS_ADMIN needs CAP_SETPCAP); and the /config mode hardening cannot chmod paths this UID does not own. Remove the user: line from the compose service. See the README Quick start.' >&2
-  return 0
+  case "$home" in
+    *:* | *$'\n'*) reason='HOME holds a character a passwd field cannot carry' ;;
+  esac
+  if [ -z "$reason" ]; then
+    find "$tmp" -maxdepth 1 -name 'nss_wrapper.*' -type d -user "$uid" -exec rm -rf -- {} + 2>/dev/null
+  fi
+  if [ -z "$reason" ] && ! dir=$(mktemp -d "$tmp/nss_wrapper.XXXXXX" 2>/dev/null); then
+    reason="cannot create a private directory under $tmp"
+  fi
+  if [ -z "$reason" ] && {
+    ! NSS_HOME=$home awk -F: -v OFS=: -v uid="$uid" -v gid="$gid" '
+      $3 == uid { $6 = ENVIRON["NSS_HOME"]; seen = 1 }
+      { print }
+      END { if (!seen) print "kiro", "x", uid, gid, "", ENVIRON["NSS_HOME"], "/bin/bash" }' "$passwd" >"$dir/passwd" \
+      || ! awk -F: -v OFS=: -v gid="$gid" '
+        $3 == gid { seen = 1 }
+        { print }
+        END { if (!seen) print "kiro", "x", gid, "" }' "$group" >"$dir/group"
+  }; then
+    rm -rf "$dir"
+    reason="cannot write the passwd and group copies under $dir"
+  fi
+  if [ -n "$reason" ]; then
+    printf 'level=warn msg="cannot give this uid a passwd entry, so git and gh over ssh fail with '\''No user exists for uid'\''" uid=%s gid=%s reason="%s" component=entrypoint\n' \
+      "$uid" "$gid" "$(logfmt_value "${reason//$'\n'/ }")" >&2
+    return 0
+  fi
+  export NSS_WRAPPER_PASSWD="$dir/passwd" NSS_WRAPPER_GROUP="$dir/group"
+  export LD_PRELOAD="libnss_wrapper.so${LD_PRELOAD:+:$LD_PRELOAD}"
+  printf 'level=info msg="serving a passwd entry homed at HOME for this uid through nss_wrapper" uid=%s gid=%s home="%s" passwd="%s" component=entrypoint\n' \
+    "$uid" "$gid" "$(logfmt_value "$home")" "$dir/passwd" >&2
 }
-
-warn_if_not_root
 
 # Remounts the container's own cgroup tree rw so the server can put each tab's
 # kiro-cli process tree in its own cgroup, then drops the capability that made
@@ -88,8 +105,8 @@ warn_if_not_root
 # runs only in a deployment that grants it (the public compose grants none).
 # WARN, never fatal: without containment the server still serves terminals.
 enable_session_containment() {
-  # cg_root is a parameter, matching warn_if_not_root's uid/gid, so a unit test
-  # can hand it a temp dir instead of the host's real /sys/fs/cgroup.
+  # cg_root is a parameter so a unit test can hand it a temp dir instead of the
+  # host's real /sys/fs/cgroup.
   local cg_root=${1:-/sys/fs/cgroup} mount_err
   if ! mount_err=$(mount -o remount,rw "$cg_root" 2>&1); then
     # Carry mount's own error into the warn: it is the only discriminator between
@@ -97,7 +114,7 @@ enable_session_containment() {
     # through the shared logfmt_value; the newline flatten is a presentation
     # choice, done before the call so the RAW value is bounded first.
     mount_err=$(logfmt_value "${mount_err//$'\n'/ }")
-    printf 'level=warn msg="cannot remount /sys/fs/cgroup rw; per-session containment cannot engage, so per-session peak memory and task counts will not be reported. Closed-tab process trees are still reaped without it" error="%s" hint="OPTIONAL: add cap_add: [SYS_ADMIN] to the compose service to enable containment; the server and every terminal session drop the capability immediately after this remount. The grant is not fully transient: the container init at PID 1 keeps it for the container lifetime (inert -- it executes nothing; reaching its capability set needs code execution as root INSIDE the container, which is what this terminal already hands to anyone who can reach the port), docker exec processes receive it, and the widened seccomp profile persists. Not granted by default, because marker-based session reaping in the engine closes the process leak without it" component=entrypoint\n' "$mount_err" >&2
+    printf 'level=warn msg="cannot remount /sys/fs/cgroup rw; per-session containment cannot engage, so per-session peak memory and task counts will not be reported. Closed-tab process trees are still reaped without it" error="%s" hint="OPTIONAL, and only for a container running as root (a non-root uid cannot use the capability): add cap_add: [SYS_ADMIN] to the compose service to enable containment; the server and every terminal session drop the capability immediately after this remount. The grant is not fully transient: the container init at PID 1 keeps it for the container lifetime (inert -- it executes nothing; reaching its capability set needs code execution as root INSIDE the container, which is what this terminal already hands to anyone who can reach the port), docker exec processes receive it, and the widened seccomp profile persists. Not granted by default, because marker-based session reaping in the engine closes the process leak without it" component=entrypoint\n' "$mount_err" >&2
     return 1
   fi
   # Report ONLY what the remount proved, never that containment is available:
@@ -167,7 +184,7 @@ make_config_dir() {
     fatal 'refusing to use a symlinked config path; its target may be outside the /config mount' "dir=\"$dir\""
   fi
   if ! mkdir -p "$dir"; then
-    fatal 'failed to create config directory (is /config mounted and writable?)' "dir=\"$dir\""
+    fatal 'failed to create config directory (is /config mounted and writable by this uid?)' "dir=\"$dir\" uid=$EUID"
   fi
   if [ ! -d "$dir" ]; then
     fatal 'config path is not a directory' "dir=\"$dir\""
@@ -204,16 +221,13 @@ harden_config_dir() {
 }
 
 # --- persistent tool-tree integrity ---------------------------------------------
-# $TOOLS/kiro-cli-bin and $TOOLS/bin lead PATH and the version-addressed install
-# root sits beside them at $TOOLS/kiro-cli-versions, so the tree HOLDING kiro-cli is part of the
-# integrity story, not just the download: the install manager accepts an
-# already-present version directory on the strength of its own `.complete`
-# sentinel, which is trivially forgeable, unlike a digest. If an inherited
-# /config volume ever permitted group/other writes, another host user could
-# plant a version directory and be launched as root.
-# So: refuse symlinks, strip group/other write bits, fail boot if they
-# survive, and remember that the tree WAS writable so the taint flag exported
-# below tells the manager to trust no pre-existing version directory.
+# $TOOLS/kiro-cli-bin and $TOOLS/bin lead PATH beside the install root
+# $TOOLS/kiro-cli-versions, and the install manager accepts a present version
+# directory on its forgeable `.complete` sentinel. On a /config volume that once
+# permitted group/other writes, another host user could plant one for this
+# container to launch. So: refuse symlinks, strip group/other write bits, fail
+# boot if they survive, and record that the tree WAS writable so the taint flag
+# exported below makes the manager trust no pre-existing version directory.
 tools_tree_was_writable=0
 # $2 (default 1) arms the taint flag when the dir was writable. Pass 0 for a PATH
 # segment that never holds kiro-cli.
@@ -278,22 +292,14 @@ secure_tools_dir() {
   fi
 }
 
-# Reports an install root the container cannot execute from, which the mode checks
-# above cannot see: the install manager stages the pinned archive in a `.stage-*`
-# tree INSIDE this directory and execs both the upstream installer and the staged
-# binary's --version probe out of it, so a noexec mount fails the install with a
-# permission error naming a staged path, then a no-executable-found error, then the
-# retry ladder, and never names the cause. Probed at the directory the exec
-# actually happens in rather than read from /proc/mounts, because a submount or a
-# security module decides execve independently of the options this container can
-# see -- and a submount one level above the staging tree is not the same question.
-# Warn, never fatal, per "Failure posture": readiness already reports the install
-# as unavailable, and a mount is repairable only from a container that still boots.
-#
-# Must run AFTER secure_tools_dir has stripped this tree's group/other write bits:
-# the probe is created, chmod'ed and then EXECUTED AS ROOT, so on the very volume
-# the taint check exists for, a foreign host user with directory write access could
-# unlink it and substitute their own payload between the chmod and the exec.
+# Reports an install root the container cannot execute from: the manager stages
+# and execs the pinned archive inside this directory, so a noexec mount fails the
+# install with errors that never name the cause. Probed here rather than read from
+# /proc/mounts, since a submount or security module decides execve on its own.
+# Warn, never fatal: readiness already reports the install as unavailable.
+# Must run AFTER secure_tools_dir stripped this tree's group/other write bits: the
+# probe is created, chmod'ed and executed, and a foreign writer could swap it
+# between the chmod and the exec.
 warn_if_tools_noexec() {
   local dir=$1 probe out
   # Unwritable is the write probe's verdict, not this one's: warning here would
@@ -335,7 +341,7 @@ sweep_legacy_dispatchers() {
   local dir=${1:-}
   # Never expand to /kiro-cli* on an unset/empty argument.
   [ -n "$dir" ] || return 0
-  # The glob expands THROUGH a symlinked $dir, so this root rm -rf would delete
+  # The glob expands THROUGH a symlinked $dir, so this rm -rf would delete
   # the target's kiro-cli* entries. make_config_dir's check of $dir ran while its
   # parent could still be loose; the call site runs after harden_config_dir made
   # the parent 0700, so no group or other writer can swap $dir after this check.
@@ -398,12 +404,12 @@ warn_legacy_tool_metadata() {
 # boot that installs nothing, so a renamed key or subcommand makes every
 # container report kiro-cli unavailable.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="3.4.0"
-KIRO_CLI_SHA256="95b85a724ecda5340cc5c98ddc979f4d0a6e96712fb29a36b3e7afaf6c70d389"
+KIRO_CLI_VERSION="3.5.0"
+KIRO_CLI_SHA256="7f9bb76921f477125629619450d5942e160942aba9dd8cdc4a66f7678a20c56d"
 # The `# kiro-cli <version>` trailer is Renovate's version anchor for this
 # arch's digest lookup — do not hand-edit or drop it.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="98401395ca36eda9682445062c090b2c81413640d9f1e7433e741fa3147dde6e" # kiro-cli 3.4.0
+KIRO_CLI_SHA256_ARM64="ed45f387bca9356d1e767022a7cb504c3fbda20d3881c55c7d771877335ceec0" # kiro-cli 3.5.0
 # The Node.js bundled with the pinned kiro-cli that KIRO_CLI_HIGH_THROUGHPUT's
 # flags were measured on. The image smoke test fails when the pin bundles another
 # one: re-measure the flags on it, then update this literal. At runtime a tab whose
@@ -432,11 +438,13 @@ case "$home_real" in
   *) fatal 'HOME does not resolve beneath the /config mount' "home=\"$HOME\" resolved=\"${home_real:-unknown}\"" ;;
 esac
 
+provide_passwd_entry "$EUID" "$(id -g)" "$HOME"
+
 # Creates every persistent directory parent-to-child, proving each component
 # is a real directory before its child is created. A single `mkdir -p
 # "$HOME/.local/bin" ...` would traverse a symlink planted at any component
 # on an inherited volume -- and $HOME/.local/bin is later swept with `rm -rf
-# "$dir"/kiro-cli*` as root, so a planted link there used to delete the
+# "$dir"/kiro-cli*`, so a planted link there used to delete the
 # link target's own files.
 printf 'level=info msg="preparing persistent directories" dir="%s" component=entrypoint\n' /config >&2
 make_config_dir /config
@@ -469,8 +477,8 @@ make_config_dir "$HOME/.local"
 make_config_dir "$HOME/.local/bin"
 make_config_dir "$HOME/.ssh"
 make_config_dir "$HOME/.kiro"
-# kiro-cli persists cli.json / mcp.json / permissions.yaml here, written as
-# root long before the theme block looks at this path.
+# kiro-cli persists cli.json / mcp.json / permissions.yaml here, long before
+# the theme block looks at this path.
 make_config_dir "$HOME/.kiro/settings"
 
 # mkdir -p succeeds when the directories already exist — even on a read-only
@@ -481,14 +489,14 @@ make_config_dir "$HOME/.kiro/settings"
 # read-only mount every chmod fails too, and four permission warnings ahead of
 # this fatal point the operator at the wrong cause.
 if ! probe=$(mktemp "$TOOLS/.write-probe.XXXXXX") || ! rm -f "$probe"; then
-  fatal '/config/tools is not writable (read-only bind mount?)'
+  fatal '/config/tools is not writable by this uid (a read-only bind mount, or a host folder another uid owns?)' "uid=$EUID gid=$(id -g)"
 fi
 
 # Tightens the tree holding the first-on-PATH binary. /config is checked too: a
 # writable parent lets an attacker replace $TOOLS wholesale. Runs BEFORE the
 # exec, so the taint flag exported below is final by the time the manager reads it.
 # Parents first, here and in the harden_config_dir pass below: each check and
-# chmod acts on a path, which only holds once root alone can write its parent
+# chmod acts on a path, which only holds once no group or other user can write its parent
 # (tools_dir_hardening_test.sh pins the order).
 secure_tools_dir /config
 secure_tools_dir "$TOOLS"
@@ -516,7 +524,7 @@ harden_config_dir "$HOME/.kiro/settings"
 harden_config_dir "$HOME/.ssh"
 
 # Writable is not executable, and the install needs both (see the function). Placed
-# below the tightening pass on purpose: the probe is exec'd as root, so it must not
+# below the tightening pass on purpose: the probe is exec'd, so it must not
 # be created while the tree it lands in is still group/other-writable.
 warn_if_tools_noexec "$TOOLS/kiro-cli-versions"
 
@@ -565,17 +573,11 @@ for version_entry in "$TOOLS/kiro-cli-versions"/* "$TOOLS/kiro-cli-versions"/*/*
       "$(logfmt_value "$version_entry")" "${version_entry_mode_after:-unknown}" "${version_entry_mode:-unknown}" "$version_entry_chmod_rc" >&2
   fi
 done
-# $TOOLS/go/bin (GOPATH/bin) is one more /config-resident PATH dir the
-# Dockerfile puts ahead of /usr/bin. The runtimes/{go,node}/bin segments were
-# dropped from ENV PATH once an audit showed both trees held only binaries
-# already resolving through $TOOLS/bin, so nothing hardens them here any
-# more -- a dir not on PATH cannot source a root-executed planted binary.
-# arm=0 (never holds kiro-cli), owned=0 (never created or repaired here, so
-# an odd shape warns rather than fails boot).
-#
-# Accepted residual: `chmod go-w` stops NEW directory writes but never
-# re-verifies files already planted while the tree was writable. Quarantining
-# unrecognized binaries would delete the user's own `go install` output.
+# $TOOLS/go/bin (GOPATH/bin) is a /config-resident PATH dir ahead of /usr/bin.
+# arm=0 (never holds kiro-cli), owned=0 (never created or repaired here, so an
+# odd shape warns rather than fails boot). `chmod go-w` never re-verifies files
+# planted while the tree was writable: quarantining them would delete the
+# user's own `go install` output.
 for path_dir in "$TOOLS/go" "$TOOLS/go/bin"; do
   [ -e "$path_dir" ] || [ -L "$path_dir" ] || continue
   secure_tools_dir "$path_dir" 0 0
@@ -587,7 +589,7 @@ done
 # we can; never quarantine.
 # stat -L / chmod deliberately DEREFERENCE: both hold symlinks into the
 # engine's opt/<tool>/<ver>/ trees or the manager's version dirs, and the
-# target's mode decides whether a foreign host user can rewrite what root runs.
+# target's mode decides whether a foreign host user can rewrite what this container runs.
 tightened_tool_bins=0
 for tool_bin in "$TOOLS/kiro-cli-bin"/* "$TOOLS/bin"/*; do
   # An unmatched glob, or a dangling symlink -- nothing that can be executed.
@@ -620,7 +622,7 @@ for tool_bin in "$TOOLS/kiro-cli-bin"/* "$TOOLS/bin"/*; do
   # still loose, or unreadable, stays OUT of the count below.
   tool_bin_mode=$(stat -Lc '%a' "$tool_bin" 2>/dev/null) || tool_bin_mode=""
   if [ -z "$tool_bin_mode" ] || [ $((8#$tool_bin_mode & 0022)) -ne 0 ]; then
-    printf 'level=warn msg="a binary on the first-on-PATH tools tree is still group/other-writable, or its mode cannot be verified after tightening; a foreign host user could rewrite it in place and this container runs it as root" path="%s" mode=%s was=%s chmod_rc=%d component=entrypoint\n' \
+    printf 'level=warn msg="a binary on the first-on-PATH tools tree is still group/other-writable, or its mode cannot be verified after tightening; a foreign host user could rewrite it in place and this container runs it" path="%s" mode=%s was=%s chmod_rc=%d component=entrypoint\n' \
       "$(logfmt_value "$tool_bin")" "${tool_bin_mode:-unknown}" "${loose_mode:-unknown}" "$chmod_rc" >&2
     continue
   fi

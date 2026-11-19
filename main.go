@@ -30,8 +30,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/go/envx"
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/envx/v2"
+	"github.com/cplieger/go/httpserver/v2"
+	"github.com/cplieger/go/masked"
 	"github.com/cplieger/go/slogx"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/pin"
@@ -81,6 +82,12 @@ func parseTrustedProxies() []netip.Prefix {
 	return prefixes
 }
 
+// hostRefusal answers a refused Host with the envelope's host_not_allowed code
+// and a message that names the setting an operator changes.
+func hostRefusal(w http.ResponseWriter, r *http.Request, status int, code httpserver.ErrorCode, _ string) {
+	httpserver.WriteError(w, r, status, code, "host not allowed. Add it to ALLOWED_HOSTS to serve this hostname")
+}
+
 // parseAllowedHosts reads the comma-separated ALLOWED_HOSTS list of exact hostnames
 // / IPs this server answers for into a httpserver.HostPolicy. It closes the DNS-rebinding
 // hole a same-origin check alone leaves open: rebinding makes Origin and Host AGREE, so
@@ -92,8 +99,7 @@ func parseAllowedHosts() *httpserver.HostPolicy {
 	const key = "ALLOWED_HOSTS"
 	policy, invalid := httpserver.ParseHostList(strings.Split(envx.String(key), ","),
 		httpserver.WithLoopbackExempt(true),
-		httpserver.WithHostAllowlistError("host_not_allowed",
-			"host not allowed. Add it to ALLOWED_HOSTS to serve this hostname"))
+		httpserver.WithHostResponder(hostRefusal))
 	if len(invalid) > 0 {
 		// Count-only, like parseTrustedProxies.
 		slog.Warn("dropping malformed "+key+" entries; they cannot match any browser-sent Host",
@@ -488,10 +494,9 @@ func run() error {
 	mgr := registerRoutes(mux, deps, build(""))
 	shutdownSessions := newSessionShutdown(cancelBase, mgr)
 
-	var lc net.ListenConfig
-	ln, err := lc.Listen(context.Background(), "tcp", addr)
+	ln, err := httpserver.Listen(context.Background(), httpserver.ListenSetting{Name: "LISTEN_ADDR", Addr: addr})
 	if err != nil {
-		return atStage(stageListen, fmt.Errorf("listen on %s: %w", addr, err))
+		return atStage(stageListen, err)
 	}
 
 	// WithSlogErrorLog keeps net/http's own diagnostics in the slog stream; Warn, not
@@ -897,9 +902,9 @@ type baseTools struct {
 	toolsDir    string
 	catalogPath string
 	catalogURL  string
-	// githubToken is sent with the engine's api.github.com requests; "" sends
+	// githubToken is sent with the engine's api.github.com requests; the zero value sends
 	// them anonymously. githubTokenEnv names the variable it came from.
-	githubToken    string
+	githubToken    masked.Secret
 	githubTokenEnv envx.Key
 	// trustedUIDs are TRUSTED_INSTALL_UIDS, the users whose write access to the
 	// tools tree does not fail the engine's integrity check.
@@ -934,12 +939,13 @@ type toolsRuntime struct {
 	// creation is gated on it so the first kiro-cli never spawns before the
 	// manifest's tools are on PATH.
 	syncing func() bool
-	// state is the /healthz informational detail: syncing | ok | degraded. LIVE,
-	// not boot-only: after the boot verdict it tracks the engine's counted jobs.
+	// state is the reducer's verdict: syncing | ok | degraded. LIVE, not
+	// boot-only: after the boot verdict it tracks the engine's counted jobs.
+	// toolsHealth folds it with missing for /healthz.
 	state func() string
-	// missing is whole-tree convergence, a separate question from state (did the
-	// last job succeed). ok is false until the first recount, so a premature zero
-	// cannot read as convergence.
+	// missing is whole-tree convergence: enabled entries not installed. ok is
+	// false until the first recount, so a premature zero cannot read as
+	// convergence.
 	missing func() (n int, ok bool)
 }
 
@@ -951,10 +957,21 @@ const (
 	// window in which POST /api/sessions answers 503 "tools installing").
 	toolsStateSyncing = "syncing"
 	toolsStateOK      = "ok"
-	// toolsStateDegraded is the verdict for a tools subsystem that FAILED, as
-	// opposed to one deliberately absent (which omits the field entirely).
+	// toolsStateDegraded is the verdict for a tools subsystem or job that FAILED,
+	// or a tree with tools missing, as opposed to one deliberately absent (which
+	// omits the field entirely).
 	toolsStateDegraded = "degraded"
 )
+
+// toolsHealth is /healthz's tools value for one read of the reducer's state and
+// the convergence count: "ok" stands only when a count says nothing is missing,
+// so the field never contradicts the tools_missing written beside it.
+func toolsHealth(state string, missing int, counted bool) string {
+	if state == toolsStateOK && (!counted || missing > 0) {
+		return toolsStateDegraded
+	}
+	return state
+}
 
 // toolsStatus is the app-owned reducer behind /healthz's INFORMATIONAL tools field,
 // fed by the boot reconcile's verdict once and by the engine's OnJobChanged callback
@@ -1034,7 +1051,7 @@ func (s *toolsStatus) watchConvergence(ctx context.Context, count func() (int, e
 			// Back to unknown: tools_missing is absent when the count is not known, and an
 			// unreadable manifest is persistent and operator-fixable, hence Warn.
 			s.missing.Store(-1)
-			slog.Warn("tools: convergence recount failed; /healthz omits tools_missing until one succeeds",
+			slog.Warn("tools: convergence recount failed; /healthz omits tools_missing until a recount succeeds and reports tools=degraded once the start pass ends",
 				"error", err,
 				"hint", "fix the manifest (schema v2 JSON); an unreadable manifest also fails the tools engine outright on the next restart")
 			return
@@ -1466,7 +1483,7 @@ func canonicalPathGuard(next http.Handler) http.Handler {
 }
 
 // buildHandler wraps the route mux in the middleware stack: Logging -> Recoverer ->
-// Gzip -> wsAttachLog -> SecurityHeaders -> host allowlist -> CrossOriginProtection ->
+// Gzip -> wsAttachLog -> SecurityHeaders -> host allowlist -> CrossOrigin ->
 // canonicalPathGuard -> mux. The order is the contract: Logging outermost so it sees
 // every final status; Recoverer inside it so the line records the 500; Gzip inside
 // Recoverer so a panic before the body was sent still answers 500; wsAttachLog
@@ -1511,10 +1528,14 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 			httpserver.WithPermissionsPolicy("camera=(), microphone=(), geolocation=()"),
 		),
 		hostPolicy.Middleware(),
-		http.NewCrossOriginProtection().Handler,
+		crossOrigin,
 		canonicalPathGuard,
 	)
 }
+
+// crossOrigin refuses an unsafe cross-site write with the cross_origin_refused
+// envelope, where the standard library's guard answers plain text.
+func crossOrigin(next http.Handler) http.Handler { return httpserver.CrossOrigin(next, nil) }
 
 // wsAttachMsg is the message of the /ws attach record wsAttachLog emits. A const so
 // a test can pin the exact wording without a second copy of the literal (goconst).

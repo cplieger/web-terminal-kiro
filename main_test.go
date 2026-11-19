@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/pin"
@@ -1267,28 +1267,14 @@ func TestToolsStatus_reducerTransitions(t *testing.T) {
 	}
 }
 
-// TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates is the end-to-end
-// half: the SAME transitions driven through the real toolbelt engine and the
-// real Config.OnJobChanged wiring startTools installs, so the callback path
-// itself is pinned rather than the reducer in isolation.
-//
-// The boot manifest fails on purpose (an unresolvable entry with no catalog),
-// which is the state the finding describes: repaired tools, working sessions,
-// and a health field stuck on "degraded" until the container is recreated. Then
-// a real install job heals it, a real catalog-refresh failure does not touch
-// it, and a real failed install degrades it again.
-//
-// After EVERY transition this asserts the two things that must not move:
-//
-//   - the session-create gate stays LIFTED. A boot failure lifts it
-//     deliberately (degraded-not-dead) and the reducer holds no reference to
-//     it, so no job outcome may re-close it. Asserted through composeGate with
-//     rt.syncing — the exact predicate registerRoutes installs — because that
-//     is the property most likely to regress if the two cells are ever merged
-//     back into one.
-//   - kiro-cli readiness is untouched. It is a separate verdict with its own
-//     rescan hook, so health keeps answering 200 {"status":"ok"} while only the
-//     informational tools field moves.
+// TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates drives the reducer
+// through the real engine and the OnJobChanged wiring startTools installs: a
+// failed boot reconcile, a repair install, a failed catalog refresh, a failed
+// install, a removal and a converging install. /healthz's tools field follows
+// the job verdict only while nothing is missing, so the repair alone leaves it
+// degraded. After every stage the session-create gate stays lifted (through
+// composeGate with rt.syncing, the predicate registerRoutes installs) and
+// kiro-cli readiness keeps health at 200.
 func TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skipf("bash unavailable; the manual install below is the offline success path: %v", err)
@@ -1312,8 +1298,7 @@ func TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates(t *testing.T) {
 
 	// The create gate, driven by the production predicate. A real POST would
 	// spawn a PTY whose logging goroutines leak into later capture tests, so
-	// the inner handler is a stub — the shape TestSessionCreateGate_ToolsSyncing
-	// established for the same reason.
+	// the inner handler is a stub.
 	inner := 0
 	gated := composeGate(
 		func(next http.Handler) http.Handler { return next },
@@ -1328,21 +1313,26 @@ func TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates(t *testing.T) {
 	var kiroReadyCalls atomic.Int64
 	deps := newTestDeps(true)
 	deps.toolsState = rt.state
+	deps.toolsMissing = rt.missing
 	deps.kiroReady = func() (bool, string) {
 		kiroReadyCalls.Add(1)
 		return true, ""
 	}
 	health := handleHealth(deps)
 
-	assertStage := func(stage, wantTools string) {
+	assertStage := func(stage, wantState, wantHealth string, wantMissing int) {
 		t.Helper()
 		// toolbelt releases Wait before it calls OnJobChanged with the terminal
-		// state, so the reducer's store can land just after Wait returns.
-		for deadline := time.Now().Add(10 * time.Second); rt.state() != wantTools && time.Now().Before(deadline); {
+		// state, and the recount runs on its own goroutine after that.
+		settled := func() bool {
+			n, ok := rt.missing()
+			return rt.state() == wantState && ok && n == wantMissing
+		}
+		for deadline := time.Now().Add(10 * time.Second); !settled() && time.Now().Before(deadline); {
 			time.Sleep(5 * time.Millisecond)
 		}
-		if got := rt.state(); got != wantTools {
-			t.Fatalf("%s: tools state = %q, want %q", stage, got, wantTools)
+		if n, ok := rt.missing(); rt.state() != wantState || !ok || n != wantMissing {
+			t.Fatalf("%s: tools state = %q, missing = %d (counted %v), want %q and %d", stage, rt.state(), n, ok, wantState, wantMissing)
 		}
 		if rt.syncing() {
 			t.Fatalf("%s: the session-create gate re-closed; the reducer must not be able to reach it", stage)
@@ -1360,12 +1350,9 @@ func TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates(t *testing.T) {
 			t.Fatalf("%s: health = %d (body %s), want 200; tool convergence never gates readiness",
 				stage, hrec.Code, hrec.Body.String())
 		}
-		body := hrec.Body.String()
-		if !strings.Contains(body, `"status":"ok"`) {
-			t.Fatalf("%s: health body = %s, want status ok (kiro-cli readiness is a separate verdict)", stage, body)
-		}
-		if !strings.Contains(body, `"tools":"`+wantTools+`"`) {
-			t.Fatalf("%s: health body = %s, want tools %q", stage, body, wantTools)
+		want := fmt.Sprintf(`{"status":"ok","tools":%q,"tools_missing":%d}`, wantHealth, wantMissing)
+		if got := strings.TrimSpace(hrec.Body.String()); got != want {
+			t.Fatalf("%s: health body = %s, want %s", stage, got, want)
 		}
 	}
 
@@ -1377,9 +1364,9 @@ func TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	assertStage("after a failed boot reconcile", toolsStateDegraded)
+	assertStage("after a failed boot reconcile", toolsStateDegraded, toolsStateDegraded, 1)
 
-	runJob := func(stage string, enqueue func() (*toolbelt.Job, error), wantState string) *toolbelt.Job {
+	runJob := func(stage string, enqueue func() (*toolbelt.Job, error), wantState string) {
 		t.Helper()
 		j, err := enqueue()
 		if err != nil {
@@ -1394,24 +1381,30 @@ func TestStartTools_toolsFieldRecoversLiveWithoutTouchingGates(t *testing.T) {
 		if final.State != wantState {
 			t.Fatalf("%s: job state = %q (error %q), want %q", stage, final.State, final.Error, wantState)
 		}
-		return final
 	}
 
-	// THE FINDING: a repair performed through the loopback tools API — which
-	// enqueues exactly this install job — heals the field with no restart.
+	// A repair through the loopback tools API enqueues exactly this install job:
+	// the verdict heals with no restart, but the other entry is still missing.
 	runJob("repair install", func() (*toolbelt.Job, error) { return rt.engine.Install("faketool") }, toolbelt.JobDone)
-	assertStage("after a successful repair install", toolsStateOK)
+	assertStage("after a successful repair install", toolsStateOK, toolsStateDegraded, 1)
 
-	// A failed catalog refresh must NOT degrade: keep-last-good makes it
-	// routine, and the boot refresh runs before the publisher is reachable.
-	// The URL is empty here (no TOOL_CATALOG_URL), so the fetch fails.
+	// A failed catalog refresh must NOT touch the verdict: keep-last-good makes
+	// it routine. The URL is empty here (no TOOL_CATALOG_URL), so the fetch fails.
 	runJob("catalog refresh", rt.engine.RefreshCatalog, toolbelt.JobFailed)
-	assertStage("after a failed catalog refresh", toolsStateOK)
+	assertStage("after a failed catalog refresh", toolsStateOK, toolsStateDegraded, 1)
 
-	// A failed install DOES degrade: a tool the manifest says should be on
-	// PATH is not there, which is the only thing this field claims.
 	runJob("failing install", func() (*toolbelt.Job, error) { return rt.engine.Install("no-such-tool-xyz") }, toolbelt.JobFailed)
-	assertStage("after a failed install", toolsStateDegraded)
+	assertStage("after a failed install", toolsStateDegraded, toolsStateDegraded, 1)
+
+	// A removal is not a counted job, so the failed verdict stands with nothing missing.
+	runJob("remove the failing entry", func() (*toolbelt.Job, error) {
+		j, _, err := rt.engine.Remove("no-such-tool-xyz")
+		return j, err
+	}, toolbelt.JobDone)
+	assertStage("after removing the failing entry", toolsStateDegraded, toolsStateDegraded, 0)
+
+	runJob("converging install", func() (*toolbelt.Job, error) { return rt.engine.Install("faketool") }, toolbelt.JobDone)
+	assertStage("after a converging install", toolsStateOK, toolsStateOK, 0)
 
 	if kiroReadyCalls.Load() == 0 {
 		t.Error("kiroReady was never consulted; the health assertions above never proved readiness stayed separate")
@@ -1431,6 +1424,7 @@ func TestToolsStatus_callbackAndHealthReadAreRaceClean(t *testing.T) {
 
 	deps := newTestDeps(true)
 	deps.toolsState = s.get
+	deps.toolsMissing = s.missingCount
 	health := handleHealth(deps)
 
 	const rounds = 200
@@ -2980,9 +2974,10 @@ func TestKiroDefaultSettingsFile(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("kiro-cli-defaults.json is not a JSON object: %v", err)
 	}
+	// app.warnOnElevatedPrivileges stays kiro-cli's own: root is an operator choice, so
+	// kiro-cli's warning about it is accurate.
 	want := map[string]any{
-		"telemetry.enabled":            false,
-		"app.warnOnElevatedPrivileges": false,
+		"telemetry.enabled": false,
 	}
 	if !maps.Equal(got, want) {
 		t.Errorf("kiro-cli-defaults.json = %v, want %v", got, want)
@@ -2991,5 +2986,25 @@ func TestKiroDefaultSettingsFile(t *testing.T) {
 		if _, ok := got[a.Name]; ok {
 			t.Errorf("%q is both a default and a boot-time assertion; the assertion would overwrite every user change", a.Name)
 		}
+	}
+}
+
+// TestCrossOriginWriteAnswersTheEnvelope pins the refusal's body: a cross-site
+// write to a guarded route answers 403 with the cross_origin_refused envelope
+// and a request id, never the standard library's plain-text body.
+func TestCrossOriginWriteAnswersTheEnvelope(t *testing.T) {
+	var hit bool
+	h := buildHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = true }), nil, "default-src 'self'", nil)
+	req := httptest.NewRequest(http.MethodPost, "http://localhost:9848/api/sessions", http.NoBody)
+	req.Header.Set("Origin", "http://attacker.example")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var body httpserver.ErrorResponse
+	if rec.Code != http.StatusForbidden || json.Unmarshal(rec.Body.Bytes(), &body) != nil || body.Code != "cross_origin_refused" || body.RequestID == "" {
+		t.Errorf("cross-site POST = %d %q, want 403 with the cross_origin_refused envelope", rec.Code, rec.Body.String())
+	}
+	if hit {
+		t.Error("the cross-site POST reached the handler")
 	}
 }

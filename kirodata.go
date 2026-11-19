@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/envx/v2"
 )
 
 // skipBinaryPinningKey is kiro-cli's own switch, set by the image: with it on,

@@ -472,6 +472,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 #   - git: source control from inside the terminal (gh is NOT baked; it
 #     is opt-in via /config/tools/tools.json)
 #   - openssh-client: git over ssh (and gh over ssh once gh is enabled)
+#   - libnss-wrapper: the passwd entry ssh needs for a compose `user:` uid,
+#     which the entrypoint serves through LD_PRELOAD (provide_passwd_entry)
 #   - jq + less: standard kiro-cli diagnostic dependencies
 #   - libasound2: kiro-cli dlopens libasound.so.2 at runtime. It is NOT
 #     declared in kiro-cli's .deb manifest (which only lists GUI deps:
@@ -523,6 +525,7 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
     less \
     libasound2 \
     libatomic1 \
+    libnss-wrapper \
     openssh-client \
     socat \
     unzip \
@@ -601,12 +604,13 @@ COPY --chmod=755 hooks/session-title.sh /opt/web-terminal-kiro/hooks/session-tit
 # bwrap kiro-cli resolves is the checked shim or one that refuses (sandbox.go).
 COPY --chmod=755 sandbox/bwrap.sh /opt/web-terminal-kiro/sandbox/bin/bwrap
 COPY --chmod=755 sandbox/bwrap-unavailable.sh /opt/web-terminal-kiro/sandbox/unavailable/bwrap
-# Where a pasted image lands (upload.go). Made at build time because the container
-# may run as a non-root user, and sticky world-writable like /tmp for the same reason.
-# A volume mounted here hides it and must be writable by that user.
+# Where a pasted image lands (upload.go), and the parent of the server's
+# /run/user/<uid> (sandbox.go runUserRoot). Made at build time and sticky
+# world-writable like /tmp, because the container may run as a non-root user.
+# A volume mounted at /uploads hides it and must be writable by that user.
 # The kas-node link makes the server binary kiro-cli's agent-engine node launcher
 # when KIRO_CLI_HIGH_THROUGHPUT is on (enginetuning.go kasNodeLauncher).
-RUN mkdir -p /uploads /opt/web-terminal-kiro/engine && chmod 1777 /uploads && \
+RUN mkdir -p /uploads /run/user /opt/web-terminal-kiro/engine && chmod 1777 /uploads /run/user && \
     ln -s /app/web-terminal-kiro /opt/web-terminal-kiro/engine/kas-node
 
 # The xclip link makes the server binary the clipboard tool kiro-cli copies with,

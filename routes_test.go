@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/health/v2"
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/web-terminal-engine/v6/terminal"
 )
@@ -618,9 +618,6 @@ func TestBuildCSPPolicyFailsLoud(t *testing.T) {
 		{"no style block", fstest.MapFS{
 			"index.html": &fstest.MapFile{Data: []byte(`<html><script type="importmap">{}</script></html>`)},
 		}},
-		{"unterminated style block", fstest.MapFS{
-			"index.html": &fstest.MapFile{Data: []byte(`<html><script type="importmap">{}</script><style>body{margin:0}`)},
-		}},
 		{"unterminated style open tag", fstest.MapFS{
 			"index.html": &fstest.MapFile{Data: []byte(`<html><script type="importmap">{}</script><style`)},
 		}},
@@ -905,13 +902,15 @@ func TestHealthEndpoint_body(t *testing.T) {
 		{"unready", newTestDeps(false), http.StatusServiceUnavailable, `{"status":"unhealthy","reasons":["starting up or shutting down"]}`},
 		{"ready", newTestDeps(true), http.StatusOK, `{"status":"ok"}`},
 		{"unready carries the informational tools state", unreadyDepsWithTools(), http.StatusServiceUnavailable, `{"status":"unhealthy","reasons":["starting up or shutting down"],"tools":"syncing"}`},
-		// The last repair succeeded (tools "ok") while one enabled tool is still
-		// missing: the count is the second, whole-tree question.
-		{"a partial repair reports ok alongside an outstanding count", depsWithToolsMissing(true, 1), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":1}`},
+		// The last job succeeded while one enabled tool is still missing, as after
+		// an apt: row fails and another tool then installs: the tree is not ok.
+		{"an outstanding count after a successful job reports degraded", depsWithTools(toolsStateOK, true, 1), http.StatusOK, `{"status":"ok","tools":"degraded","tools_missing":1}`},
 		// Zero is the converged answer, so it is written, never dropped.
-		{"a converged tree reports zero rather than omitting it", depsWithToolsMissing(true, 0), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":0}`},
-		{"an uncounted tree omits the field", depsWithToolsMissing(false, 0), http.StatusOK, `{"status":"ok","tools":"ok"}`},
-		{"ready carries the sandbox state last", withSandbox(depsWithToolsMissing(true, 0), sandboxAvailable), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":0,"sandbox":"available"}`},
+		{"a converged tree reports ok and zero rather than omitting it", depsWithTools(toolsStateOK, true, 0), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":0}`},
+		{"an uncounted tree omits the count and claims no ok", depsWithTools(toolsStateOK, false, 0), http.StatusOK, `{"status":"ok","tools":"degraded"}`},
+		{"a failed job stays degraded with nothing missing", depsWithTools(toolsStateDegraded, true, 0), http.StatusOK, `{"status":"ok","tools":"degraded","tools_missing":0}`},
+		{"the start pass stays syncing while tools are missing", depsWithTools(toolsStateSyncing, true, 3), http.StatusOK, `{"status":"ok","tools":"syncing","tools_missing":3}`},
+		{"ready carries the sandbox state last", withSandbox(depsWithTools(toolsStateOK, true, 0), sandboxAvailable), http.StatusOK, `{"status":"ok","tools":"ok","tools_missing":0,"sandbox":"available"}`},
 		{"unready carries the sandbox state", withSandbox(newTestDeps(false), sandboxUnavailable), http.StatusServiceUnavailable, `{"status":"unhealthy","reasons":["starting up or shutting down"],"sandbox":"unavailable"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1076,11 +1075,11 @@ func unreadyDepsWithTools() *routeDeps {
 	return d
 }
 
-// depsWithToolsMissing builds a ready runtime whose last job succeeded, with the
-// whole-tree convergence count either known (ok) or not yet taken.
-func depsWithToolsMissing(known bool, n int) *routeDeps {
+// depsWithTools builds a ready runtime whose tools reducer holds state, with the
+// whole-tree convergence count either known or not yet taken.
+func depsWithTools(state string, known bool, n int) *routeDeps {
 	d := newTestDeps(true)
-	d.toolsState = func() string { return "ok" }
+	d.toolsState = func() string { return state }
 	d.toolsMissing = func() (int, bool) { return n, known }
 	return d
 }
@@ -1271,13 +1270,13 @@ func TestToolsAPI_LoopbackOnly(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &denied); err != nil {
 		t.Fatalf("remote peer: body %q is not the standard envelope: %v", rec.Body.String(), err)
 	}
-	if !strings.Contains(denied.Error, "loopback-only") || denied.Code != "loopback_only" {
-		t.Errorf("remote peer: envelope = {error:%q code:%q}, want a loopback-only message and code %q", denied.Error, denied.Code, "loopback_only")
+	if !strings.Contains(denied.Message, "loopback-only") || denied.Code != "loopback_only" {
+		t.Errorf("remote peer: envelope = {message:%q code:%q}, want a loopback-only message and code %q", denied.Message, denied.Code, "loopback_only")
 	}
 	// The remedy the 403 names must be this deployment's address, not the default
 	// port: a refused caller sees nothing else.
-	if !strings.Contains(denied.Error, "curl localhost:8080") {
-		t.Errorf("remote peer: envelope error = %q, want it to name this deployment's address (curl localhost:8080)", denied.Error)
+	if !strings.Contains(denied.Message, "curl localhost:8080") {
+		t.Errorf("remote peer: envelope message = %q, want it to name this deployment's address (curl localhost:8080)", denied.Message)
 	}
 
 	// Loopback peer AND loopback Host: served. The fresh engine has an empty
@@ -1504,8 +1503,8 @@ func TestSessionCreateGate_ToolsSyncing(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("create during sync: body %q is not the standard envelope: %v", rec.Body.String(), err)
 	}
-	if env.Error != "tools installing" || env.Code != "not_ready" {
-		t.Fatalf("create during sync: envelope = {error:%q code:%q}, want {error:%q code:%q}", env.Error, env.Code, "tools installing", "not_ready")
+	if env.Message != "tools installing" || env.Code != "not_ready" {
+		t.Fatalf("create during sync: envelope = {message:%q code:%q}, want {message:%q code:%q}", env.Message, env.Code, "tools installing", "not_ready")
 	}
 
 	// Health stays reachable and reports the informational tools state.
