@@ -46,15 +46,15 @@ import (
 // factory binds its session logger from slog.Default() at Create time (no
 // t.Parallel).
 func TestSessionFastDeathWarn(t *testing.T) {
-	runFastDeathSession := func(t *testing.T, ready bool, kiroReady func() (bool, string)) *capture.Recorder {
+	runFastDeathSession := func(t *testing.T, ready bool, kiroReady func() (bool, string), resumeID string) *capture.Recorder {
 		t.Helper()
 		records := capture.Default(t) // before registerRoutes: the factory derives its logger from slog.Default()
 		deps := newTestDeps(ready)
 		deps.kiroReady = kiroReady         // the composition root's permissive default is the no-install shape
 		deps.cmd = staticCmd("/bin/false") // exits 1 instantly: the broken-install signature (non-nil Wait error, well under 10s)
 		mux, mgr, _ := mustRegisterRoutes(t, deps)
-		if _, err := mgr.Create(); err != nil {
-			t.Fatalf("Create: %v", err)
+		if _, err := mgr.CreateWith(terminal.CreateSpec{Build: newSessionBuilder(deps)(resumeID)}); err != nil {
+			t.Fatalf("CreateWith: %v", err)
 		}
 
 		deadline := time.Now().Add(10 * time.Second)
@@ -81,14 +81,39 @@ func TestSessionFastDeathWarn(t *testing.T) {
 	noInstall := func() (bool, string) { return true, "" }
 
 	t.Run("spontaneous fast death while serving warns once", func(t *testing.T) {
-		records := runFastDeathSession(t, true, noInstall)
+		records := runFastDeathSession(t, true, noInstall, "")
 		if got := records.CountLevel(slog.LevelWarn, warnMsg); got != 1 {
 			t.Errorf("log = %q, want exactly one fast-death Warn (got %d); a broken kiro-cli install must be operator-visible outside the PTY", records.Messages(), got)
+		}
+		if v, ok := records.AttrValue(warnMsg, "resume"); ok {
+			t.Errorf("fresh tab's fast-death Warn carries resume=%s, want no resume attribute", v)
+		}
+		if records.AttrContains(warnMsg, "hint", "resume") {
+			t.Error("fresh tab's fast-death hint names a resume, want the install hint alone")
+		}
+	})
+
+	// /bin/false ignores the appended --resume-id and exits 1, the same shape as kiro-cli
+	// refusing a conversation it cannot find.
+	t.Run("a resumed session's fast death names the resume cause", func(t *testing.T) {
+		records := runFastDeathSession(t, true, noInstall, resumeA)
+		if got := records.CountLevel(slog.LevelWarn, warnMsg); got != 1 {
+			t.Errorf("log = %q, want exactly one fast-death Warn (got %d)", records.Messages(), got)
+		}
+		if !records.HasAttr(warnMsg, "resume", "true") {
+			t.Error("resumed tab's fast-death Warn lacks resume=true")
+		}
+		if !records.AttrContains(warnMsg, "hint", "resume") {
+			hint, _ := records.AttrValue(warnMsg, "hint")
+			t.Errorf("resumed tab's fast-death hint = %q, want it to name the refused resume as a cause", hint)
+		}
+		if !records.AttrContains(warnMsg, "hint", "/healthz") {
+			t.Error("resumed tab's fast-death hint dropped the install check")
 		}
 	})
 
 	t.Run("app-initiated shutdown stays quiet", func(t *testing.T) {
-		records := runFastDeathSession(t, false, noInstall)
+		records := runFastDeathSession(t, false, noInstall, "")
 		if got := records.CountLevel(slog.LevelWarn, warnMsg); got != 0 {
 			t.Errorf("log = %q, want no fast-death Warn when readiness is cleared (got %d); a deploy teardown must not raise false broken-install alerts", records.Messages(), got)
 		}
@@ -105,7 +130,7 @@ func TestSessionFastDeathWarn(t *testing.T) {
 	// `&& kiroReady` conjunct from the factory's WithOnProcessExit hook, or
 	// inverting it, leaves every other test in the package green.
 	t.Run("fast death while kiro-cli is unready stays quiet", func(t *testing.T) {
-		records := runFastDeathSession(t, true, func() (bool, string) { return false, reasonInstalling })
+		records := runFastDeathSession(t, true, func() (bool, string) { return false, reasonInstalling }, "")
 		if got := records.CountLevel(slog.LevelWarn, warnMsg); got != 0 {
 			t.Errorf("log = %q, want no fast-death Warn while the kiro-cli install is unready (got %d); that state reports itself through /healthz's reasons, and a broken-install alert per tab during a first-boot download is the false signal the guard exists to suppress", records.Messages(), got)
 		}

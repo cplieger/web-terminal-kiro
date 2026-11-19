@@ -149,12 +149,14 @@ func (r *tabRestorer) plan(ctx context.Context, i int, e terminal.SessionSetEntr
 	dir, state := r.titles.sessionRecord(ctx, e.Resume)
 	switch state {
 	case recordMissing:
-		// kiro-cli would silently start an empty conversation under the stale id.
+		// kiro-cli refuses an id it cannot find ("Failed to find session with id ...") and
+		// exits 1; the saved set keeps a crashed tab, so every boot would retry it.
 		slog.Info("tab restore: kiro session record missing; restored with a fresh chat", "kiro_session", e.Resume)
 		return fresh, true
 	case recordUnknown:
 		// A transient EACCES must not turn every conversation into a fresh chat and then
-		// save that over tabs.json.
+		// save that over tabs.json. A record that is really gone gets kiro-cli's refusal,
+		// and the crashed tab stays saved, so the next boot checks the record again.
 		if dir != "" {
 			slog.Info("tab restore: kiro session record unreadable; resuming without the record check",
 				"kiro_session", e.Resume)

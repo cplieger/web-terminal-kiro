@@ -300,7 +300,7 @@ func (d *routeDeps) childEnv(id terminal.SessionID) []string {
 // and scrollback. It owns five session-scoped policies — the argv and PATH resolved from
 // the install manager AT session-create time, the resume argv, the LogID-truncated
 // per-session logger, the argv redaction, and the fast-death Warn hook that surfaces a
-// broken kiro-cli install.
+// broken kiro-cli install or a refused resume.
 func newSessionBuilder(deps *routeDeps) func(resumeID string) func(terminal.SessionID) *terminal.Handler {
 	return func(resumeID string) func(terminal.SessionID) *terminal.Handler {
 		if resumeID != "" && !validKiroResumeID(resumeID) {
@@ -351,19 +351,25 @@ func newSessionFactory(deps *routeDeps, resumeID string) func(terminal.SessionID
 			// keeps closing it the user's decision.
 			terminal.WithContainmentSampleInterval(sessionCostInterval),
 			// A session whose process dies within seconds of spawn is the
-			// kiro-cli-missing/broken signature; raise it to Warn (the engine logs child
-			// exit at Info by design).
+			// kiro-cli-missing/broken signature, or on a resumed tab kiro-cli refusing an
+			// id it cannot find; raise it to Warn (the engine logs child exit at Info).
 			//
 			// Gated on deps.ready: an app-initiated shutdown clears readiness before
 			// mgr.Shutdown cancels the children, whose killed/canceled wait errors would
 			// otherwise fire this as a false broken-install alert on every deploy.
 			terminal.WithOnProcessExit(func(err error) {
 				kiroReady, _ := deps.kiroReady()
-				if err != nil && deps.ready.Load() && kiroReady && time.Since(start) < 10*time.Second {
-					sessionLogger.Warn(sessionFastDeathMsg,
-						"error", err,
-						"hint", "check /healthz and the kiro-cli install under /config/tools/kiro-cli-versions")
+				if err == nil || !deps.ready.Load() || !kiroReady || time.Since(start) >= 10*time.Second {
+					return
 				}
+				const installHint = "check /healthz and the kiro-cli install under /config/tools/kiro-cli-versions"
+				if resumeID != "" {
+					sessionLogger.Warn(sessionFastDeathMsg, "error", err, "resume", true,
+						"hint", "kiro-cli also exits at once when it cannot find the conversation it was asked to resume, "+
+							"and the tab shows that error. Otherwise "+installHint)
+					return
+				}
+				sessionLogger.Warn(sessionFastDeathMsg, "error", err, "hint", installHint)
 			}),
 		}
 		if deps.scrollback != nil {
