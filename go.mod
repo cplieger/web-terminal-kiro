@@ -12,7 +12,7 @@ require (
 	github.com/cplieger/go/pathinside v1.1.0
 	github.com/cplieger/go/slogx v1.1.0
 	github.com/cplieger/go/textsafe v1.1.0
-	github.com/cplieger/toolbelt/v3 v3.16.0-dev.13
+	github.com/cplieger/toolbelt/v3 v3.16.0-dev.14
 	github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.5
 )
 
