@@ -443,10 +443,12 @@ func handleHealth(deps *routeDeps) http.HandlerFunc {
 		answer := capturedResponse{header: http.Header{}}
 		health.CheckHandler(healthChecks(deps)...).ServeHTTP(&answer, r)
 		maps.Copy(w.Header(), answer.header)
-		body := healthBody{Tools: deps.toolsState(), Sandbox: deps.sandbox}
-		if n, ok := deps.toolsMissing(); ok {
+		body := healthBody{Sandbox: deps.sandbox}
+		n, counted := deps.toolsMissing()
+		if counted {
 			body.ToolsMissing = &n
 		}
+		body.Tools = toolsHealth(deps.toolsState(), n, counted)
 		_ = json.Unmarshal(answer.body.Bytes(), &body)
 		w.WriteHeader(answer.code)
 		_ = json.NewEncoder(w).Encode(body)
