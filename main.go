@@ -82,12 +82,6 @@ func parseTrustedProxies() []netip.Prefix {
 	return prefixes
 }
 
-// hostRefusal answers a refused Host with the envelope's host_not_allowed code
-// and a message that names the setting an operator changes.
-func hostRefusal(w http.ResponseWriter, r *http.Request, status int, code httpserver.ErrorCode, _ string) {
-	httpserver.WriteError(w, r, status, code, "host not allowed. Add it to ALLOWED_HOSTS to serve this hostname")
-}
-
 // parseAllowedHosts reads the comma-separated ALLOWED_HOSTS list of exact hostnames
 // / IPs this server answers for into a httpserver.HostPolicy. It closes the DNS-rebinding
 // hole a same-origin check alone leaves open: rebinding makes Origin and Host AGREE, so
@@ -99,7 +93,7 @@ func parseAllowedHosts() *httpserver.HostPolicy {
 	const key = "ALLOWED_HOSTS"
 	policy, invalid := httpserver.ParseHostList(strings.Split(envx.String(key), ","),
 		httpserver.WithLoopbackExempt(true),
-		httpserver.WithHostResponder(hostRefusal))
+		httpserver.WithHostResponder(errorResponder))
 	if len(invalid) > 0 {
 		// Count-only, like parseTrustedProxies.
 		slog.Warn("dropping malformed "+key+" entries; they cannot match any browser-sent Host",
@@ -1478,7 +1472,7 @@ func canonicalPathGuard(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		httpserver.WriteError(w, r, http.StatusBadRequest, "non_canonical_path", canonicalPathRefusal)
+		errorResponder(w, r, http.StatusBadRequest, "non_canonical_path", canonicalPathRefusal)
 	})
 }
 
@@ -1512,7 +1506,7 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 			httpserver.WithTemplatePathsUnder(terminal.SessionsSubtreePath),
 			httpserver.WithClientIP(trustedProxies...),
 		),
-		httpserver.Recoverer(httpserver.WithRecoverLogger(slog.Default())),
+		httpserver.Recoverer(httpserver.WithRecoverLogger(slog.Default()), httpserver.WithRecoverResponder(errorResponder)),
 		// The default JSON-only type list keeps the SSE stream (text/event-stream)
 		// unbuffered and identity; a /ws 101 is never a compression candidate and its
 		// hijack passes through; StaticHandler's assets arrive already gzipped.
@@ -1535,7 +1529,7 @@ func buildHandler(mux http.Handler, trustedProxies []netip.Prefix, csp string, h
 
 // crossOrigin refuses an unsafe cross-site write with the cross_origin_refused
 // envelope, where the standard library's guard answers plain text.
-func crossOrigin(next http.Handler) http.Handler { return httpserver.CrossOrigin(next, nil) }
+func crossOrigin(next http.Handler) http.Handler { return httpserver.CrossOrigin(next, errorResponder) }
 
 // wsAttachMsg is the message of the /ws attach record wsAttachLog emits. A const so
 // a test can pin the exact wording without a second copy of the literal (goconst).

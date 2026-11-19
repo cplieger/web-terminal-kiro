@@ -135,6 +135,7 @@ func sessionCreateGate() httpserver.Middleware {
 			return r.Method == http.MethodPost && r.URL.Path == terminal.SessionsPath
 		}),
 		httpserver.WithRateLimitError("rate_limited", "session creation rate exceeded"),
+		httpserver.WithRateLimitResponder(errorResponder),
 	)
 }
 
@@ -177,7 +178,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 	// the Host header, never forwarded headers, so it cannot be spoofed through a
 	// proxy nor reached by a DNS-rebound page.
 	if deps.tools != nil {
-		toolsAPI := loopbackOnly("tools API", deps.listenHint, httpapi.Handler(deps.tools, toolsPath))
+		toolsAPI := loopbackOnly("tools API", deps.listenHint, httpapi.Handler(deps.tools, toolsPath, httpapi.WithErrors(errorResponder)))
 		mux.Handle(toolsPath, toolsAPI)
 		mux.Handle(toolsPath+"/", toolsAPI)
 	}
@@ -194,7 +195,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 		mux.Handle(kiroRescanPath, loopbackOnly("kiro-cli rescan hook", deps.listenHint,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Allow", http.MethodPost)
-				httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed",
+				errorResponder(w, r, http.StatusMethodNotAllowed, "method_not_allowed",
 					"kiro-cli rescan is POST-only. Call it with curl -X POST "+deps.listenHint+kiroRescanPath)
 			})))
 	}
@@ -206,7 +207,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 		// Same two-pattern shape as kiroRescanPath: the "/" mount would otherwise 404 a GET.
 		mux.HandleFunc(uploadsPath, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Allow", http.MethodPost)
-			httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "image upload is POST-only")
+			errorResponder(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "image upload is POST-only")
 		})
 	}
 
@@ -215,7 +216,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps, factory func(terminal.S
 	// every other method.
 	mux.HandleFunc(healthPath, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", "GET, HEAD")
-		httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "the health check answers GET and HEAD only")
+		errorResponder(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "the health check answers GET and HEAD only")
 	})
 
 	return mgr
@@ -569,7 +570,7 @@ func composeGate(inner func(http.Handler) http.Handler, blocked func() (bool, st
 				// hint: neither a tools convergence nor a kiro-cli download has a
 				// predictable remaining time, so a cheap re-poll beats a computed date.
 				w.Header().Set("Retry-After", "5")
-				httpserver.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
+				errorResponder(w, r, http.StatusServiceUnavailable, "not_ready", reason)
 				return
 			}
 			gated.ServeHTTP(w, r)
@@ -599,14 +600,14 @@ func restorePendingGate(inner func(http.Handler) http.Handler, pending func() bo
 			if layoutRead {
 				if reason, block := firstBlocked(outer); block {
 					w.Header().Set("Retry-After", "5") // composeGate's hint for the same wait
-					httpserver.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", reason)
+					errorResponder(w, r, http.StatusServiceUnavailable, "not_ready", reason)
 					return
 				}
 			}
 			// One second: the restore itself takes milliseconds once both outer gates
 			// open, and a longer hint would hold pages on the overlay after the tabs exist.
 			w.Header().Set("Retry-After", "1")
-			httpserver.WriteError(w, r, http.StatusServiceUnavailable, "not_ready", terminal.RestoringMessage)
+			errorResponder(w, r, http.StatusServiceUnavailable, "not_ready", terminal.RestoringMessage)
 		})
 	}
 }
@@ -627,7 +628,8 @@ func firstBlocked(checks []func() (bool, string)) (string, bool) {
 // deployment's own listen hint — the 403 is the whole of what a refused caller is told.
 func loopbackOnly(surface, hint string, next http.Handler) http.Handler {
 	return httpserver.LoopbackOnly(httpserver.WithLoopbackError("loopback_only",
-		surface+" is loopback-only. Call it from inside the container with curl "+hint))(next)
+		surface+" is loopback-only. Call it from inside the container with curl "+hint),
+		httpserver.WithLoopbackResponder(errorResponder))(next)
 }
 
 // sessionCostInterval is how often a contained session logs what it is currently costing.
