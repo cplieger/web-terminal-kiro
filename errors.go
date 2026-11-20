@@ -26,14 +26,14 @@ var codeSpecs = map[httpserver.ErrorCode]httpserver.CodeSpec{
 var catalog = func() *httpwire.Catalog {
 	c := httpwire.NewCatalog()
 	for code, spec := range codeSpecs {
-		if err := c.Add(string(code), spec); err != nil {
+		if err := c.Add(code, spec); err != nil {
 			panic(err)
 		}
 	}
 	if err := c.AddOwned(httpapi.CodeSpecs()); err != nil {
 		panic(err)
 	}
-	for code, words := range map[string]string{
+	for code, words := range map[httpserver.ErrorCode]string{
 		"host_not_allowed": "Add the host name you browse to to ALLOWED_HOSTS, or browse to one it lists.",
 		"rate_limited":     "Wait for the Retry-After delay, then open the tab again.",
 		"loopback_only":    "Call this API from inside the container, on its loopback address.",
