@@ -26,7 +26,7 @@
     "@vitest/browser-playwright": "5.1.1",
     "@vitest/coverage-v8": "5.1.1",
     "eslint": "10.15.0",
-    "knip": "6.45.1",
+    "knip": "6.46.0",
     "playwright": "1.65.1",
     "postcss-html": "2.0.1",
     "prettier": "3.10.1",
