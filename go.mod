@@ -26,7 +26,7 @@ require (
 	github.com/cplieger/go/ssrf v1.1.0 // indirect
 	github.com/cplieger/go/urlform v1.2.0 // indirect
 	github.com/creack/pty v1.1.24 // indirect
-	github.com/expr-lang/expr v1.18.0 // indirect
+	github.com/expr-lang/expr v1.18.1 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	golang.org/x/mod v0.43.0 // indirect
