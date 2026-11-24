@@ -1,7 +1,7 @@
 # check=error=true
 
 # --- Builder stage: compile Go server + vendor the web-terminal engine/UI TS ---
-FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS builder
+FROM debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Official Go tarballs currently set GOTOOLCHAIN=auto in $GOROOT/go.env; keep it
@@ -451,7 +451,7 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
     sh scripts/collect-licenses.sh --name web-terminal-kiro .
 
 # --- Final stage: minimal runtime with kiro-cli + git ---
-FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+FROM debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
