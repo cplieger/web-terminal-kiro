@@ -404,12 +404,12 @@ warn_legacy_tool_metadata() {
 # boot that installs nothing, so a renamed key or subcommand makes every
 # container report kiro-cli unavailable.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="3.6.0"
-KIRO_CLI_SHA256="a5062a8b4f070fc153bf855e345b82b7db6f5136f141325dbdeb9dc59f2fbfe1"
+KIRO_CLI_VERSION="3.6.2"
+KIRO_CLI_SHA256="ebb9f6ccd6ad9524171cbbd6ba1554c862e82511f2249038efb93c188b93e507"
 # The `# kiro-cli <version>` trailer is Renovate's version anchor for this
 # arch's digest lookup — do not hand-edit or drop it.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="da9a35a9b71034a354c0e479c2845419a7d6b39be1a5483205b8a6123756624a" # kiro-cli 3.6.0
+KIRO_CLI_SHA256_ARM64="1ac7935f6febb543e603e65f81a6bb66e3f764d9552e0e68cd366b1a68dd27be" # kiro-cli 3.6.2
 # The Node.js bundled with the pinned kiro-cli that KIRO_CLI_HIGH_THROUGHPUT's
 # flags were measured on. The image smoke test fails when the pin bundles another
 # one: re-measure the flags on it, then update this literal. At runtime a tab whose
