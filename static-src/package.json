@@ -22,9 +22,9 @@
     "@stryker-mutator/vitest-runner": "10.1.1",
     "@types/node": "26.6.10",
     "@typescript/native": "npm:typescript@7.0.2",
-    "@vitest/browser": "5.1.1",
-    "@vitest/browser-playwright": "5.1.1",
-    "@vitest/coverage-v8": "5.1.1",
+    "@vitest/browser": "5.1.2",
+    "@vitest/browser-playwright": "5.1.2",
+    "@vitest/coverage-v8": "5.1.2",
     "eslint": "10.15.0",
     "knip": "6.48.0",
     "playwright": "1.65.1",
@@ -34,7 +34,7 @@
     "stylelint-config-standard": "41.1.0",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "typescript-eslint": "8.74.0",
-    "vitest": "5.1.1"
+    "vitest": "5.1.2"
   },
   "dependencies": {
     "@cplieger/web-terminal-engine": "6.6.0-dev.7",
